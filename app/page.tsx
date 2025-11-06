@@ -13,6 +13,8 @@ export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [answers, setAnswers] = useState<Record<string, any>>({})
   const [showJSON, setShowJSON] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const totalSteps = 26
 
@@ -111,6 +113,37 @@ export default function QuizPage() {
     a.download = "respostas_quiz.json"
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  const handleSubmitQuiz = async () => {
+    setIsSubmitting(true)
+    setSubmitError(null)
+
+    try {
+      const response = await fetch('/api/submit-quiz', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ answers }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao processar formulário')
+      }
+
+      if (data.paymentUrl) {
+        window.location.href = data.paymentUrl
+      } else {
+        throw new Error('URL de pagamento não encontrada')
+      }
+    } catch (error) {
+      console.error('Erro ao enviar formulário:', error)
+      setSubmitError(error instanceof Error ? error.message : 'Erro desconhecido')
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -814,7 +847,7 @@ export default function QuizPage() {
               image="https://images.unsplash.com/photo-1494390248081-4e521a5940db?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onPrev={prevStep}
-              canGoBack={currentStep > 0}
+              canGoBack={currentStep > 0 && !isSubmitting}
             >
               <p className="mb-4">
                 {answers.nome_completo?.split(" ")[0] || "Você"}, seu plano para alcançar{" "}
@@ -822,26 +855,40 @@ export default function QuizPage() {
                 sem restrições extremas — ajustado à sua rotina.
               </p>
 
-              {!showJSON ? (
-                <button
-                  onClick={() => setShowJSON(true)}
-                  className="w-full bg-[#4f6e2c] text-white font-bold py-3 px-6 rounded-lg hover:brightness-90 transition-all"
-                >
-                  Ver Respostas Completas (JSON)
-                </button>
-              ) : (
-                <div className="space-y-4">
-                  <div className="bg-[#1e1e1e] text-[#00ff00] p-4 rounded-lg overflow-auto max-h-96 text-sm font-mono">
-                    <pre>{JSON.stringify(answers, null, 2)}</pre>
-                  </div>
-                  <button
-                    onClick={downloadJSON}
-                    className="w-full bg-[#bb951c] text-white font-bold py-3 px-6 rounded-lg hover:brightness-90 transition-all"
-                  >
-                    📥 Baixar JSON
-                  </button>
+              <div className="space-y-3 mb-4">
+                <div className="bg-[#eef6e8] border-l-4 border-[#4f6e2c] p-4 rounded-lg">
+                  <p className="font-semibold text-[#2f4a18] mb-2">✨ O que você receberá:</p>
+                  <ul className="text-sm text-[#2f4a18] space-y-1">
+                    <li>✓ Plano alimentar completo para 30 dias</li>
+                    <li>✓ Cardápio personalizado baseado no seu perfil</li>
+                    <li>✓ Lista de compras organizada</li>
+                    <li>✓ Orientações nutricionais detalhadas</li>
+                  </ul>
+                </div>
+
+                <div className="bg-[#fff8e6] border border-[#f1dfa9] p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-[#4f6e2c] mb-1">R$ 49,90</p>
+                  <p className="text-sm text-[#6a5414]">Investimento único • Acesso imediato</p>
+                </div>
+              </div>
+
+              {submitError && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm">
+                  ⚠️ {submitError}
                 </div>
               )}
+
+              <button
+                onClick={handleSubmitQuiz}
+                disabled={isSubmitting}
+                className="w-full bg-[#4f6e2c] text-white font-bold py-4 px-6 rounded-lg hover:brightness-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg"
+              >
+                {isSubmitting ? '⏳ Processando...' : '🔒 Garantir Meu Plano Agora'}
+              </button>
+
+              <p className="text-xs text-center text-[#888] mt-3">
+                Você será redirecionado para a página de pagamento seguro
+              </p>
             </QuizStep>
           )}
         </div>
