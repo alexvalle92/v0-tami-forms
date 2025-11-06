@@ -23,9 +23,12 @@ export default function QuizPage() {
   }
 
   const nextStep = () => {
-    if (currentStep < totalSteps - 1) {
-      setCurrentStep((prev) => prev + 1)
-    }
+    setCurrentStep((prev) => {
+      if (prev < totalSteps - 1) {
+        return prev + 1
+      }
+      return prev
+    })
   }
 
   const prevStep = () => {
@@ -116,14 +119,10 @@ export default function QuizPage() {
   }
 
   const handleSubmitQuiz = async () => {
-    console.log('=== handleSubmitQuiz chamado ===')
-    console.log('Dados do formulário:', answers)
-    
     setIsSubmitting(true)
     setSubmitError(null)
 
     try {
-      console.log('Enviando requisição para /api/submit-quiz...')
       const response = await fetch('/api/submit-quiz', {
         method: 'POST',
         headers: {
@@ -132,30 +131,24 @@ export default function QuizPage() {
         body: JSON.stringify({ answers }),
       })
 
-      console.log('Resposta recebida:', response.status)
       const data = await response.json()
-      console.log('Dados da resposta:', data)
 
       if (!response.ok) {
         throw new Error(data.error || 'Erro ao processar formulário')
       }
 
       if (data.paymentUrl) {
-        console.log('Redirecionando para:', data.paymentUrl)
         window.location.href = data.paymentUrl
       } else {
         throw new Error('URL de pagamento não encontrada')
       }
     } catch (error) {
-      console.error('=== ERRO ao enviar formulário ===')
-      console.error(error)
+      console.error('Erro ao enviar formulário:', error)
       setSubmitError(error instanceof Error ? error.message : 'Erro desconhecido')
       setIsSubmitting(false)
     }
   }
 
-  console.log('Renderizando - currentStep:', currentStep)
-  
   return (
     <div className="min-h-screen bg-[#f7f7f7] flex items-center justify-center p-4">
       <div className="w-full max-w-[880px] bg-white rounded-[18px] shadow-[0_12px_40px_rgba(0,0,0,0.08)] overflow-hidden">
@@ -851,7 +844,7 @@ export default function QuizPage() {
 
           {currentStep === 24 && <LoadingScreen onComplete={nextStep} />}
 
-          {currentStep === 25 && (
+          {currentStep >= 25 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || "Seu"} plano exclusivo está pronto!`}
               image="https://images.unsplash.com/photo-1494390248081-4e521a5940db?q=80&w=1470&auto=format&fit=crop"
