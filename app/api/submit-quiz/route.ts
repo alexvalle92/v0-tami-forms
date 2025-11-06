@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
     }
 
     const phone = answers.whatsapp.replace(/\D/g, '')
+    const cpfClean = cpf ? cpf.replace(/\D/g, '') : null
 
     const { data: existingPatient, error: searchError } = await supabase
       .from('patients')
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
         .from('patients')
         .update({
           name: answers.nome_completo,
-          cpf: cpf,
+          cpf: cpfClean,
           phone: phone,
           quiz_responses: answers,
           updated_at: new Date().toISOString()
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
         .from('patients')
         .insert({
           name: answers.nome_completo,
-          cpf: cpf,
+          cpf: cpfClean,
           email: answers.email,
           phone: phone,
           quiz_responses: answers,
@@ -129,7 +130,7 @@ export async function POST(request: NextRequest) {
           name: answers.nome_completo,
           email: answers.email,
           phone: phone,
-          cpfCnpj: cpf,
+          cpfCnpj: cpfClean,
         }),
       })
 

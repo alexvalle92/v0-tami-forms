@@ -55,11 +55,12 @@ Desenvolver uma solução escalável e de baixo custo (modelo low ticket) que pe
 
 ## Fluxo do Usuário
 
-1. **Quiz Interativo** (26 etapas)
+1. **Quiz Interativo** (27 etapas)
    - Perguntas sobre perfil nutricional, hábitos alimentares, objetivos
    - Interface mobile-first otimizada
-   - Validação de campos obrigatórios
+   - Validação de campos obrigatórios (email, telefone, CPF)
    - Uma pergunta por tela para melhor UX
+   - Valores padrão nos seletores de altura/peso para melhor UX
 
 2. **Processamento**
    - Dados enviados para API `/api/submit-quiz`
@@ -99,7 +100,8 @@ ASAAS_SANDBOX=true  # true para testes, false para produção
 │   ├── bmi-display.tsx           # Exibição do IMC
 │   ├── height-picker.tsx         # Seletor de altura
 │   ├── weight-picker.tsx         # Seletor de peso
-│   ├── phone-input.tsx           # Input de telefone formatado
+│   ├── phone-input.tsx           # Input de telefone formatado (com máscara)
+│   ├── cpf-input.tsx             # Input de CPF formatado (999.999.999-99)
 │   ├── progress-bar.tsx          # Barra de progresso
 │   ├── quiz-step.tsx             # Componente de etapa do quiz
 │   ├── loading-screen.tsx        # Tela de carregamento
@@ -143,11 +145,13 @@ A aplicação estará disponível em `http://0.0.0.0:5000`
 ## Funcionalidades Principais
 
 ### Quiz Interativo
-- 26 perguntas divididas em seções temáticas
-- Validação em tempo real
+- 27 perguntas divididas em seções temáticas
+- Validação em tempo real (email, telefone com DDD, CPF com 11 dígitos)
 - Design responsivo (mobile-first)
 - Feedback visual de progresso
-- Suporte a diferentes tipos de input (texto, seleção, checkboxes)
+- Suporte a diferentes tipos de input (texto, seleção, checkboxes, máscaras)
+- Inputs formatados: telefone (DDD + número), CPF (999.999.999-99)
+- Valores padrão em seletores numéricos para evitar bloqueio de navegação
 
 ### Integração com Supabase
 - Armazenamento seguro de dados dos pacientes
@@ -189,5 +193,16 @@ Para questões sobre:
 ## Última Atualização
 
 **Data**: 06/11/2025
-**Versão**: 1.0.0
+**Versão**: 1.1.0
 **Status**: Pronto para testes
+
+## Últimas Atualizações (v1.1.0)
+
+### Correções
+- ✅ Corrigido bug de tela branca após loading screen (ajuste currentStep >= 26)
+- ✅ Corrigido seletores de altura/peso que bloqueavam navegação (valores padrão: 170cm, 70kg, 65kg)
+
+### Novas Funcionalidades
+- ✅ Adicionada etapa de coleta de CPF com máscara (999.999.999-99)
+- ✅ Validação de CPF com 11 dígitos antes de enviar para Asaas
+- ✅ Total de etapas aumentado de 26 para 27

@@ -7,6 +7,7 @@ import { BMIDisplay } from "@/components/bmi-display"
 import { HeightPicker } from "@/components/height-picker"
 import { WeightPicker } from "@/components/weight-picker"
 import { PhoneInput } from "@/components/phone-input"
+import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
 
 export default function QuizPage() {
@@ -16,7 +17,7 @@ export default function QuizPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const totalSteps = 26
+  const totalSteps = 27
 
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
@@ -43,6 +44,18 @@ export default function QuizPage() {
       setTimeout(() => nextStep(), 300)
     }
   }
+
+  useEffect(() => {
+    if (currentStep === 16 && !answers.altura_cm) {
+      updateAnswer("altura_cm", "170")
+    }
+    if (currentStep === 17 && !answers.peso_kg) {
+      updateAnswer("peso_kg", "70")
+    }
+    if (currentStep === 18 && !answers.meta_peso_30d) {
+      updateAnswer("meta_peso_30d", "65")
+    }
+  }, [currentStep, answers.altura_cm, answers.peso_kg, answers.meta_peso_30d])
 
   useEffect(() => {
     if (currentStep === 20 && answers.altura_cm && answers.peso_kg) {
@@ -95,6 +108,8 @@ export default function QuizPage() {
         return !!answers.whatsapp && answers.whatsapp.replace(/\D/g, "").length >= 10
       case 23:
         return !!answers.nome_completo && answers.nome_completo.trim().length > 0
+      case 24:
+        return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11
       default:
         return true
     }
@@ -842,9 +857,28 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {currentStep === 24 && <LoadingScreen onComplete={nextStep} />}
+          {/* Step 25 - CPF */}
+          {currentStep === 24 && (
+            <QuizStep
+              title="Informe seu CPF:"
+              subtitle="(necessário para emissão da nota fiscal)"
+              image="https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?q=80&w=1470&auto=format&fit=crop"
+              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
+              onNext={handleNext}
+              onPrev={prevStep}
+              canGoBack={currentStep > 0}
+              showNextButton
+            >
+              <CpfInput value={answers.cpf || ""} onChange={(value) => updateAnswer("cpf", value)} />
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm">
+                🔒 Seus dados estão seguros e protegidos.
+              </div>
+            </QuizStep>
+          )}
 
-          {currentStep >= 25 && (
+          {currentStep === 25 && <LoadingScreen onComplete={nextStep} />}
+
+          {currentStep >= 26 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || "Seu"} plano exclusivo está pronto!`}
               image="https://images.unsplash.com/photo-1494390248081-4e521a5940db?q=80&w=1470&auto=format&fit=crop"
