@@ -116,10 +116,14 @@ export default function QuizPage() {
   }
 
   const handleSubmitQuiz = async () => {
+    console.log('=== handleSubmitQuiz chamado ===')
+    console.log('Dados do formulário:', answers)
+    
     setIsSubmitting(true)
     setSubmitError(null)
 
     try {
+      console.log('Enviando requisição para /api/submit-quiz...')
       const response = await fetch('/api/submit-quiz', {
         method: 'POST',
         headers: {
@@ -128,24 +132,30 @@ export default function QuizPage() {
         body: JSON.stringify({ answers }),
       })
 
+      console.log('Resposta recebida:', response.status)
       const data = await response.json()
+      console.log('Dados da resposta:', data)
 
       if (!response.ok) {
         throw new Error(data.error || 'Erro ao processar formulário')
       }
 
       if (data.paymentUrl) {
+        console.log('Redirecionando para:', data.paymentUrl)
         window.location.href = data.paymentUrl
       } else {
         throw new Error('URL de pagamento não encontrada')
       }
     } catch (error) {
-      console.error('Erro ao enviar formulário:', error)
+      console.error('=== ERRO ao enviar formulário ===')
+      console.error(error)
       setSubmitError(error instanceof Error ? error.message : 'Erro desconhecido')
       setIsSubmitting(false)
     }
   }
 
+  console.log('Renderizando - currentStep:', currentStep)
+  
   return (
     <div className="min-h-screen bg-[#f7f7f7] flex items-center justify-center p-4">
       <div className="w-full max-w-[880px] bg-white rounded-[18px] shadow-[0_12px_40px_rgba(0,0,0,0.08)] overflow-hidden">
