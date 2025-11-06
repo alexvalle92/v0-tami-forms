@@ -12,6 +12,21 @@ const ASAAS_BASE_URL = ASAAS_SANDBOX
   ? 'https://sandbox.asaas.com/api/v3' 
   : 'https://api.asaas.com/v3'
 
+function validateEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+function validatePhone(phone: string): boolean {
+  const cleanPhone = phone.replace(/\D/g, '')
+  return cleanPhone.length >= 10 && cleanPhone.length <= 11
+}
+
+function validateCPF(cpf: string | null): boolean {
+  if (!cpf) return true
+  const cleanCPF = cpf.replace(/\D/g, '')
+  return cleanCPF.length === 11
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -24,19 +39,42 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (!validateEmail(answers.email)) {
+      return NextResponse.json(
+        { error: 'Email inválido.' },
+        { status: 400 }
+      )
+    }
+
+    if (!validatePhone(answers.whatsapp)) {
+      return NextResponse.json(
+        { error: 'Telefone inválido. Deve conter DDD + número (10 ou 11 dígitos).' },
+        { status: 400 }
+      )
+    }
+
     const cpf = answers.cpf || null
+    if (!validateCPF(cpf)) {
+      return NextResponse.json(
+        { error: 'CPF inválido.' },
+        { status: 400 }
+      )
+    }
+
     const phone = answers.whatsapp.replace(/\D/g, '')
 
     const { data: existingPatient, error: searchError } = await supabase
       .from('patients')
-      .select('id')
+      .select('id, asaas_customer_id')
       .eq('email', answers.email)
       .single()
 
     let patientId: string
+    let asaasCustomerId: string | null = null
 
     if (existingPatient) {
       patientId = existingPatient.id
+      asaasCustomerId = existingPatient.asaas_customer_id
 
       const { error: updateError } = await supabase
         .from('patients')
@@ -80,19 +118,7 @@ export async function POST(request: NextRequest) {
       patientId = newPatient.id
     }
 
-    let asaasCustomerId: string | null = null
-
-    const { data: existingPayment } = await supabase
-      .from('payments')
-      .select('asaas_customer_id')
-      .eq('patient_id', patientId)
-      .not('asaas_customer_id', 'is', null)
-      .limit(1)
-      .single()
-
-    if (existingPayment?.asaas_customer_id) {
-      asaasCustomerId = existingPayment.asaas_customer_id
-    } else {
+    if (!asaasCustomerId) {
       const customerResponse = await fetch(`${ASAAS_BASE_URL}/customers`, {
         method: 'POST',
         headers: {
@@ -118,6 +144,15 @@ export async function POST(request: NextRequest) {
 
       const customerData = await customerResponse.json()
       asaasCustomerId = customerData.id
+
+      const { error: updatePatientError } = await supabase
+        .from('patients')
+        .update({ asaas_customer_id: asaasCustomerId })
+        .eq('id', patientId)
+
+      if (updatePatientError) {
+        console.error('Erro ao atualizar asaas_customer_id:', updatePatientError)
+      }
     }
 
     const today = new Date()

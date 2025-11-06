@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS patients (
   cpf TEXT,
   email TEXT UNIQUE NOT NULL,
   phone TEXT NOT NULL,
+  asaas_customer_id TEXT,
   quiz_responses JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -56,5 +57,6 @@ COMMENT ON TABLE patients IS 'Tabela de pacientes que respondem ao quiz';
 COMMENT ON TABLE payments IS 'Tabela de pagamentos gerados via Asaas';
 
 COMMENT ON COLUMN patients.quiz_responses IS 'Respostas completas do formulário em formato JSON';
+COMMENT ON COLUMN patients.asaas_customer_id IS 'ID do cliente no Asaas armazenado no paciente para reuso';
 COMMENT ON COLUMN payments.asaas_customer_id IS 'ID do cliente no Asaas para reuso em futuras cobranças';
 COMMENT ON COLUMN payments.status IS 'Status do pagamento (PENDING, RECEIVED, CONFIRMED, etc)';
