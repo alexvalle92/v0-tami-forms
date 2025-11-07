@@ -1,16 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
-const ASAAS_API_KEY = process.env.ASAAS_API_KEY!
-const ASAAS_SANDBOX = process.env.ASAAS_SANDBOX === 'true'
-const ASAAS_BASE_URL = ASAAS_SANDBOX 
-  ? 'https://sandbox.asaas.com/api/v3' 
-  : 'https://api.asaas.com/v3'
+import { getConfig } from '@/lib/config'
 
 const ERROR_WEBHOOK_URL = 'https://n8n.nutritamilivalle.com.br/webhook/errors-app'
 const REDIRECT_URL = 'https://nutritamilivalle.com.br/'
@@ -50,6 +40,19 @@ function validateCPF(cpf: string | null): boolean {
 
 export async function POST(request: NextRequest) {
   try {
+    const config = await getConfig()
+    
+    const supabase = createClient(
+      config.NEXT_PUBLIC_SUPABASE_URL,
+      config.SUPABASE_SERVICE_ROLE_KEY
+    )
+
+    const ASAAS_API_KEY = config.ASAAS_API_KEY
+    const ASAAS_SANDBOX = config.ASAAS_SANDBOX === 'true'
+    const ASAAS_BASE_URL = ASAAS_SANDBOX 
+      ? 'https://sandbox.asaas.com/api/v3' 
+      : 'https://api.asaas.com/v3'
+
     const body = await request.json()
     const { answers } = body
 
