@@ -72,6 +72,49 @@ Desenvolver uma solução escalável e de baixo custo (modelo low ticket) que pe
    - Cliente é redirecionado para página de pagamento do Asaas
    - Opções: PIX, Boleto, Cartão de Crédito
 
+## Tratamento de Erros
+
+O sistema possui duas estratégias diferentes de tratamento de erros dependendo da etapa do processamento:
+
+### Erros nas Linhas 1-120 (Validação e Criação do Paciente)
+- **Comportamento**: Erros são apresentados em tela e bloqueiam o fluxo
+- **Exemplos**:
+  - Validação de email inválido
+  - Validação de telefone/CPF
+  - Erros ao criar/atualizar paciente no Supabase
+- **Resposta API**: `{ error: "mensagem de erro" }` com status HTTP 4xx/5xx
+- **Frontend**: Exibe mensagem de erro para o usuário corrigir
+
+### Erros a partir da Linha 122 (Integração Asaas e Pagamentos)
+- **Comportamento**: Erros são enviados para webhook N8N e usuário é redirecionado
+- **Webhook N8N**: `https://n8n.nutritamilivalle.com.br/webhook/errors-app`
+- **Payload enviado**:
+  ```json
+  {
+    "patient_id": "uuid-do-paciente",
+    "error": {
+      "type": "tipo_do_erro",
+      "details": { objeto_erro_completo },
+      "context": "Descrição do contexto"
+    },
+    "timestamp": "ISO-8601"
+  }
+  ```
+- **Tipos de erro**:
+  - `asaas_customer_creation_error`: Falha ao criar cliente no Asaas
+  - `supabase_update_asaas_id_error`: Falha ao atualizar asaas_customer_id
+  - `asaas_payment_creation_error`: Falha ao criar cobrança no Asaas
+  - `supabase_payment_insert_error`: Falha ao salvar registro de pagamento
+- **Resposta API**: `{ success: false, redirectUrl: "https://nutritamilivalle.com.br/" }`
+- **Frontend**: Redireciona automaticamente para o site institucional
+
+### Justificativa
+Esta abordagem garante que:
+1. Dados inválidos sejam corrigidos pelo usuário antes de criar registros
+2. Erros de integração (fora do controle do usuário) sejam tratados automaticamente
+3. A equipe seja notificada via N8N para resolver problemas de integração
+4. O usuário tenha uma experiência limpa mesmo quando há falhas técnicas
+
 ## Variáveis de Ambiente Necessárias
 
 ```env
