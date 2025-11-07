@@ -158,10 +158,17 @@ export async function POST(request: NextRequest) {
       if (!customerResponse.ok) {
         const errorData = await customerResponse.json()
         console.error('Erro ao criar cliente Asaas:', errorData)
-        return NextResponse.json(
-          { error: 'Erro ao criar cliente no sistema de pagamento' },
-          { status: 500 }
-        )
+        
+        await sendErrorToWebhook(patientId, {
+          type: 'asaas_customer_creation_error',
+          details: errorData,
+          context: 'Falha ao criar cliente no Asaas'
+        })
+        
+        return NextResponse.json({
+          success: false,
+          redirectUrl: REDIRECT_URL
+        })
       }
 
       const customerData = await customerResponse.json()
@@ -174,6 +181,17 @@ export async function POST(request: NextRequest) {
 
       if (updatePatientError) {
         console.error('Erro ao atualizar asaas_customer_id:', updatePatientError)
+        
+        await sendErrorToWebhook(patientId, {
+          type: 'supabase_update_asaas_id_error',
+          details: updatePatientError,
+          context: 'Falha ao atualizar asaas_customer_id no paciente'
+        })
+        
+        return NextResponse.json({
+          success: false,
+          redirectUrl: REDIRECT_URL
+        })
       }
     }
 
@@ -201,10 +219,17 @@ export async function POST(request: NextRequest) {
     if (!paymentResponse.ok) {
       const errorData = await paymentResponse.json()
       console.error('Erro ao criar cobrança Asaas:', errorData)
-      return NextResponse.json(
-        { error: 'Erro ao criar cobrança' },
-        { status: 500 }
-      )
+      
+      await sendErrorToWebhook(patientId, {
+        type: 'asaas_payment_creation_error',
+        details: errorData,
+        context: 'Falha ao criar cobrança no Asaas'
+      })
+      
+      return NextResponse.json({
+        success: false,
+        redirectUrl: REDIRECT_URL
+      })
     }
 
     const paymentData = await paymentResponse.json()
@@ -222,10 +247,17 @@ export async function POST(request: NextRequest) {
 
     if (paymentInsertError) {
       console.error('Erro ao salvar pagamento:', paymentInsertError)
-      return NextResponse.json(
-        { error: 'Erro ao salvar informações de pagamento' },
-        { status: 500 }
-      )
+      
+      await sendErrorToWebhook(patientId, {
+        type: 'supabase_payment_insert_error',
+        details: paymentInsertError,
+        context: 'Falha ao salvar registro de pagamento no Supabase'
+      })
+      
+      return NextResponse.json({
+        success: false,
+        redirectUrl: REDIRECT_URL
+      })
     }
 
     return NextResponse.json({
