@@ -115,18 +115,83 @@ Esta abordagem garante que:
 3. A equipe seja notificada via N8N para resolver problemas de integração
 4. O usuário tenha uma experiência limpa mesmo quando há falhas técnicas
 
-## Variáveis de Ambiente Necessárias
+## Gerenciamento de Variáveis de Ambiente
 
+O sistema suporta duas formas de gerenciar variáveis de ambiente:
+
+### Produção (AWS Parameter Store)
+
+Para ambientes de produção na AWS, as variáveis são carregadas automaticamente do AWS Systems Manager Parameter Store:
+
+**Configuração necessária:**
 ```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-# Asaas
-ASAAS_API_KEY=your_asaas_api_key
-ASAAS_SANDBOX=true  # true para testes, false para produção
+USE_AWS_PARAMETER_STORE=true
+AWS_REGION=us-east-1  # Região da sua conta AWS
+AWS_PARAMETER_PATH=/nutritamilivalle/production  # Caminho dos parâmetros
 ```
+
+**Estrutura dos parâmetros no AWS Parameter Store:**
+```
+/nutritamilivalle/production/
+├── NEXT_PUBLIC_SUPABASE_URL
+├── NEXT_PUBLIC_SUPABASE_ANON_KEY
+├── SUPABASE_SERVICE_ROLE_KEY
+├── ASAAS_API_KEY
+└── ASAAS_SANDBOX
+```
+
+**Permissões IAM necessárias:**
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/nutritamilivalle/*"
+    }
+  ]
+}
+```
+
+### Desenvolvimento Local
+
+Para desenvolvimento local, use o arquivo `.env.local`:
+
+1. Copie o template:
+   ```bash
+   cp .env.local.example .env.local
+   ```
+
+2. Preencha as variáveis no `.env.local`:
+   ```env
+   # Supabase
+   NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=sua_chave_anon_key_aqui
+   SUPABASE_SERVICE_ROLE_KEY=sua_service_role_key_aqui
+
+   # Asaas
+   ASAAS_API_KEY=sua_api_key_asaas_aqui
+   ASAAS_SANDBOX=true
+   ```
+
+3. O arquivo `.env.local` está no `.gitignore` e **nunca** deve ser commitado
+
+### Como Funciona
+
+O sistema detecta automaticamente o ambiente através da variável `USE_AWS_PARAMETER_STORE`:
+
+- **`USE_AWS_PARAMETER_STORE=true`**: Carrega do AWS Parameter Store
+- **Ausente ou `false`**: Carrega de variáveis de ambiente locais (`.env.local`)
+
+**Implementação:** `lib/config.ts` - Módulo utilitário que:
+- Cacheia as configurações em memória
+- Valida a presença de todas as variáveis obrigatórias
+- Lança erro descritivo se alguma variável estiver faltando
 
 ## Estrutura de Arquivos
 
@@ -153,8 +218,10 @@ ASAAS_SANDBOX=true  # true para testes, false para produção
 │   ├── supabase/
 │   │   ├── client.ts             # Cliente Supabase (browser)
 │   │   └── server.ts             # Cliente Supabase (server-side)
+│   ├── config.ts                 # Gerenciador de configuração (AWS/local)
 │   └── utils.ts                  # Utilitários
 ├── supabase-schema.sql           # Script SQL para criar tabelas
+├── .env.local.example            # Template de variáveis locais
 ├── package.json
 ├── tsconfig.json
 └── next.config.mjs
@@ -235,17 +302,33 @@ Para questões sobre:
 
 ## Última Atualização
 
-**Data**: 06/11/2025
-**Versão**: 1.1.0
-**Status**: Pronto para testes
+**Data**: 07/11/2025
+**Versão**: 1.2.0
+**Status**: Pronto para produção
 
-## Últimas Atualizações (v1.1.0)
+## Changelog
 
-### Correções
-- ✅ Corrigido bug de tela branca após loading screen (ajuste currentStep >= 26)
-- ✅ Corrigido seletores de altura/peso que bloqueavam navegação (valores padrão: 170cm, 70kg, 65kg)
+### v1.2.0 (07/11/2025)
+**Gerenciamento de Configuração**
+- ✅ Implementado suporte a AWS Parameter Store para produção
+- ✅ Sistema dual de configuração (AWS/local) com detecção automática
+- ✅ Adicionado arquivo `.env.local.example` como template
+- ✅ Cache de configurações em memória para performance
+- ✅ Validação automática de variáveis obrigatórias
 
-### Novas Funcionalidades
+**Tratamento de Erros**
+- ✅ Sistema diferenciado de tratamento de erros (validação vs integração)
+- ✅ Webhook N8N para notificação de erros de integração
+- ✅ Redirecionamento automático para site institucional em caso de falha
+- ✅ 4 tipos de erro categorizados e monitorados
+
+### v1.1.0 (06/11/2025)
+**Correções**
+- ✅ Corrigido bug de tela branca após loading screen
+- ✅ Corrigido seletores de altura/peso com valores padrão
+- ✅ Removida formatação de CPF antes de enviar para APIs
+
+**Novas Funcionalidades**
 - ✅ Adicionada etapa de coleta de CPF com máscara (999.999.999-99)
-- ✅ Validação de CPF com 11 dígitos antes de enviar para Asaas
-- ✅ Total de etapas aumentado de 26 para 27
+- ✅ Validação de CPF com 11 dígitos
+- ✅ Total de etapas aumentado para 27
