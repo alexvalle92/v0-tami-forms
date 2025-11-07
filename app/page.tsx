@@ -148,6 +148,11 @@ export default function QuizPage() {
 
       const data = await response.json()
 
+      if (data.redirectUrl) {
+        window.location.href = data.redirectUrl
+        return
+      }
+
       if (!response.ok) {
         throw new Error(data.error || 'Erro ao processar formulário')
       }
