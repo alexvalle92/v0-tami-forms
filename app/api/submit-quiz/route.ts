@@ -12,6 +12,27 @@ const ASAAS_BASE_URL = ASAAS_SANDBOX
   ? 'https://sandbox.asaas.com/api/v3' 
   : 'https://api.asaas.com/v3'
 
+const ERROR_WEBHOOK_URL = 'https://n8n.nutritamilivalle.com.br/webhook/errors-app'
+const REDIRECT_URL = 'https://nutritamilivalle.com.br/'
+
+async function sendErrorToWebhook(patientId: string, errorDetails: any): Promise<void> {
+  try {
+    await fetch(ERROR_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        patient_id: patientId,
+        error: errorDetails,
+        timestamp: new Date().toISOString(),
+      }),
+    })
+  } catch (webhookError) {
+    console.error('Erro ao enviar para webhook:', webhookError)
+  }
+}
+
 function validateEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
