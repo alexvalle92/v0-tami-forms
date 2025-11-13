@@ -9,7 +9,12 @@ import { WeightPicker } from "@/components/weight-picker"
 import { PhoneInput } from "@/components/phone-input"
 import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
-import { Moon, Heart, Candy, Calendar, CheckCircle } from "lucide-react"
+import { 
+  Moon, Heart, Candy, Calendar, CheckCircle, User, UserCircle, UserRound, Users,
+  Sparkles, Dumbbell, Flame, Flower, Scale, Donut, Sunrise, Sun, CloudSun, X,
+  UtensilsCrossed, Clock, Apple, IceCream, Bread, Cookie, Beef, Wine, Coffee,
+  Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil
+} from "lucide-react"
 import Img1 from "@/src/img/1.png"
 
 export default function QuizPage() {
