@@ -9,6 +9,7 @@ import { WeightPicker } from "@/components/weight-picker"
 import { PhoneInput } from "@/components/phone-input"
 import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
+import { Moon, Heart, Candy, Calendar, CheckCircle } from "lucide-react"
 import Img1 from "@/src/img/1.png"
 
 export default function QuizPage() {
@@ -638,38 +639,43 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "madrugada", label: "🌙 Como de madrugada" },
-                  { value: "emocional", label: "😔 Como por emoção/ansiedade/tédio" },
-                  { value: "doces", label: "🍫 Dificuldade em resistir a doces" },
-                  { value: "finais de semana", label: "🎉 Exagero nos fins de semana" },
-                  { value: "nenhum", label: "✅ Nenhum desses" },
-                ].map((option) => (
-                  <label
-                    key={option.value}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={answers.habitos?.includes(option.value) || false}
-                      onChange={(e) => {
-                        const current = answers.habitos || []
-                        if (e.target.checked) {
-                          updateAnswer("habitos", [...current, option.value])
-                        } else {
-                          updateAnswer(
-                            "habitos",
-                            current.filter((v: string) => v !== option.value),
-                          )
-                        }
-                      }}
-                      className="w-5 h-5 accent-[#4f6e2c]"
-                    />
-                    <span>{option.label}</span>
-                  </label>
-                ))}
+                  { value: "madrugada", label: "Como de madrugada", icon: Moon },
+                  { value: "emocional", label: "Como por emoção/ansiedade/tédio", icon: Heart },
+                  { value: "doces", label: "Dificuldade em resistir a doces", icon: Candy },
+                  { value: "finais de semana", label: "Exagero nos fins de semana", icon: Calendar },
+                  { value: "nenhum", label: "Nenhum desses", icon: CheckCircle },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <label
+                      key={option.value}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={answers.habitos?.includes(option.value) || false}
+                        onChange={(e) => {
+                          const current = answers.habitos || []
+                          if (e.target.checked) {
+                            updateAnswer("habitos", [...current, option.value])
+                          } else {
+                            updateAnswer(
+                              "habitos",
+                              current.filter((v: string) => v !== option.value),
+                            )
+                          }
+                        }}
+                        className="w-5 h-5 accent-[#4f6e2c]"
+                      />
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </label>
+                  )
+                })}
               </div>
-              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm">
-                Dica: se marcar "✅ Nenhum desses", deixe os demais desmarcados.
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>Dica: se marcar "Nenhum desses", deixe os demais desmarcados.</span>
               </div>
             </QuizStep>
           )}
