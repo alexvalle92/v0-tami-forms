@@ -10,7 +10,7 @@ import { PhoneInput } from "@/components/phone-input"
 import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
 import { Moon, Heart, Candy, Calendar, CheckCircle } from "lucide-react"
-import Img1 from "@/src/img/1.png"
+import Img1 from "@/src/img/copoAgua.png"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
