@@ -13,7 +13,8 @@ import {
   Moon, Heart, Candy, Calendar, CheckCircle, User, UserCircle, UserRound, Users,
   Sparkles, Dumbbell, Flame, Flower, Scale, Donut, Sunrise, Sun, CloudSun, X,
   UtensilsCrossed, Clock, Apple, IceCream, Croissant, Cookie, Beef, Wine, Coffee,
-  Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil
+  Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil,
+  ArrowRight, Ruler, Check, Smartphone, Lock, AlertTriangle, Loader
 } from "lucide-react"
 import Img1 from "@/src/img/1.png"
 
@@ -190,8 +191,13 @@ export default function QuizPage() {
               kicker="PLANO ALIMENTAR PERSONALIZADO PARA RESULTADOS REAIS"
               title="Elimine de 5 a 10 kg em 30 dias — leve, prático e sem extremismos."
               image="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?q=80&w=1470&auto=format&fit=crop"
-              subtitle="👉 Responda ao quiz  e em poucos minutos receba um plano exclusivo para o seu perfil."
-              question="Escolha sua faixa etária para começar 👇"
+              subtitle={
+                <span className="flex items-center gap-2">
+                  <ArrowRight className="w-5 h-5 inline-block" />
+                  Responda ao quiz e em poucos minutos receba um plano exclusivo para o seu perfil.
+                </span>
+              }
+              question="Escolha sua faixa etária para começar"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -781,8 +787,9 @@ export default function QuizPage() {
               showNextButton
             >
               <HeightPicker value={answers.altura_cm || 170} onChange={(value) => updateAnswer("altura_cm", value)} />
-              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm">
-                📏 Essa informação é fundamental para calcular seu plano.
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <Ruler className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>Essa informação é fundamental para calcular seu plano.</span>
               </div>
             </QuizStep>
           )}
@@ -838,9 +845,18 @@ export default function QuizPage() {
                 weight={Number.parseFloat(answers.peso_kg) || 70}
               />
               <ul className="mt-4 space-y-2 text-[#555]">
-                <li>✓ Menor risco de doenças crônicas (diabetes, hipertensão e cardíacas).</li>
-                <li>✓ Melhor controle de colesterol e pressão arterial.</li>
-                <li>✓ Mais qualidade de vida e disposição.</li>
+                <li className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                  <span>Menor risco de doenças crônicas (diabetes, hipertensão e cardíacas).</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                  <span>Melhor controle de colesterol e pressão arterial.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                  <span>Mais qualidade de vida e disposição.</span>
+                </li>
               </ul>
             </QuizStep>
           )}
@@ -898,8 +914,9 @@ export default function QuizPage() {
               showNextButton
             >
               <PhoneInput value={answers.whatsapp || ""} onChange={(value) => updateAnswer("whatsapp", value)} />
-              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm">
-                📱 Inclua o DDD antes do número.
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <Smartphone className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>Inclua o DDD antes do número.</span>
               </div>
             </QuizStep>
           )}
@@ -939,8 +956,9 @@ export default function QuizPage() {
               showNextButton
             >
               <CpfInput value={answers.cpf || ""} onChange={(value) => updateAnswer("cpf", value)} />
-              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm">
-                🔒 Seus dados estão seguros e protegidos.
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>Seus dados estão seguros e protegidos.</span>
               </div>
             </QuizStep>
           )}
@@ -963,12 +981,27 @@ export default function QuizPage() {
 
               <div className="space-y-3 mb-4">
                 <div className="bg-[#eef6e8] border-l-4 border-[#4f6e2c] p-4 rounded-lg">
-                  <p className="font-semibold text-[#2f4a18] mb-2">✨ O que você receberá:</p>
+                  <p className="font-semibold text-[#2f4a18] mb-2 flex items-center gap-2">
+                    <Sparkles className="w-5 h-5" />
+                    O que você receberá:
+                  </p>
                   <ul className="text-sm text-[#2f4a18] space-y-1">
-                    <li>✓ Plano alimentar completo para 30 dias</li>
-                    <li>✓ Cardápio personalizado baseado no seu perfil</li>
-                    <li>✓ Lista de compras organizada</li>
-                    <li>✓ Orientações nutricionais detalhadas</li>
+                    <li className="flex items-start gap-2">
+                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>Plano alimentar completo para 30 dias</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>Cardápio personalizado baseado no seu perfil</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>Lista de compras organizada</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>Orientações nutricionais detalhadas</span>
+                    </li>
                   </ul>
                 </div>
 
@@ -979,17 +1012,28 @@ export default function QuizPage() {
               </div>
 
               {submitError && (
-                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm">
-                  ⚠️ {submitError}
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{submitError}</span>
                 </div>
               )}
 
               <button
                 onClick={handleSubmitQuiz}
                 disabled={isSubmitting}
-                className="w-full bg-[#4f6e2c] text-white font-bold py-4 px-6 rounded-lg hover:brightness-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg"
+                className="w-full bg-[#4f6e2c] text-white font-bold py-4 px-6 rounded-lg hover:brightness-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg flex items-center justify-center gap-2"
               >
-                {isSubmitting ? '⏳ Processando...' : '🔒 Garantir Meu Plano Agora'}
+                {isSubmitting ? (
+                  <>
+                    <Loader className="w-5 h-5 animate-spin" />
+                    Processando...
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-5 h-5" />
+                    Garantir Meu Plano Agora
+                  </>
+                )}
               </button>
 
               <p className="text-xs text-center text-[#888] mt-3">
