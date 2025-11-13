@@ -12,7 +12,7 @@ import { LoadingScreen } from "@/components/loading-screen"
 import { 
   Moon, Heart, Candy, Calendar, CheckCircle, User, UserCircle, UserRound, Users,
   Sparkles, Dumbbell, Flame, Flower, Scale, Donut, Sunrise, Sun, CloudSun, X,
-  UtensilsCrossed, Clock, Apple, IceCream, Bread, Cookie, Beef, Wine, Coffee,
+  UtensilsCrossed, Clock, Apple, IceCream, Croissant, Cookie, Beef, Wine, Coffee,
   Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil
 } from "lucide-react"
 import Img1 from "@/src/img/1.png"
@@ -224,41 +224,44 @@ export default function QuizPage() {
                 {[
                   {
                     value: "magro(a)",
-                    icon: "🧍‍♀️",
+                    icon: User,
                     title: "Magro(a)",
                     desc: "Baixo percentual de gordura, estrutura mais fina.",
                   },
                   {
                     value: "falso magro(a)",
-                    icon: "🧍‍♀️",
+                    icon: UserCircle,
                     title: "Falso magro(a)",
                     desc: "Peso normal, gordura localizada e pouca definição.",
                   },
                   {
                     value: "gordinho(a)",
-                    icon: "🧍‍♀️",
+                    icon: UserRound,
                     title: "Gordinho(a)",
                     desc: "Leve excesso de gordura corporal.",
                   },
                   {
                     value: "muito gordinho(a)",
-                    icon: "🧍‍♀️",
+                    icon: Users,
                     title: "Muito gordinho(a)",
                     desc: "Acúmulo de gordura evidente.",
                   },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("tipo_fisico", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    <span className="text-3xl">{option.icon}</span>
-                    <div>
-                      <div className="font-semibold">{option.title}</div>
-                      <div className="text-sm text-[#555] mt-1">{option.desc}</div>
-                    </div>
-                  </button>
-                ))}
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("tipo_fisico", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <div>
+                        <div className="font-semibold">{option.title}</div>
+                        <div className="text-sm text-[#555] mt-1">{option.desc}</div>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -274,33 +277,36 @@ export default function QuizPage() {
             >
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
-                  { value: "Magro(a)", icon: "💫", title: "Magro(a)", desc: "Leve e enxuto, pouca gordura corporal." },
+                  { value: "Magro(a)", icon: Sparkles, title: "Magro(a)", desc: "Leve e enxuto, pouca gordura corporal." },
                   {
                     value: "Definido(a)",
-                    icon: "💪",
+                    icon: Dumbbell,
                     title: "Definido(a)",
                     desc: "Músculos aparentes e boa tonicidade.",
                   },
-                  { value: "Seco(a)", icon: "🔥", title: "Seco(a)", desc: "Baixo % de gordura e máxima definição." },
+                  { value: "Seco(a)", icon: Flame, title: "Seco(a)", desc: "Baixo % de gordura e máxima definição." },
                   {
                     value: "Corpo Violão",
-                    icon: "🌸",
+                    icon: Flower,
                     title: "Corpo Violão",
                     desc: "Cintura marcada e curvas proporcionais.",
                   },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("corpo_desejado", option.value)}
-                    className="border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    <span className="text-2xl">{option.icon}</span>
-                    <div>
-                      <div className="font-semibold">{option.title}</div>
-                      <div className="text-sm text-[#555] mt-1">{option.desc}</div>
-                    </div>
-                  </button>
-                ))}
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("corpo_desejado", option.value)}
+                      className="border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <div>
+                        <div className="font-semibold">{option.title}</div>
+                        <div className="text-sm text-[#555] mt-1">{option.desc}</div>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -319,25 +325,32 @@ export default function QuizPage() {
                 {[
                   {
                     value: "Dificuldade para ganhar peso/massa",
-                    label: "💪 Tenho dificuldade para ganhar peso ou massa muscular.",
+                    label: "Tenho dificuldade para ganhar peso ou massa muscular.",
+                    icon: Dumbbell,
                   },
                   {
                     value: "Oscila com facilidade",
-                    label: "⚖️ Meu peso oscila com facilidade — perco e ganho rapidamente.",
+                    label: "Meu peso oscila com facilidade — perco e ganho rapidamente.",
+                    icon: Scale,
                   },
                   {
                     value: "Ganho com facilidade",
-                    label: "🍩 Tendo a ganhar peso com facilidade e demoro mais para eliminar.",
+                    label: "Tendo a ganhar peso com facilidade e demoro mais para eliminar.",
+                    icon: Donut,
                   },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("peso_comportamento", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("peso_comportamento", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -359,17 +372,18 @@ export default function QuizPage() {
               </p>
               <div className="flex flex-wrap gap-2 mb-4">
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
-                  ✅ Sem jejum forçado
+                  <CheckCircle className="w-4 h-4" /> Sem jejum forçado
                 </span>
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
-                  ✅ Sem dietas radicais
+                  <CheckCircle className="w-4 h-4" /> Sem dietas radicais
                 </span>
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
-                  ✅ Sem horas na academia
+                  <CheckCircle className="w-4 h-4" /> Sem horas na academia
                 </span>
               </div>
-              <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg">
-                📋 Um plano prático, realista e totalmente <strong>personalizado</strong> para você.
+              <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg flex items-start gap-2">
+                <CheckCircle className="w-5 h-5 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                <span>Um plano prático, realista e totalmente <strong>personalizado</strong> para você.</span>
               </div>
             </QuizStep>
           )}
@@ -386,19 +400,23 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "6-8", label: "☀️ Entre 6h e 8h" },
-                  { value: "8-10", label: "🌤️ Entre 8h e 10h" },
-                  { value: "10-12", label: "🌞 Entre 10h e 12h" },
-                  { value: "nao tomo", label: "🚫 Geralmente não tomo" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("cafe_da_manha", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "6-8", label: "Entre 6h e 8h", icon: Sunrise },
+                  { value: "8-10", label: "Entre 8h e 10h", icon: Sun },
+                  { value: "10-12", label: "Entre 10h e 12h", icon: CloudSun },
+                  { value: "nao tomo", label: "Geralmente não tomo", icon: X },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("cafe_da_manha", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -414,19 +432,23 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "10-11", label: "🍽️ 10h–11h" },
-                  { value: "11-12", label: "🥗 11h–12h" },
-                  { value: "12-13", label: "🍛 12h–13h" },
-                  { value: "13-14", label: "🍲 13h–14h" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("almoco", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "10-11", label: "10h–11h", icon: UtensilsCrossed },
+                  { value: "11-12", label: "11h–12h", icon: UtensilsCrossed },
+                  { value: "12-13", label: "12h–13h", icon: UtensilsCrossed },
+                  { value: "13-14", label: "13h–14h", icon: UtensilsCrossed },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("almoco", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -442,19 +464,23 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "14-15", label: "🕑 14h–15h" },
-                  { value: "15-16", label: "🕒 15h–16h" },
-                  { value: "16-17", label: "🕓 16h–17h" },
-                  { value: "nao faco", label: "🚫 Não faço" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("lanche_tarde", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "14-15", label: "14h–15h", icon: Clock },
+                  { value: "15-16", label: "15h–16h", icon: Clock },
+                  { value: "16-17", label: "16h–17h", icon: Clock },
+                  { value: "nao faco", label: "Não faço", icon: X },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("lanche_tarde", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -470,19 +496,23 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "16-18", label: "🍽️ 16h–18h" },
-                  { value: "18-20", label: "🥗 18h–20h" },
-                  { value: "20-22", label: "🍲 20h–22h" },
-                  { value: "nao janto", label: "🚫 Não janto" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("jantar", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "16-18", label: "16h–18h", icon: UtensilsCrossed },
+                  { value: "18-20", label: "18h–20h", icon: UtensilsCrossed },
+                  { value: "20-22", label: "20h–22h", icon: UtensilsCrossed },
+                  { value: "nao janto", label: "Não janto", icon: X },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("jantar", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -498,17 +528,21 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "sim", label: "🍫 Sim, com certeza!" },
-                  { value: "nao", label: "🍎 Não, prefiro evitar." },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("sobremesa", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "sim", label: "Sim, com certeza!", icon: IceCream },
+                  { value: "nao", label: "Não, prefiro evitar.", icon: Apple },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("sobremesa", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -526,20 +560,24 @@ export default function QuizPage() {
               <p className="mb-4">Olha só o que você vai poder incluir no seu plano — com estratégia e moderação:</p>
               <div className="flex flex-wrap gap-2">
                 {[
-                  "🍞 Pão francês",
-                  "🍫 Sobremesas na medida",
-                  "🍔 Hambúrguer caseiro",
-                  "🥤 Refrigerante",
-                  "🍚 Arroz",
-                  "🌰 Feijão",
-                ].map((food) => (
-                  <span
-                    key={food}
-                    className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold"
-                  >
-                    {food}
-                  </span>
-                ))}
+                  { label: "Pão francês", icon: Croissant },
+                  { label: "Sobremesas na medida", icon: Cookie },
+                  { label: "Hambúrguer caseiro", icon: Beef },
+                  { label: "Refrigerante", icon: Wine },
+                  { label: "Arroz", icon: Salad },
+                  { label: "Feijão", icon: Coffee },
+                ].map((food) => {
+                  const IconComponent = food.icon
+                  return (
+                    <span
+                      key={food.label}
+                      className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold"
+                    >
+                      <IconComponent className="w-4 h-4" />
+                      {food.label}
+                    </span>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -556,18 +594,22 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "sedentario", label: "💺 Passo a maior parte do tempo sentado(a)" },
-                  { value: "moderado", label: "🚶‍♀️ Pausas ativas ou movimento ocasional" },
-                  { value: "ativo", label: "🧍‍♀️ Em pé ou em movimento quase todo o dia" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("rotina_dia", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "sedentario", label: "Passo a maior parte do tempo sentado(a)", icon: Armchair },
+                  { value: "moderado", label: "Pausas ativas ou movimento ocasional", icon: PersonStanding },
+                  { value: "ativo", label: "Em pé ou em movimento quase todo o dia", icon: PersonStanding },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("rotina_dia", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -584,19 +626,23 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "<5", label: "😴 Menos de 5 horas" },
-                  { value: "5-6", label: "🌙 5–6 horas" },
-                  { value: "7-8", label: "💤 7–8 horas" },
-                  { value: ">8", label: "☀️ Mais de 8 horas" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("sono", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "<5", label: "Menos de 5 horas", icon: Moon },
+                  { value: "5-6", label: "5–6 horas", icon: Moon },
+                  { value: "7-8", label: "7–8 horas", icon: Bed },
+                  { value: ">8", label: "Mais de 8 horas", icon: Sun },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("sono", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -613,19 +659,23 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "quase nao", label: "☕ Quase não bebo água" },
-                  { value: "~500ml", label: "🥤 Aproximadamente 2 copos (500 ml)" },
-                  { value: "0.5-1.5L", label: "💧 2–6 copos (0,5–1,5 L)" },
-                  { value: ">6 copos", label: "🚰 Mais de 6 copos" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("agua", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "quase nao", label: "Quase não bebo água", icon: Coffee },
+                  { value: "~500ml", label: "Aproximadamente 2 copos (500 ml)", icon: GlassWater },
+                  { value: "0.5-1.5L", label: "2–6 copos (0,5–1,5 L)", icon: Droplet },
+                  { value: ">6 copos", label: "Mais de 6 copos", icon: GlassWater },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("agua", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
@@ -697,20 +747,24 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "autoestima", label: "💃 Aumentar autoconfiança e autoestima" },
-                  { value: "saude", label: "💪 Melhorar saúde e disposição" },
-                  { value: "roupas", label: "👗 Voltar a usar as roupas que gosto" },
-                  { value: "pos-gestacao", label: "🤱 Recuperar o corpo pós-gestação" },
-                  { value: "outro", label: "📝 Outro motivo pessoal" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleOptionClick("motivo", option.value)}
-                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                  { value: "autoestima", label: "Aumentar autoconfiança e autoestima", icon: Sparkles },
+                  { value: "saude", label: "Melhorar saúde e disposição", icon: Heart },
+                  { value: "roupas", label: "Voltar a usar as roupas que gosto", icon: Shirt },
+                  { value: "pos-gestacao", label: "Recuperar o corpo pós-gestação", icon: Baby },
+                  { value: "outro", label: "Outro motivo pessoal", icon: Pencil },
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("motivo", option.value)}
+                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    >
+                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <span className="text-base">{option.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </QuizStep>
           )}
