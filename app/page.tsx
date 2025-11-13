@@ -9,6 +9,7 @@ import { WeightPicker } from "@/components/weight-picker"
 import { PhoneInput } from "@/components/phone-input"
 import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
+import Img1 from "@/src/img/1.png"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -183,7 +184,7 @@ export default function QuizPage() {
               kicker="PLANO ALIMENTAR PERSONALIZADO PARA RESULTADOS REAIS"
               title="Elimine de 5 a 10 kg em 30 dias — leve, prático e sem extremismos."
               image="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?q=80&w=1470&auto=format&fit=crop"
-              subtitle="👉 Responda ao quiz em menos de 1 minuto e receba um plano exclusivo para o seu perfil."
+              subtitle="👉 Responda ao quiz  e em poucos minutos receba um plano exclusivo para o seu perfil."
               question="Escolha sua faixa etária para começar 👇"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
@@ -191,7 +192,7 @@ export default function QuizPage() {
               canGoBack={currentStep > 0}
             >
               <div className="grid grid-cols-2 gap-3 md:gap-4">
-                {["18-24", "25-34", "35-44", "45-59"].map((age) => (
+                {["18-24 anos", "25-34 anos", "35-44 anos", "45-59 anos"].map((age) => (
                   <button
                     key={age}
                     onClick={() => handleOptionClick("faixa_etaria", age)}
@@ -208,7 +209,6 @@ export default function QuizPage() {
           {currentStep === 1 && (
             <QuizStep
               title="Qual dessas opções representa melhor o seu tipo físico atual?"
-              image="https://images.unsplash.com/photo-1599050751735-02c2b27d4bff?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -261,7 +261,6 @@ export default function QuizPage() {
           {currentStep === 2 && (
             <QuizStep
               title="Qual desses estilos de corpo você gostaria de conquistar?"
-              image="https://images.unsplash.com/photo-1558611848-73f7eb4001a1?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -600,7 +599,7 @@ export default function QuizPage() {
           {currentStep === 13 && (
             <QuizStep
               title="Qual é a sua média de consumo de água por dia?"
-              image="https://images.unsplash.com/photo-1548839140-29a749e1cf4d?q=80&w=1470&auto=format&fit=crop"
+              image={Img1}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -609,7 +608,7 @@ export default function QuizPage() {
               <div className="space-y-3">
                 {[
                   { value: "quase nao", label: "☕ Quase não bebo água" },
-                  { value: "~500ml", label: "🥤 ~2 copos (≈500 ml)" },
+                  { value: "~500ml", label: "🥤 Aproximadamente 2 copos (500 ml)" },
                   { value: "0.5-1.5L", label: "💧 2–6 copos (0,5–1,5 L)" },
                   { value: ">6 copos", label: "🚰 Mais de 6 copos" },
                 ].map((option) => (

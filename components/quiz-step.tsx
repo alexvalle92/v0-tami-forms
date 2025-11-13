@@ -2,12 +2,13 @@
 
 import type { ReactNode } from "react"
 import Image from "next/image"
+import { StaticImageData } from "next/image"
 
 interface QuizStepProps {
   kicker?: string
   title: string
   subtitle?: string
-  image?: string
+  image?: string | StaticImageData
   question?: string
   counter: string
   children: ReactNode
