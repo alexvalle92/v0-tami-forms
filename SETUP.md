@@ -34,7 +34,7 @@ Após o teste, verifique no Supabase:
 
 ## 🔧 Estrutura de Arquivos Criados
 
-```
+\`\`\`
 ├── app/
 │   ├── api/
 │   │   └── submit-quiz/
@@ -47,7 +47,7 @@ Após o teste, verifique no Supabase:
 ├── supabase-schema.sql           ← Script SQL para criar tabelas
 ├── replit.md                     ← Documentação completa
 └── SETUP.md                      ← Este arquivo
-```
+\`\`\`
 
 ## 🎯 Funcionalidades Implementadas
 

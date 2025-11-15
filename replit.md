@@ -89,7 +89,7 @@ O sistema possui duas estratégias diferentes de tratamento de erros dependendo 
 - **Comportamento**: Erros são enviados para webhook N8N e usuário é redirecionado
 - **Webhook N8N**: `https://n8n.nutritamilivalle.com.br/webhook/errors-app`
 - **Payload enviado**:
-  ```json
+  \`\`\`json
   {
     "patient_id": "uuid-do-paciente",
     "error": {
@@ -99,7 +99,7 @@ O sistema possui duas estratégias diferentes de tratamento de erros dependendo 
     },
     "timestamp": "ISO-8601"
   }
-  ```
+  \`\`\`
 - **Tipos de erro**:
   - `asaas_customer_creation_error`: Falha ao criar cliente no Asaas
   - `supabase_update_asaas_id_error`: Falha ao atualizar asaas_customer_id
@@ -124,24 +124,24 @@ O sistema suporta duas formas de gerenciar variáveis de ambiente:
 Para ambientes de produção na AWS, as variáveis são carregadas automaticamente do AWS Systems Manager Parameter Store:
 
 **Configuração necessária:**
-```env
+\`\`\`env
 USE_AWS_PARAMETER_STORE=true
 AWS_REGION=us-east-1  # Região da sua conta AWS
 AWS_PARAMETER_PATH=/nutritamilivalle/production  # Caminho dos parâmetros
-```
+\`\`\`
 
 **Estrutura dos parâmetros no AWS Parameter Store:**
-```
+\`\`\`
 /nutritamilivalle/production/
 ├── NEXT_PUBLIC_SUPABASE_URL
 ├── NEXT_PUBLIC_SUPABASE_ANON_KEY
 ├── SUPABASE_SERVICE_ROLE_KEY
 ├── ASAAS_API_KEY
 └── ASAAS_SANDBOX
-```
+\`\`\`
 
 **Permissões IAM necessárias:**
-```json
+\`\`\`json
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -156,19 +156,19 @@ AWS_PARAMETER_PATH=/nutritamilivalle/production  # Caminho dos parâmetros
     }
   ]
 }
-```
+\`\`\`
 
 ### Desenvolvimento Local
 
 Para desenvolvimento local, use o arquivo `.env.local`:
 
 1. Copie o template:
-   ```bash
+   \`\`\`bash
    cp .env.local.example .env.local
-   ```
+   \`\`\`
 
 2. Preencha as variáveis no `.env.local`:
-   ```env
+   \`\`\`env
    # Supabase
    NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
    NEXT_PUBLIC_SUPABASE_ANON_KEY=sua_chave_anon_key_aqui
@@ -177,7 +177,7 @@ Para desenvolvimento local, use o arquivo `.env.local`:
    # Asaas
    ASAAS_API_KEY=sua_api_key_asaas_aqui
    ASAAS_SANDBOX=true
-   ```
+   \`\`\`
 
 3. O arquivo `.env.local` está no `.gitignore` e **nunca** deve ser commitado
 
@@ -195,7 +195,7 @@ O sistema detecta automaticamente o ambiente através da variável `USE_AWS_PARA
 
 ## Estrutura de Arquivos
 
-```
+\`\`\`
 /
 ├── app/
 │   ├── api/
@@ -225,7 +225,7 @@ O sistema detecta automaticamente o ambiente através da variável `USE_AWS_PARA
 ├── package.json
 ├── tsconfig.json
 └── next.config.mjs
-```
+\`\`\`
 
 ## Setup do Projeto
 
@@ -245,10 +245,10 @@ O sistema detecta automaticamente o ambiente através da variável `USE_AWS_PARA
 
 ### 3. Executar o Projeto
 
-```bash
+\`\`\`bash
 pnpm install
 pnpm run dev
-```
+\`\`\`
 
 A aplicação estará disponível em `http://0.0.0.0:5000`
 
