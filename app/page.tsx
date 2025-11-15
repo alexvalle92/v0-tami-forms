@@ -17,7 +17,9 @@ import {
   Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil,
   ArrowRight, Ruler, Check, Smartphone, Lock, AlertTriangle, Loader,
   CookingPot, Bean, CupSoda,
-  Pizza
+  Pizza,
+  Activity,
+  Footprints
 } from "lucide-react"
 import CopoAgua from "@/src/img/copoAgua.png"
 import CorpoMagra from "@/src/img/magra.jpg"
@@ -30,6 +32,7 @@ import CafeManha from "@/src/img/cafeManha.png"
 import CafeTarde from "@/src/img/cafeTarde.png"
 import Sobremesa from "@/src/img/sobremesa.png"
 import PessoaComendo from "@/src/img/pessoaComendo.png"
+import Noite from "@/src/img/noite.png"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -393,13 +396,13 @@ export default function QuizPage() {
               </p>
               <div className="flex flex-wrap gap-2 mb-4">
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
-                  <CheckCircle className="w-4 h-4" /> Sem jejum forçado
+                  <CheckCircle className="w-6 h-6" /> Sem jejum forçado
                 </span>
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
-                  <CheckCircle className="w-4 h-4" /> Sem dietas radicais
+                  <CheckCircle className="w-6 h-6" /> Sem dietas radicais
                 </span>
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
-                  <CheckCircle className="w-4 h-4" /> Sem horas na academia
+                  <CheckCircle className="w-6 h-6" /> Sem horas na academia
                 </span>
               </div>
               <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg flex items-start gap-2">
@@ -594,7 +597,7 @@ export default function QuizPage() {
                       key={food.label}
                       className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold"
                     >
-                      <IconComponent className="w-4 h-4" />
+                      <IconComponent className="w-6 h-6" />
                       {food.label}
                     </span>
                   )
@@ -607,7 +610,6 @@ export default function QuizPage() {
           {currentStep === 11 && (
             <QuizStep
               title="Como você descreveria sua rotina durante o dia?"
-              image="https://images.unsplash.com/photo-1529070538774-1843cb3265df?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -616,8 +618,8 @@ export default function QuizPage() {
               <div className="space-y-3">
                 {[
                   { value: "sedentario", label: "Passo a maior parte do tempo sentado(a)", icon: Armchair },
-                  { value: "moderado", label: "Pausas ativas ou movimento ocasional", icon: PersonStanding },
-                  { value: "ativo", label: "Em pé ou em movimento quase todo o dia", icon: PersonStanding },
+                  { value: "moderado", label: "Pausas ativas ou movimento ocasional", icon: Activity },
+                  { value: "ativo", label: "Em pé ou em movimento quase todo o dia", icon: Footprints },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -626,7 +628,7 @@ export default function QuizPage() {
                       onClick={() => handleOptionClick("rotina_dia", option.value)}
                       className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
                     >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <IconComponent className="w-10 h-10 text-[#4f6e2c] flex-shrink-0" />
                       <span className="text-base">{option.label}</span>
                     </button>
                   )
@@ -639,7 +641,7 @@ export default function QuizPage() {
           {currentStep === 12 && (
             <QuizStep
               title="Quantas horas de sono você costuma ter por noite?"
-              image="https://images.unsplash.com/photo-1512850183-6d7990f42385?q=80&w=1470&auto=format&fit=crop"
+              image={Noite}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -680,7 +682,7 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "quase nao", label: "Quase não bebo água", icon: Coffee },
+                  { value: "quase nao", label: "Quase não bebo água", icon: X },
                   { value: "~500ml", label: "Aproximadamente 2 copos (500 ml)", icon: GlassWater },
                   { value: "0.5-1.5L", label: "2–6 copos (0,5–1,5 L)", icon: Droplet },
                   { value: ">6 copos", label: "Mais de 6 copos", icon: GlassWater },
@@ -742,14 +744,14 @@ export default function QuizPage() {
                         }}
                         className="w-5 h-5 accent-[#4f6e2c]"
                       />
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <IconComponent className="w-10 h-10 text-[#4f6e2c] flex-shrink-0" />
                       <span className="text-base">{option.label}</span>
                     </label>
                   )
                 })}
               </div>
               <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
-                <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <CheckCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
                 <span>Dica: se marcar "Nenhum desses", deixe os demais desmarcados.</span>
               </div>
             </QuizStep>
@@ -779,7 +781,7 @@ export default function QuizPage() {
                       onClick={() => handleOptionClick("motivo", option.value)}
                       className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
                     >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <IconComponent className="w-10 h-10 text-[#4f6e2c] flex-shrink-0" />
                       <span className="text-base">{option.label}</span>
                     </button>
                   )
@@ -800,7 +802,7 @@ export default function QuizPage() {
             >
               <HeightPicker value={answers.altura_cm || 170} onChange={(value) => updateAnswer("altura_cm", value)} />
               <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
-                <Ruler className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <Ruler className="w-6 h-6 flex-shrink-0 mt-0.5" />
                 <span>Essa informação é fundamental para calcular seu plano.</span>
               </div>
             </QuizStep>
@@ -855,15 +857,15 @@ export default function QuizPage() {
               />
               <ul className="mt-4 space-y-2 text-[#555]">
                 <li className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                  <Check className="w-6 h-6 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
                   <span>Menor risco de doenças crônicas (diabetes, hipertensão e cardíacas).</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                  <Check className="w-6 h-6 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
                   <span>Melhor controle de colesterol e pressão arterial.</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                  <Check className="w-6 h-6 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
                   <span>Mais qualidade de vida e disposição.</span>
                 </li>
               </ul>
@@ -922,7 +924,7 @@ export default function QuizPage() {
             >
               <PhoneInput value={answers.whatsapp || ""} onChange={(value) => updateAnswer("whatsapp", value)} />
               <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
-                <Smartphone className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <Smartphone className="w-6 h-6 flex-shrink-0 mt-0.5" />
                 <span>Inclua o DDD antes do número.</span>
               </div>
             </QuizStep>
@@ -962,7 +964,7 @@ export default function QuizPage() {
             >
               <CpfInput value={answers.cpf || ""} onChange={(value) => updateAnswer("cpf", value)} />
               <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
-                <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <Lock className="w-6 h-6 flex-shrink-0 mt-0.5" />
                 <span>Seus dados estão seguros e protegidos.</span>
               </div>
             </QuizStep>
@@ -992,19 +994,19 @@ export default function QuizPage() {
                   </p>
                   <ul className="text-sm text-[#2f4a18] space-y-1">
                     <li className="flex items-start gap-2">
-                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
                       <span>Plano alimentar completo para 30 dias</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
                       <span>Cardápio personalizado baseado no seu perfil</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
                       <span>Acesso ao aplicativo</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
                       <span>Orientações nutricionais detalhadas</span>
                     </li>
                   </ul>
@@ -1018,7 +1020,7 @@ export default function QuizPage() {
 
               {submitError && (
                 <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <AlertTriangle className="w-6 h-6 flex-shrink-0 mt-0.5" />
                   <span>{submitError}</span>
                 </div>
               )}
