@@ -11,6 +11,7 @@ import { PhoneInput } from "@/components/phone-input"
 import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
 import { WeightLossChart } from "@/components/weight-loss-chart"
+import { ErrorModal } from "@/components/error-modal"
 import { Moon, Heart, Candy, Calendar, CheckCircle, User, UserCircle, UserRound, Users, Sparkles, Dumbbell, Flame, Flower, Scale, Donut, Sunrise, Sun, CloudSun, X, UtensilsCrossed, Clock, Apple, IceCream, Croissant, Cookie, Beef, Wine, Coffee, Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil, ArrowRight, Ruler, Check, Smartphone, Lock, AlertTriangle, Loader, CookingPot, Bean, CupSoda, Pizza, Footprints, Activity } from 'lucide-react'
 import CopoAgua from "@/src/img/copoAgua.png"
 import CorpoMagra from "@/src/img/magra.jpg"
@@ -31,6 +32,7 @@ export default function QuizPage() {
   const [showJSON, setShowJSON] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" })
 
   const totalSteps = 27
 
@@ -132,7 +134,53 @@ export default function QuizPage() {
 
   const handleNext = () => {
     if (!canProceed()) {
-      alert("Por favor, responda a pergunta antes de continuar.")
+      let errorMessage = "Por favor, responda a pergunta antes de continuar."
+      
+      switch (currentStep) {
+        case 21:
+          if (!answers.email) {
+            errorMessage = "Por favor, informe seu e-mail para continuar."
+          } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)) {
+            errorMessage = "Por favor, insira um e-mail válido (exemplo: seuemail@exemplo.com)"
+          }
+          break
+        case 22:
+          if (!answers.whatsapp) {
+            errorMessage = "Por favor, informe seu número de WhatsApp."
+          } else if (answers.whatsapp.replace(/\D/g, "").length < 10) {
+            errorMessage = "Por favor, insira um telefone válido com DDD (exemplo: (11) 98765-4321)"
+          }
+          break
+        case 23:
+          errorMessage = "Por favor, informe seu nome completo para continuar."
+          break
+        case 24:
+          if (!answers.cpf) {
+            errorMessage = "Por favor, informe seu CPF para continuar."
+          } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
+            errorMessage = "Por favor, insira um CPF válido com 11 dígitos."
+          }
+          break
+        case 16:
+          errorMessage = "Por favor, selecione sua altura antes de continuar."
+          break
+        case 17:
+          errorMessage = "Por favor, informe seu peso atual para continuar."
+          break
+        case 18:
+          errorMessage = "Por favor, defina sua meta de peso para continuar."
+          break
+        case 14:
+          errorMessage = "Por favor, selecione pelo menos uma opção de hábito alimentar."
+          break
+        default:
+          errorMessage = "Por favor, selecione uma opção antes de continuar."
+      }
+      
+      setErrorModal({ 
+        isOpen: true, 
+        message: errorMessage
+      })
       return
     }
     nextStep()
@@ -186,6 +234,12 @@ export default function QuizPage() {
 
   return (
     <div className="min-h-screen bg-[#f7f7f7] flex items-center justify-center p-4">
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        message={errorModal.message}
+        onClose={() => setErrorModal({ isOpen: false, message: "" })}
+      />
+      
       <div className="w-full max-w-[880px] bg-white rounded-[18px] shadow-[0_12px_40px_rgba(0,0,0,0.08)] overflow-hidden">
         <div className="p-5 md:p-6">
           <ProgressBar current={currentStep + 1} total={totalSteps} />
