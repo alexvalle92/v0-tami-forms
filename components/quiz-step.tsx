@@ -7,7 +7,7 @@ import { StaticImageData } from "next/image"
 interface QuizStepProps {
   kicker?: string
   title: string
-  subtitle?: string
+  subtitle?: ReactNode
   image?: string | StaticImageData
   question?: string
   counter: string
@@ -69,9 +69,6 @@ export function QuizStep({
       </div>
 
       <div className="text-center text-[#777] text-sm mt-4">{counter}</div>
-      <div className="text-center text-[#8a8a8a] text-sm mt-2">
-        Pressione <code className="bg-[#f1f1f1] rounded px-2 py-1">Enter ↵</code> para continuar
-      </div>
     </div>
   )
 }

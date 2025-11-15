@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { QuizStep } from "@/components/quiz-step"
+import Image from "next/image"
 import { ProgressBar } from "@/components/progress-bar"
 import { BMIDisplay } from "@/components/bmi-display"
 import { HeightPicker } from "@/components/height-picker"
@@ -14,9 +15,21 @@ import {
   Sparkles, Dumbbell, Flame, Flower, Scale, Donut, Sunrise, Sun, CloudSun, X,
   UtensilsCrossed, Clock, Apple, IceCream, Croissant, Cookie, Beef, Wine, Coffee,
   Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil,
-  ArrowRight, Ruler, Check, Smartphone, Lock, AlertTriangle, Loader
+  ArrowRight, Ruler, Check, Smartphone, Lock, AlertTriangle, Loader,
+  CookingPot, Bean, CupSoda,
+  Pizza
 } from "lucide-react"
-import Img1 from "@/src/img/1.png"
+import CopoAgua from "@/src/img/copoAgua.png"
+import CorpoMagra from "@/src/img/magra.jpg"
+import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
+import CorpoGordinha from "@/src/img/gordinha.jpg"
+import CorpoMuitoGordinha from "@/src/img/muitoGordinha.jpg"
+import PesoMedida from "@/src/img/PesoMedida.png"
+import Almoco from "@/src/img/almoco.png"
+import CafeManha from "@/src/img/cafeManha.png"
+import CafeTarde from "@/src/img/cafeTarde.png"
+import Sobremesa from "@/src/img/sobremesa.png"
+import PessoaComendo from "@/src/img/pessoaComendo.png"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -190,7 +203,6 @@ export default function QuizPage() {
             <QuizStep
               kicker="PLANO ALIMENTAR PERSONALIZADO PARA RESULTADOS REAIS"
               title="Elimine de 5 a 10 kg em 30 dias — leve, prático e sem extremismos."
-              image="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?q=80&w=1470&auto=format&fit=crop"
               subtitle={
                 <span className="flex items-center gap-2">
                   <ArrowRight className="w-5 h-5 inline-block" />
@@ -226,48 +238,50 @@ export default function QuizPage() {
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
+                  { value: "Magro(a)", 
+                    image: CorpoMagra,
+                    title: "Magro(a)", 
+                    desc: "Baixo percentual de gordura, estrutura mais fina." },
                   {
-                    value: "magro(a)",
-                    icon: User,
-                    title: "Magro(a)",
-                    desc: "Baixo percentual de gordura, estrutura mais fina.",
-                  },
-                  {
-                    value: "falso magro(a)",
-                    icon: UserCircle,
-                    title: "Falso magro(a)",
+                    value: "Falso Magro(a)",
+                    image: CorpoFalsaMagra,
+                    title: "Falso Magro(a)",
                     desc: "Peso normal, gordura localizada e pouca definição.",
                   },
+                  { value: "Gordinho(a)", 
+                    image: CorpoGordinha,
+                    title: "Gordinho(a)", 
+                    desc: "Leve excesso de gordura corporal." },
                   {
-                    value: "gordinho(a)",
-                    icon: UserRound,
-                    title: "Gordinho(a)",
-                    desc: "Leve excesso de gordura corporal.",
-                  },
-                  {
-                    value: "muito gordinho(a)",
-                    icon: Users,
+                    value: "Muito gordinho(a)",
+                    image: CorpoMuitoGordinha,
                     title: "Muito gordinho(a)",
                     desc: "Acúmulo de gordura evidente.",
                   },
                 ].map((option) => {
-                  const IconComponent = option.icon
-                  return (
-                    <button
-                      key={option.value}
-                      onClick={() => handleOptionClick("tipo_fisico", option.value)}
-                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
-                    >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
-                      <div>
-                        <div className="font-semibold">{option.title}</div>
-                        <div className="text-sm text-[#555] mt-1">{option.desc}</div>
-                      </div>
-                    </button>
-                  )
-                })}
+                return (
+                  <button
+                    key={option.value}
+                    onClick={() => handleOptionClick("tipo_fisico", option.value)}
+                    className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                  >
+                    <Image
+                      src={option.image}
+                      alt={option.title}
+                      width={40}
+                      height={40}
+                      className="flex-shrink-0 rounded-lg"
+                    />
+
+                    <div>
+                      <div className="font-semibold">{option.title}</div>
+                      <div className="text-sm text-[#555] mt-1">{option.desc}</div>
+                    </div>
+                  </button>
+                )
+              })}
               </div>
             </QuizStep>
           )}
@@ -283,29 +297,33 @@ export default function QuizPage() {
             >
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
-                  { value: "Magro(a)", icon: Sparkles, title: "Magro(a)", desc: "Leve e enxuto, pouca gordura corporal." },
+                  { value: "Magro(a)", 
+                    title: "Magro(a)", 
+                    desc: "Leve e enxuto, pouca gordura corporal." 
+                  },
                   {
                     value: "Definido(a)",
-                    icon: Dumbbell,
                     title: "Definido(a)",
                     desc: "Músculos aparentes e boa tonicidade.",
                   },
-                  { value: "Seco(a)", icon: Flame, title: "Seco(a)", desc: "Baixo % de gordura e máxima definição." },
+                  { value: "Seco(a)", 
+                    title: "Seco(a)", 
+                    desc: "Baixo % de gordura e máxima definição." 
+                  },
                   {
                     value: "Corpo Violão",
-                    icon: Flower,
                     title: "Corpo Violão",
                     desc: "Cintura marcada e curvas proporcionais.",
                   },
                 ].map((option) => {
-                  const IconComponent = option.icon
+                  
                   return (
                     <button
                       key={option.value}
                       onClick={() => handleOptionClick("corpo_desejado", option.value)}
                       className="border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
                     >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      
                       <div>
                         <div className="font-semibold">{option.title}</div>
                         <div className="text-sm text-[#555] mt-1">{option.desc}</div>
@@ -321,7 +339,7 @@ export default function QuizPage() {
           {currentStep === 3 && (
             <QuizStep
               title="Como o seu peso costuma se comportar ao longo do tempo?"
-              image="https://images.unsplash.com/photo-1556229174-5ffea0c81b?q=80&w=1470&auto=format&fit=crop"
+              image={PesoMedida}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -365,16 +383,13 @@ export default function QuizPage() {
           {currentStep === 4 && (
             <QuizStep
               title="Prepare-se para alcançar a sua melhor versão em apenas 30 dias!"
-              image="https://images.unsplash.com/photo-1505751172876-fa19230c5c528?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
               <p className="mb-4">
-                Você vai receber todas as ferramentas que realmente funcionam para eliminar peso e transformar seu corpo
-                — assim como aconteceu com a <strong>Alessandra</strong>, que conquistou um resultado impressionante em
-                apenas 21 dias!
+                Você vai receber todas as ferramentas que realmente funcionam para eliminar peso e transformar seu corpo.
               </p>
               <div className="flex flex-wrap gap-2 mb-4">
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
@@ -398,7 +413,7 @@ export default function QuizPage() {
           {currentStep === 5 && (
             <QuizStep
               title="Em qual horário você costuma fazer o café da manhã?"
-              image="https://images.unsplash.com/photo-1517677208171-0bc6725a3e60?q=80&w=1470&auto=format&fit=crop"
+              image={CafeManha}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -430,7 +445,7 @@ export default function QuizPage() {
           {currentStep === 6 && (
             <QuizStep
               title="Qual é o horário em que você costuma almoçar?"
-              image="https://images.unsplash.com/photo-1512621776951-4b52a1a014c8?q=80&w=1470&auto=format&fit=crop"
+              image={Almoco}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -438,10 +453,10 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "10-11", label: "10h–11h", icon: UtensilsCrossed },
-                  { value: "11-12", label: "11h–12h", icon: UtensilsCrossed },
-                  { value: "12-13", label: "12h–13h", icon: UtensilsCrossed },
-                  { value: "13-14", label: "13h–14h", icon: UtensilsCrossed },
+                  { value: "10-11", label: "10h–11h", icon: Clock },
+                  { value: "11-12", label: "11h–12h", icon: Clock },
+                  { value: "12-13", label: "12h–13h", icon: Clock },
+                  { value: "13-14", label: "13h–14h", icon: Clock },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -462,7 +477,7 @@ export default function QuizPage() {
           {currentStep === 7 && (
             <QuizStep
               title="Em qual horário você costuma fazer o lanche da tarde?"
-              image="https://images.unsplash.com/photo-1490474418585-ba9bad8fd0ea?q=80&w=1470&auto=format&fit=crop"
+              image={CafeTarde}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -494,7 +509,7 @@ export default function QuizPage() {
           {currentStep === 8 && (
             <QuizStep
               title="Qual é o horário em que você costuma jantar?"
-              image="https://images.unsplash.com/photo-1544025162-d76694265947?q=80&w=1470&auto=format&fit=crop"
+              image={Almoco}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -502,9 +517,9 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "16-18", label: "16h–18h", icon: UtensilsCrossed },
-                  { value: "18-20", label: "18h–20h", icon: UtensilsCrossed },
-                  { value: "20-22", label: "20h–22h", icon: UtensilsCrossed },
+                  { value: "16-18", label: "16h–18h", icon: Clock },
+                  { value: "18-20", label: "18h–20h", icon: Clock },
+                  { value: "20-22", label: "20h–22h", icon: Clock },
                   { value: "nao janto", label: "Não janto", icon: X },
                 ].map((option) => {
                   const IconComponent = option.icon
@@ -526,7 +541,7 @@ export default function QuizPage() {
           {currentStep === 9 && (
             <QuizStep
               title="Você quer ter uma opção de sobremesa no seu plano alimentar?"
-              image="https://images.unsplash.com/photo-1578985545062-69928b1d9587?q=80&w=1470&auto=format&fit=crop"
+              image={Sobremesa}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -557,7 +572,7 @@ export default function QuizPage() {
           {currentStep === 10 && (
             <QuizStep
               title="Equilíbrio sem culpa"
-              image="https://images.unsplash.com/photo-1484980972926-edee96e0960d?q=80&w=1470&auto=format&fit=crop"
+              image={PessoaComendo}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -568,10 +583,10 @@ export default function QuizPage() {
                 {[
                   { label: "Pão francês", icon: Croissant },
                   { label: "Sobremesas na medida", icon: Cookie },
-                  { label: "Hambúrguer caseiro", icon: Beef },
-                  { label: "Refrigerante", icon: Wine },
-                  { label: "Arroz", icon: Salad },
-                  { label: "Feijão", icon: Coffee },
+                  { label: "Hambúrguer caseiro", icon: Pizza },
+                  { label: "Refrigerante", icon: CupSoda },
+                  { label: "Arroz", icon: CookingPot },
+                  { label: "Feijão", icon: Bean },
                 ].map((food) => {
                   const IconComponent = food.icon
                   return (
@@ -657,7 +672,7 @@ export default function QuizPage() {
           {currentStep === 13 && (
             <QuizStep
               title="Qual é a sua média de consumo de água por dia?"
-              image={Img1}
+              image={CopoAgua}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -691,7 +706,6 @@ export default function QuizPage() {
             <QuizStep
               title="Você se identifica com algum desses hábitos alimentares?"
               subtitle="(selecione os que se aplicam)"
-              image="https://images.unsplash.com/photo-1512621776951-4b52a1a014c8?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -745,7 +759,6 @@ export default function QuizPage() {
           {currentStep === 15 && (
             <QuizStep
               title="Qual é o principal motivo que te faz querer entrar em forma?"
-              image="https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -779,7 +792,6 @@ export default function QuizPage() {
           {currentStep === 16 && (
             <QuizStep
               title="Qual é a sua altura (em centímetros)?"
-              image="https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -798,7 +810,6 @@ export default function QuizPage() {
           {currentStep === 17 && (
             <QuizStep
               title="Informe seu peso atual (em kg):"
-              image="https://images.unsplash.com/photo-1607473129011-e674e9b20e8a?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -813,7 +824,6 @@ export default function QuizPage() {
           {currentStep === 18 && (
             <QuizStep
               title="Qual é a sua meta de peso para os próximos 30 dias?"
-              image="https://images.unsplash.com/photo-1544025162-3a38b5f1e9b1?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -834,7 +844,6 @@ export default function QuizPage() {
           {currentStep === 19 && (
             <QuizStep
               title="Aqui está o seu perfil de bem-estar"
-              image="https://images.unsplash.com/photo-1521804906057-1df8fdb0d23a?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -885,7 +894,6 @@ export default function QuizPage() {
           {currentStep === 21 && (
             <QuizStep
               title="Digite seu e-mail para receber seu plano personalizado:"
-              image="https://images.unsplash.com/photo-1492724441997-5dc865305da7?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -906,7 +914,6 @@ export default function QuizPage() {
           {currentStep === 22 && (
             <QuizStep
               title="Informe seu número de WhatsApp:"
-              image="https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -926,7 +933,6 @@ export default function QuizPage() {
             <QuizStep
               title="Qual seu nome?"
               subtitle="(nome completo)"
-              image="https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -947,8 +953,7 @@ export default function QuizPage() {
           {currentStep === 24 && (
             <QuizStep
               title="Informe seu CPF:"
-              subtitle="(necessário para emissão da nota fiscal)"
-              image="https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?q=80&w=1470&auto=format&fit=crop"
+              subtitle="(necessário para criar a cobrança)"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -967,7 +972,7 @@ export default function QuizPage() {
 
           {currentStep >= 26 && (
             <QuizStep
-              title={`${answers.nome_completo?.split(" ")[0] || "Seu"} plano exclusivo está pronto!`}
+              title={`${answers.nome_completo?.split(" ")[0] || ""} seu plano exclusivo está pronto!`}
               image="https://images.unsplash.com/photo-1494390248081-4e521a5940db?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onPrev={prevStep}
@@ -996,7 +1001,7 @@ export default function QuizPage() {
                     </li>
                     <li className="flex items-start gap-2">
                       <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      <span>Lista de compras organizada</span>
+                      <span>Acesso ao aplicativo</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <Check className="w-4 h-4 flex-shrink-0 mt-0.5" />
