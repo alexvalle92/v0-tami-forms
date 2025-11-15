@@ -12,6 +12,7 @@ import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
 import { WeightLossChart } from "@/components/weight-loss-chart"
 import { ErrorModal } from "@/components/error-modal"
+import { SummaryStep } from "@/components/summary-step"
 import { Moon, Heart, Candy, Calendar, CheckCircle, User, UserCircle, UserRound, Users, Sparkles, Dumbbell, Flame, Flower, Scale, Donut, Sunrise, Sun, CloudSun, X, UtensilsCrossed, Clock, Apple, IceCream, Croissant, Cookie, Beef, Wine, Coffee, Salad, Armchair, PersonStanding, Bed, Droplet, GlassWater, Shirt, Baby, Pencil, ArrowRight, Ruler, Check, Smartphone, Lock, AlertTriangle, Loader, CookingPot, Bean, CupSoda, Pizza, Footprints, Activity } from 'lucide-react'
 import CopoAgua from "@/src/img/copoAgua.png"
 import CorpoMagra from "@/src/img/magra.jpg"
@@ -34,7 +35,7 @@ export default function QuizPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" })
 
-  const totalSteps = 27
+  const totalSteps = 28
 
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
@@ -241,8 +242,13 @@ export default function QuizPage() {
       />
       
       <div className="w-full max-w-[880px] bg-white rounded-[18px] shadow-[0_12px_40px_rgba(0,0,0,0.08)] overflow-hidden">
-        <div className="p-5 md:p-6">
+        <div className="p-5 md:p-6 bg-gradient-to-r from-[#f7fbf3] to-white">
           <ProgressBar current={currentStep + 1} total={totalSteps} />
+          <div className="text-center mt-2">
+            <span className="text-sm font-semibold text-[#4f6e2c]">
+              {Math.round(((currentStep + 1) / totalSteps) * 100)}% concluído
+            </span>
+          </div>
         </div>
 
         <div className="px-6 md:px-7 pb-6">
@@ -252,8 +258,8 @@ export default function QuizPage() {
               kicker="PLANO ALIMENTAR PERSONALIZADO PARA RESULTADOS REAIS"
               title="Elimine de 5 a 10 kg em 30 dias — leve, prático e sem extremismos."
               subtitle={
-                <span className="flex items-center gap-2">
-                  <ArrowRight className="w-5 h-5 inline-block" />
+                <span className="flex items-center gap-2 text-base md:text-lg">
+                  <ArrowRight className="w-5 h-5 md:w-6 md:h-6 inline-block flex-shrink-0" />
                   Responda ao quiz e em poucos minutos receba um plano exclusivo para o seu perfil.
                 </span>
               }
@@ -268,7 +274,7 @@ export default function QuizPage() {
                   <button
                     key={age}
                     onClick={() => handleOptionClick("faixa_etaria", age)}
-                    className="border-2 border-[#e5e5e5] rounded-xl p-4 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all"
+                    className="border-2 border-[#e5e5e5] rounded-xl p-4 md:p-5 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all hover:scale-105 active:scale-95 text-base md:text-lg font-medium"
                   >
                     {age}
                   </button>
@@ -1021,7 +1027,20 @@ export default function QuizPage() {
 
           {currentStep === 25 && <LoadingScreen onComplete={nextStep} />}
 
-          {currentStep >= 26 && (
+          {currentStep === 26 && (
+            <QuizStep
+              title="Confirme suas informações"
+              subtitle="Revise seu perfil antes de prosseguir"
+              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
+              onNext={handleNext}
+              onPrev={prevStep}
+              canGoBack={currentStep > 0}
+            >
+              <SummaryStep answers={answers} />
+            </QuizStep>
+          )}
+
+          {currentStep >= 27 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || ""} seu plano exclusivo está pronto!`}
               image="https://images.unsplash.com/photo-1494390248081-4e521a5940db?q=80&w=1470&auto=format&fit=crop"
@@ -1029,46 +1048,50 @@ export default function QuizPage() {
               onPrev={prevStep}
               canGoBack={currentStep > 0 && !isSubmitting}
             >
-              <p className="mb-4">
+              <p className="mb-4 text-base md:text-lg leading-relaxed">
                 {answers.nome_completo?.split(" ")[0] || "Você"}, seu plano para alcançar{" "}
-                <strong>{answers.meta_peso_30d || "sua melhor versão"} kg</strong> está pronto. Ele é flexível, leve e
+                <strong className="text-[#4f6e2c]">{answers.meta_peso_30d || "sua melhor versão"} kg</strong> está pronto. Ele é flexível, leve e
                 sem restrições extremas — ajustado à sua rotina.
               </p>
 
-              <div className="space-y-3 mb-4">
-                <div className="bg-[#eef6e8] border-l-4 border-[#4f6e2c] p-4 rounded-lg">
-                  <p className="font-semibold text-[#2f4a18] mb-2 flex items-center gap-2">
-                    <Sparkles className="w-5 h-5" />
+              <div className="space-y-3 mb-6">
+                <div className="bg-gradient-to-br from-[#eef6e8] to-[#f7fbf3] border-2 border-[#4f6e2c] p-5 md:p-6 rounded-xl shadow-sm">
+                  <p className="font-bold text-[#2f4a18] mb-4 flex items-center gap-2 text-lg">
+                    <Sparkles className="w-6 h-6" />
                     O que você receberá:
                   </p>
-                  <ul className="text-sm text-[#2f4a18] space-y-1">
-                    <li className="flex items-start gap-2">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                  <ul className="text-base text-[#2f4a18] space-y-3">
+                    <li className="flex items-start gap-3">
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
                       <span>Plano alimentar completo para 30 dias</span>
                     </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                    <li className="flex items-start gap-3">
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
                       <span>Cardápio personalizado baseado no seu perfil</span>
                     </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                    <li className="flex items-start gap-3">
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
                       <span>Acesso ao aplicativo</span>
                     </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                    <li className="flex items-start gap-3">
+                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
                       <span>Orientações nutricionais detalhadas</span>
                     </li>
                   </ul>
                 </div>
 
-                <div className="bg-[#fff8e6] border border-[#f1dfa9] p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-[#4f6e2c] mb-1">R$ 49,90</p>
-                  <p className="text-sm text-[#6a5414]">Investimento único • Acesso imediato</p>
+                <div className="bg-gradient-to-r from-[#fff8e6] to-[#fffbf0] border-2 border-[#bb951c] p-5 rounded-xl text-center shadow-sm">
+                  <p className="text-sm text-[#6a5414] mb-1 uppercase tracking-wide font-semibold">Investimento único</p>
+                  <p className="text-4xl md:text-5xl font-bold text-[#4f6e2c] mb-2">R$ 49,90</p>
+                  <p className="text-sm text-[#6a5414] flex items-center justify-center gap-2">
+                    <Check className="w-4 h-4" />
+                    Acesso imediato ao seu plano
+                  </p>
                 </div>
               </div>
 
               {submitError && (
-                <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm flex items-start gap-2">
+                <div className="mb-4 bg-red-50 border-2 border-red-200 text-red-700 p-4 rounded-lg text-sm md:text-base flex items-start gap-3 animate-fade-in">
                   <AlertTriangle className="w-6 h-6 flex-shrink-0 mt-0.5" />
                   <span>{submitError}</span>
                 </div>
@@ -1077,23 +1100,23 @@ export default function QuizPage() {
               <button
                 onClick={handleSubmitQuiz}
                 disabled={isSubmitting}
-                className="w-full bg-[#4f6e2c] text-white font-bold py-4 px-6 rounded-lg hover:brightness-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg flex items-center justify-center gap-2"
+                className="w-full bg-[#4f6e2c] text-white font-bold py-5 px-6 rounded-xl hover:brightness-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg md:text-xl flex items-center justify-center gap-3 shadow-lg hover:shadow-xl active:scale-95 min-h-[60px]"
               >
                 {isSubmitting ? (
                   <>
-                    <Loader className="w-5 h-5 animate-spin" />
+                    <Loader className="w-6 h-6 animate-spin" />
                     Processando...
                   </>
                 ) : (
                   <>
-                    <Lock className="w-5 h-5" />
+                    <Lock className="w-6 h-6" />
                     Garantir Meu Plano Agora
                   </>
                 )}
               </button>
 
-              <p className="text-xs text-center text-[#888] mt-3">
-                Você será redirecionado para a página de pagamento seguro
+              <p className="text-xs md:text-sm text-center text-[#888] mt-4 leading-relaxed">
+                🔒 Você será redirecionado para a página de pagamento seguro
               </p>
             </QuizStep>
           )}

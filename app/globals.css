@@ -138,24 +138,73 @@
   animation: fade-in 0.34s ease;
 }
 
-/* Custom range slider styling */
+/* Enhanced range slider styling for better touch experience */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #4f6e2c 0%, #4f6e2c 50%, #e5e5e5 50%, #e5e5e5 100%);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
 input[type="range"]::-webkit-slider-thumb {
   appearance: none;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: #4f6e2c;
   cursor: pointer;
-  border: 3px solid white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  border: 4px solid white;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 16px rgba(79, 110, 44, 0.4);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.05);
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: #4f6e2c;
   cursor: pointer;
-  border: 3px solid white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  border: 4px solid white;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 16px rgba(79, 110, 44, 0.4);
+}
+
+input[type="range"]::-moz-range-thumb:active {
+  transform: scale(1.05);
+}
+
+/* Enhanced input focus states for better accessibility */
+input[type="email"]:focus,
+input[type="text"]:focus,
+input[type="tel"]:focus {
+  outline: 2px solid #4f6e2c;
+  outline-offset: 2px;
+}
+
+/* Smooth scroll behavior */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Better button hover and active states */
+button {
+  -webkit-tap-highlight-color: transparent;
 }
