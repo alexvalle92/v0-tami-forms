@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev -p 5000 -H 0.0.0.0",
+    "dev": "next dev -p 1010 -H 0.0.0.0",
     "lint": "eslint .",
-    "start": "next start -p 5000 -H 0.0.0.0"
+    "start": "next start -p 1010 -H 0.0.0.0"
   },
   "dependencies": {
     "@aws-sdk/client-ssm": "latest",

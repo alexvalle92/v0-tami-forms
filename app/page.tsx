@@ -1043,7 +1043,6 @@ export default function QuizPage() {
           {currentStep >= 27 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || ""} seu plano exclusivo está pronto!`}
-              image="https://images.unsplash.com/photo-1494390248081-4e521a5940db?q=80&w=1470&auto=format&fit=crop"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onPrev={prevStep}
               canGoBack={currentStep > 0 && !isSubmitting}
