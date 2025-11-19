@@ -50,7 +50,7 @@ export function LoadingScreen({ onComplete }: LoadingScreenProps) {
       </div>
 
       <h2 className="text-2xl md:text-3xl font-bold text-[#4f6e2c] mb-4 text-center">
-        Montando seu plano personalizado...
+        Montando seu plano alimentar personalizado...
       </h2>
 
       <div className="space-y-2 text-center text-[#555]">

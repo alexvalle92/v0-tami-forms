@@ -50,7 +50,7 @@ export function SummaryStep({ answers }: SummaryStepProps) {
 
       <div className="bg-[#fff8e6] border-l-4 border-[#bb951c] p-4 rounded-lg">
         <p className="text-sm text-[#6a5414]">
-          Revise suas informações. Seu plano será totalmente personalizado com base nesses dados.
+          Revise suas informações. Seu plano alimentar será totalmente personalizado com base nesses dados.
         </p>
       </div>
     </div>

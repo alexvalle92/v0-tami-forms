@@ -256,11 +256,11 @@ export default function QuizPage() {
           {currentStep === 0 && (
             <QuizStep
               kicker="PLANO ALIMENTAR PERSONALIZADO PARA RESULTADOS REAIS"
-              title="Elimine de 5 a 10 kg em 30 dias — leve, prático e sem extremismos."
+              title="Elimine até 8kg em 30 dias — leve, prático e sem extremismos."
               subtitle={
                 <span className="flex items-center gap-2 text-base md:text-lg">
                   <ArrowRight className="w-5 h-5 md:w-6 md:h-6 inline-block flex-shrink-0" />
-                  Responda ao quiz e em poucos minutos receba um plano exclusivo para o seu perfil.
+                  Responda ao quiz e em poucos minutos receba um plano alimentar exclusivo para o seu perfil.
                 </span>
               }
               question="Escolha sua faixa etária para começar"
@@ -458,7 +458,7 @@ export default function QuizPage() {
               </div>
               <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg flex items-start gap-2">
                 <CheckCircle className="w-5 h-5 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
-                <span>Um plano prático, realista e totalmente <strong>personalizado</strong> para você.</span>
+                <span>Um plano alimentar prático, realista e totalmente <strong>personalizado</strong> para você.</span>
               </div>
             </QuizStep>
           )}
@@ -632,7 +632,7 @@ export default function QuizPage() {
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <p className="mb-4">Olha só o que você vai poder incluir no seu plano — com estratégia e moderação:</p>
+              <p className="mb-4">Olha só o que você vai poder incluir no seu plano alimentar — com estratégia e moderação:</p>
               <div className="flex flex-wrap gap-2">
                 {[
                   { label: "Pão francês", icon: Croissant },
@@ -888,7 +888,7 @@ export default function QuizPage() {
                 onChange={(value) => updateAnswer("meta_peso_30d", value)}
               />
               <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm">
-                Seja realista — ajustaremos o plano com base nessa meta.
+                Seja realista — ajustaremos o plano alimentar com base nessa meta.
               </div>
             </QuizStep>
           )}
@@ -938,7 +938,7 @@ export default function QuizPage() {
               />
               
               <p className="mt-6 mb-4">
-                Plano de 30 dias de Emagrecimento quase pronto! De acordo com as suas respostas, você está pronto(a)
+                Plano alimentar de 30 dias de Emagrecimento quase pronto! De acordo com as suas respostas, você está pronto(a)
                 para alcançar resultados consistentes.
               </p>
               <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg">
@@ -950,7 +950,7 @@ export default function QuizPage() {
           {/* Step 22 - Email */}
           {currentStep === 21 && (
             <QuizStep
-              title="Digite seu e-mail para receber seu plano personalizado:"
+              title="Digite seu e-mail para receber seu plano alimentar personalizado:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -1042,13 +1042,13 @@ export default function QuizPage() {
 
           {currentStep >= 27 && (
             <QuizStep
-              title={`${answers.nome_completo?.split(" ")[0] || ""} seu plano exclusivo está pronto!`}
+              title={`${answers.nome_completo?.split(" ")[0] || ""} seu plano alimentar exclusivo está pronto!`}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onPrev={prevStep}
               canGoBack={currentStep > 0 && !isSubmitting}
             >
               <p className="mb-4 text-base md:text-lg leading-relaxed">
-                {answers.nome_completo?.split(" ")[0] || "Você"}, seu plano para alcançar{" "}
+                {answers.nome_completo?.split(" ")[0] || "Você"}, seu plano alimentar para alcançar{" "}
                 <strong className="text-[#4f6e2c]">{answers.meta_peso_30d || "sua melhor versão"} kg</strong> está pronto. Ele é flexível, leve e
                 sem restrições extremas — ajustado à sua rotina.
               </p>
@@ -1109,7 +1109,7 @@ export default function QuizPage() {
                 ) : (
                   <>
                     <Lock className="w-6 h-6" />
-                    Garantir Meu Plano Agora
+                    Garantir Meu Plano Alimentar Agora
                   </>
                 )}
               </button>
