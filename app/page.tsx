@@ -26,6 +26,8 @@ import CafeTarde from "@/src/img/cafeTarde.png"
 import Sobremesa from "@/src/img/sobremesa.png"
 import PessoaComendo from "@/src/img/pessoaComendo.png"
 import Noite from "@/src/img/noite.png"
+import Masculino from "@/src/img/masculino.png"
+import Feminino from "@/src/img/feminino.png"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -269,6 +271,10 @@ export default function QuizPage() {
           </div>
         )}
 
+        {currentStep == 0 && (
+          <div className="p-5 md:p-6 bg-gradient-to-r from-[#f7fbf3] to-white"></div>
+        )}
+
         <div className="px-6 md:px-7 pb-6">
           {/* Step 1 - Age */}
           {currentStep === 0 && (
@@ -311,17 +317,22 @@ export default function QuizPage() {
             >
               <div className="grid grid-cols-2 gap-3 md:gap-4">
                 {[
-                  { value: "Masculino", icon: UserRound },
-                  { value: "Feminino", icon: Users }
+                  { value: "Masculino", image: Masculino },
+                  { value: "Feminino", image: Feminino }
                 ].map((option) => {
-                  const IconComponent = option.icon
                   return (
                     <button
                       key={option.value}
                       onClick={() => handleOptionClick("sexo_biologico", option.value)}
                       className="border-2 border-[#e5e5e5] rounded-xl p-6 md:p-8 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all hover:scale-105 active:scale-95 flex flex-col items-center gap-3"
                     >
-                      <IconComponent className="w-12 h-12 md:w-16 md:h-16 text-[#4f6e2c]" />
+                      <Image
+                      src={option.image || "/placeholder.svg"}
+                      alt=""
+                      width={90}
+                      height={90}
+                      className="flex-shrink-0 rounded-lg"
+                    />
                       <span className="text-base md:text-lg font-medium">{option.value}</span>
                     </button>
                   )
