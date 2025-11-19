@@ -35,7 +35,7 @@ export default function QuizPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" })
 
-  const totalSteps = 28
+  const totalSteps = 29
 
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
@@ -64,19 +64,21 @@ export default function QuizPage() {
   }
 
   useEffect(() => {
-    if (currentStep === 16 && !answers.altura_cm) {
+    // Updated step indices for height, weight, and goal weight
+    if (currentStep === 17 && !answers.altura_cm) {
       updateAnswer("altura_cm", "170")
     }
-    if (currentStep === 17 && !answers.peso_kg) {
+    if (currentStep === 18 && !answers.peso_kg) {
       updateAnswer("peso_kg", "70")
     }
-    if (currentStep === 18 && !answers.meta_peso_30d) {
+    if (currentStep === 19 && !answers.meta_peso_30d) {
       updateAnswer("meta_peso_30d", "65")
     }
   }, [currentStep, answers.altura_cm, answers.peso_kg, answers.meta_peso_30d])
 
   useEffect(() => {
-    if (currentStep === 20 && answers.altura_cm && answers.peso_kg) {
+    // Updated step index for BMI calculation
+    if (currentStep === 21 && answers.altura_cm && answers.peso_kg) {
       const altura = Number.parseFloat(answers.altura_cm) / 100
       const peso = Number.parseFloat(answers.peso_kg)
       const bmi = peso / (altura * altura)
@@ -89,44 +91,49 @@ export default function QuizPage() {
       case 0:
         return !!answers.faixa_etaria
       case 1:
-        return !!answers.tipo_fisico
+        return !!answers.sexo_biologico
+      // Updated step indices for body type and desired body
       case 2:
-        return !!answers.corpo_desejado
+        return !!answers.tipo_fisico
       case 3:
+        return !!answers.corpo_desejado
+      // Updated step indices for weight behavior, meal times, and habits
+      case 4:
         return !!answers.peso_comportamento
-      case 5:
-        return !!answers.cafe_da_manha
       case 6:
-        return !!answers.almoco
+        return !!answers.cafe_da_manha
       case 7:
-        return !!answers.lanche_tarde
+        return !!answers.almoco
       case 8:
-        return !!answers.jantar
+        return !!answers.lanche_tarde
       case 9:
+        return !!answers.jantar
+      case 10:
         return !!answers.sobremesa
-      case 11:
-        return !!answers.rotina_dia
       case 12:
-        return !!answers.sono
+        return !!answers.rotina_dia
       case 13:
-        return !!answers.agua
+        return !!answers.sono
       case 14:
-        return answers.habitos && answers.habitos.length > 0
+        return !!answers.agua
       case 15:
-        return !!answers.motivo
+        return answers.habitos && answers.habitos.length > 0
       case 16:
-        return !!answers.altura_cm
+        return !!answers.motivo
       case 17:
-        return !!answers.peso_kg
+        return !!answers.altura_cm
       case 18:
+        return !!answers.peso_kg
+      case 19:
         return !!answers.meta_peso_30d
-      case 21:
-        return !!answers.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)
+      // Updated step indices for email, phone, name, and CPF
       case 22:
-        return !!answers.whatsapp && answers.whatsapp.replace(/\D/g, "").length >= 10
+        return !!answers.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)
       case 23:
-        return !!answers.nome_completo && answers.nome_completo.trim().length > 0
+        return !!answers.whatsapp && answers.whatsapp.replace(/\D/g, "").length >= 10
       case 24:
+        return !!answers.nome_completo && answers.nome_completo.trim().length > 0
+      case 25:
         return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11
       default:
         return true
@@ -138,40 +145,48 @@ export default function QuizPage() {
       let errorMessage = "Por favor, responda a pergunta antes de continuar."
       
       switch (currentStep) {
-        case 21:
+        // Updated step index for email error message
+        case 22:
           if (!answers.email) {
             errorMessage = "Por favor, informe seu e-mail para continuar."
           } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)) {
             errorMessage = "Por favor, insira um e-mail válido (exemplo: seuemail@exemplo.com)"
           }
           break
-        case 22:
+        // Updated step index for phone error message
+        case 23:
           if (!answers.whatsapp) {
             errorMessage = "Por favor, informe seu número de WhatsApp."
           } else if (answers.whatsapp.replace(/\D/g, "").length < 10) {
             errorMessage = "Por favor, insira um telefone válido com DDD (exemplo: (11) 98765-4321)"
           }
           break
-        case 23:
+        // Updated step index for name error message
+        case 24:
           errorMessage = "Por favor, informe seu nome completo para continuar."
           break
-        case 24:
+        // Updated step index for CPF error message
+        case 25:
           if (!answers.cpf) {
             errorMessage = "Por favor, informe seu CPF para continuar."
           } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
             errorMessage = "Por favor, insira um CPF válido com 11 dígitos."
           }
           break
-        case 16:
+        // Updated step index for height error message
+        case 17:
           errorMessage = "Por favor, selecione sua altura antes de continuar."
           break
-        case 17:
+        // Updated step index for weight error message
+        case 18:
           errorMessage = "Por favor, informe seu peso atual para continuar."
           break
-        case 18:
+        // Updated step index for goal weight error message
+        case 19:
           errorMessage = "Por favor, defina sua meta de peso para continuar."
           break
-        case 14:
+        // Updated step index for habits error message
+        case 15:
           errorMessage = "Por favor, selecione pelo menos uma opção de hábito alimentar."
           break
         default:
@@ -242,14 +257,17 @@ export default function QuizPage() {
       />
       
       <div className="w-full max-w-[880px] bg-white rounded-[18px] shadow-[0_12px_40px_rgba(0,0,0,0.08)] overflow-hidden">
-        <div className="p-5 md:p-6 bg-gradient-to-r from-[#f7fbf3] to-white">
-          <ProgressBar current={currentStep + 1} total={totalSteps} />
-          <div className="text-center mt-2">
-            <span className="text-sm font-semibold text-[#4f6e2c]">
-              {Math.round(((currentStep + 1) / totalSteps) * 100)}% concluído
-            </span>
+        {/* CHANGE: Only show progress bar if not on first step */}
+        {currentStep > 0 && (
+          <div className="p-5 md:p-6 bg-gradient-to-r from-[#f7fbf3] to-white">
+            <ProgressBar current={currentStep + 1} total={totalSteps} />
+            <div className="text-center mt-2">
+              <span className="text-sm font-semibold text-[#4f6e2c]">
+                {Math.round(((currentStep + 1) / totalSteps) * 100)}% concluído
+              </span>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="px-6 md:px-7 pb-6">
           {/* Step 1 - Age */}
@@ -283,8 +301,37 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 2 - Body Type */}
           {currentStep === 1 && (
+            <QuizStep
+              title="Qual é o seu sexo biológico?"
+              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
+              onNext={handleNext}
+              onPrev={prevStep}
+              canGoBack={currentStep > 0}
+            >
+              <div className="grid grid-cols-2 gap-3 md:gap-4">
+                {[
+                  { value: "Masculino", icon: UserRound },
+                  { value: "Feminino", icon: Users }
+                ].map((option) => {
+                  const IconComponent = option.icon
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => handleOptionClick("sexo_biologico", option.value)}
+                      className="border-2 border-[#e5e5e5] rounded-xl p-6 md:p-8 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all hover:scale-105 active:scale-95 flex flex-col items-center gap-3"
+                    >
+                      <IconComponent className="w-12 h-12 md:w-16 md:h-16 text-[#4f6e2c]" />
+                      <span className="text-base md:text-lg font-medium">{option.value}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </QuizStep>
+          )}
+
+          {/* Step 3 - Body Type (was Step 2) */}
+          {currentStep === 2 && (
             <QuizStep
               title="Qual dessas opções representa melhor o seu tipo físico atual?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -340,8 +387,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 3 - Desired Body */}
-          {currentStep === 2 && (
+          {/* Step 4 - Desired Body (was Step 3) */}
+          {currentStep === 3 && (
             <QuizStep
               title="Qual desses estilos de corpo você gostaria de conquistar?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -389,8 +436,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 4 - Weight Behavior */}
-          {currentStep === 3 && (
+          {/* Step 5 - Weight Behavior (was Step 4) */}
+          {currentStep === 4 && (
             <QuizStep
               title="Como o seu peso costuma se comportar ao longo do tempo?"
               image={PesoMedida}
@@ -433,8 +480,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 5 - Informative */}
-          {currentStep === 4 && (
+          {/* Step 6 - Informative (was Step 5) */}
+          {currentStep === 5 && (
             <QuizStep
               title="Prepare-se para alcançar a sua melhor versão em apenas 30 dias!"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -463,8 +510,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Steps 6-10 - Meal Times */}
-          {currentStep === 5 && (
+          {/* Steps 7-11 - Meal Times (was Steps 6-10) */}
+          {currentStep === 6 && (
             <QuizStep
               title="Em qual horário você costuma fazer o café da manhã?"
               image={CafeManha}
@@ -496,7 +543,7 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {currentStep === 6 && (
+          {currentStep === 7 && (
             <QuizStep
               title="Qual é o horário em que você costuma almoçar?"
               image={Almoco}
@@ -528,7 +575,7 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {currentStep === 7 && (
+          {currentStep === 8 && (
             <QuizStep
               title="Em qual horário você costuma fazer o lanche da tarde?"
               image={CafeTarde}
@@ -560,7 +607,7 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {currentStep === 8 && (
+          {currentStep === 9 && (
             <QuizStep
               title="Qual é o horário em que você costuma jantar?"
               image={Almoco}
@@ -592,7 +639,7 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {currentStep === 9 && (
+          {currentStep === 10 && (
             <QuizStep
               title="Você quer ter uma opção de sobremesa no seu plano alimentar?"
               image={Sobremesa}
@@ -622,8 +669,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 11 - Foods Info */}
-          {currentStep === 10 && (
+          {/* Step 11 - Foods Info (was Step 10) */}
+          {currentStep === 11 && (
             <QuizStep
               title="Equilíbrio sem culpa"
               image={PessoaComendo}
@@ -657,8 +704,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 12 - Daily Routine */}
-          {currentStep === 11 && (
+          {/* Step 12 - Daily Routine (was Step 11) */}
+          {currentStep === 12 && (
             <QuizStep
               title="Como você descreveria sua rotina durante o dia?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -688,8 +735,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 13 - Sleep */}
-          {currentStep === 12 && (
+          {/* Step 13 - Sleep (was Step 12) */}
+          {currentStep === 13 && (
             <QuizStep
               title="Quantas horas de sono você costuma ter por noite?"
               image={Noite}
@@ -721,8 +768,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 14 - Water */}
-          {currentStep === 13 && (
+          {/* Step 14 - Water (was Step 13) */}
+          {currentStep === 14 && (
             <QuizStep
               title="Qual é a sua média de consumo de água por dia?"
               image={CopoAgua}
@@ -754,8 +801,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 15 - Habits (Multiple) */}
-          {currentStep === 14 && (
+          {/* Step 15 - Habits (was Step 14) */}
+          {currentStep === 15 && (
             <QuizStep
               title="Você se identifica com algum desses hábitos alimentares?"
               subtitle="(selecione os que se aplicam)"
@@ -808,8 +855,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 16 - Motivation */}
-          {currentStep === 15 && (
+          {/* Step 16 - Motivation (was Step 15) */}
+          {currentStep === 16 && (
             <QuizStep
               title="Qual é o principal motivo que te faz querer entrar em forma?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -841,8 +888,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 17 - Height */}
-          {currentStep === 16 && (
+          {/* Step 17 - Height (was Step 16) */}
+          {currentStep === 17 && (
             <QuizStep
               title="Qual é a sua altura (em centímetros)?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -859,8 +906,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 18 - Weight */}
-          {currentStep === 17 && (
+          {/* Step 18 - Weight (was Step 17) */}
+          {currentStep === 18 && (
             <QuizStep
               title="Informe seu peso atual (em kg):"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -873,8 +920,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 19 - Goal Weight */}
-          {currentStep === 18 && (
+          {/* Step 19 - Goal Weight (was Step 18) */}
+          {currentStep === 19 && (
             <QuizStep
               title="Qual é a sua meta de peso para os próximos 30 dias?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -893,8 +940,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 20 - BMI Display */}
-          {currentStep === 19 && (
+          {/* Step 20 - BMI Display (was Step 19) */}
+          {currentStep === 20 && (
             <QuizStep
               title="Aqui está o seu perfil de bem-estar"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -923,8 +970,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 21 - Prediction */}
-          {currentStep === 20 && (
+          {/* Step 21 - Prediction (was Step 20) */}
+          {currentStep === 21 && (
             <QuizStep
               title="A última dieta que você precisará para ficar em forma!"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -947,8 +994,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 22 - Email */}
-          {currentStep === 21 && (
+          {/* Step 22 - Email (was Step 21) */}
+          {currentStep === 22 && (
             <QuizStep
               title="Digite seu e-mail para receber seu plano alimentar personalizado:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -967,8 +1014,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 23 - Phone */}
-          {currentStep === 22 && (
+          {/* Step 23 - Phone (was Step 22) */}
+          {currentStep === 23 && (
             <QuizStep
               title="Informe seu número de WhatsApp:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -985,8 +1032,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 24 - Name */}
-          {currentStep === 23 && (
+          {/* Step 24 - Name (was Step 23) */}
+          {currentStep === 24 && (
             <QuizStep
               title="Qual seu nome?"
               subtitle="(nome completo)"
@@ -1006,8 +1053,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 25 - CPF */}
-          {currentStep === 24 && (
+          {/* Step 25 - CPF (was Step 24) */}
+          {currentStep === 25 && (
             <QuizStep
               title="Informe seu CPF:"
               subtitle="(necessário para criar a cobrança)"
@@ -1025,9 +1072,11 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {currentStep === 25 && <LoadingScreen onComplete={nextStep} />}
+          {/* Step 26 - Loading (was Step 25) */}
+          {currentStep === 26 && <LoadingScreen onComplete={nextStep} />}
 
-          {currentStep === 26 && (
+          {/* Step 27 - Summary (was Step 26) */}
+          {currentStep === 27 && (
             <QuizStep
               title="Confirme suas informações"
               subtitle="Revise seu perfil antes de prosseguir"
@@ -1040,7 +1089,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {currentStep >= 27 && (
+          {/* Step 28 - Final Payment (was Step 27) */}
+          {currentStep >= 28 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || ""} seu plano alimentar exclusivo está pronto!`}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
