@@ -69,6 +69,7 @@ import Feminino from "@/src/img/feminino.png"
 import Saude from "@/src/img/saude.png"
 import AutoEstima from "@/src/img/auto-estima.png"
 import Peso from "@/src/img/peso.png"
+import Fogo from "@/src/img/fogo.gif"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -546,11 +547,10 @@ export default function QuizPage() {
               canGoBack={currentStep > 0}
             >
               <div className="flex justify-center items-center mb-6">
-                <img
-                  src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExdHJ0cjZkdXJtM3RkNWZ0bDVqZDVqbHRsNWJ0MzVqZDVqZDVqZDVqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3ohs7PrePF4KS7fOdW/giphy.gif"
-                  alt="Transformação"
-                  className="w-full max-w-[300px] h-auto rounded-2xl shadow-lg"
-                />
+                <Image
+                    src={Fogo}
+                    alt=""
+                  />
               </div>
 
               <div className="flex flex-wrap gap-2 mb-4">
