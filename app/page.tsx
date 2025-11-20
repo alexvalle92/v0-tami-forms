@@ -66,6 +66,9 @@ import PessoaComendo from "@/src/img/pessoaComendo.png"
 import Noite from "@/src/img/noite.png"
 import Masculino from "@/src/img/masculino.png"
 import Feminino from "@/src/img/feminino.png"
+import Saude from "@/src/img/saude.png"
+import AutoEstima from "@/src/img/auto-estima.png"
+import Peso from "@/src/img/peso.png"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -446,20 +449,20 @@ export default function QuizPage() {
               <div className="space-y-4">
                 <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#eef6e8] to-white rounded-xl border-2 border-[#e5f3dd]">
                   <Image
-                    src="/placeholder.svg?height=60&width=60"
+                    src={Saude}
                     alt=""
                     width={60}
                     height={60}
                     className="flex-shrink-0 rounded-lg"
                   />
                   <div className="flex-1 flex items-center">
-                    <p className="text-base md:text-lg font-medium text-[#2f4a18]">- saúde e bem-estar</p>
+                    <p className="text-base md:text-lg font-medium text-[#2f4a18]">- Saúde e bem-estar</p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#eef6e8] to-white rounded-xl border-2 border-[#e5f3dd]">
+                <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#f6f0d8] to-white rounded-xl border-2 border-[#e5f3dd]">
                   <Image
-                    src="/placeholder.svg?height=60&width=60"
+                    src={Peso}
                     alt=""
                     width={60}
                     height={60}
@@ -474,7 +477,7 @@ export default function QuizPage() {
 
                 <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#eef6e8] to-white rounded-xl border-2 border-[#e5f3dd]">
                   <Image
-                    src="/placeholder.svg?height=60&width=60"
+                    src={AutoEstima}
                     alt=""
                     width={60}
                     height={60}
