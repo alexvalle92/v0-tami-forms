@@ -449,7 +449,7 @@ export default function QuizPage() {
               <div className="space-y-4">
                 <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#eef6e8] to-white rounded-xl border-2 border-[#e5f3dd]">
                   <Image
-                    src={Saude}
+                    src={Saude || "/placeholder.svg"}
                     alt=""
                     width={60}
                     height={60}
@@ -462,7 +462,7 @@ export default function QuizPage() {
 
                 <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#f6f0d8] to-white rounded-xl border-2 border-[#e5f3dd]">
                   <Image
-                    src={Peso}
+                    src={Peso || "/placeholder.svg"}
                     alt=""
                     width={60}
                     height={60}
@@ -477,7 +477,7 @@ export default function QuizPage() {
 
                 <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#eef6e8] to-white rounded-xl border-2 border-[#e5f3dd]">
                   <Image
-                    src={AutoEstima}
+                    src={AutoEstima || "/placeholder.svg"}
                     alt=""
                     width={60}
                     height={60}
@@ -545,6 +545,14 @@ export default function QuizPage() {
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
+              <div className="flex justify-center items-center mb-6">
+                <img
+                  src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExdHJ0cjZkdXJtM3RkNWZ0bDVqZDVqbHRsNWJ0MzVqZDVqZDVqZDVqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3ohs7PrePF4KS7fOdW/giphy.gif"
+                  alt="Transformação"
+                  className="w-full max-w-[300px] h-auto rounded-2xl shadow-lg"
+                />
+              </div>
+
               <div className="flex flex-wrap gap-2 mb-4">
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
                   <CheckCircle className="w-6 h-6" /> Sem jejum forçado
