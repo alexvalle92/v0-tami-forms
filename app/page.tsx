@@ -539,16 +539,12 @@ export default function QuizPage() {
           {/* Step 6 - Informative (was Step 5) */}
           {currentStep === 5 && (
             <QuizStep
-              title="Prepare-se para alcançar a sua melhor versão em apenas 30 dias!"
+              title="Prepare-se para alcançar a sua melhor versão!"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <p className="mb-4">
-                Você vai receber todas as ferramentas que realmente funcionam para eliminar peso e transformar seu
-                corpo.
-              </p>
               <div className="flex flex-wrap gap-2 mb-4">
                 <span className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold">
                   <CheckCircle className="w-6 h-6" /> Sem jejum forçado
