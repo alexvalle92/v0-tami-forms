@@ -51,6 +51,8 @@ import {
   Pizza,
   Footprints,
   Activity,
+  GraduationCap,
+  Award,
 } from "lucide-react"
 import CopoAgua from "@/src/img/copoAgua.png"
 import CorpoMagra from "@/src/img/magra.jpg"
@@ -79,7 +81,7 @@ export default function QuizPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" })
 
-  const totalSteps = 28
+  const totalSteps = 29
 
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
@@ -109,13 +111,16 @@ export default function QuizPage() {
 
   useEffect(() => {
     // Updated step indices for height, weight, and goal weight
-    if (currentStep === 17 && !answers.altura_cm) {
+    if (currentStep === 18 && !answers.altura_cm) {
+      // Changed from 17 to 18
       updateAnswer("altura_cm", "170")
     }
-    if (currentStep === 18 && !answers.peso_kg) {
+    if (currentStep === 19 && !answers.peso_kg) {
+      // Changed from 18 to 19
       updateAnswer("peso_kg", "70")
     }
-    if (currentStep === 19 && !answers.meta_peso_30d) {
+    if (currentStep === 20 && !answers.meta_peso_30d) {
+      // Changed from 19 to 20
       updateAnswer("meta_peso_30d", "65")
     }
   }, [currentStep, answers.altura_cm, answers.peso_kg, answers.meta_peso_30d])
@@ -123,6 +128,7 @@ export default function QuizPage() {
   useEffect(() => {
     // Updated step index for BMI calculation
     if (currentStep === 21 && answers.altura_cm && answers.peso_kg) {
+      // Changed from 21 to 22
       const altura = Number.parseFloat(answers.altura_cm) / 100
       const peso = Number.parseFloat(answers.peso_kg)
       const bmi = peso / (altura * altura)
@@ -162,19 +168,21 @@ export default function QuizPage() {
         return answers.habitos && answers.habitos.length > 0
       case 16:
         return !!answers.motivo
-      case 17:
+      // Updated step indices for height, weight, and goal weight
+      case 18: // Changed from 17
         return !!answers.altura_cm
-      case 18:
+      case 19: // Changed from 18
         return !!answers.peso_kg
-      case 19:
+      case 20: // Changed from 19
         return !!answers.meta_peso_30d
-      case 22:
+      // Updated step indices for email, phone, name, CPF
+      case 23: // Changed from 22
         return !!answers.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)
-      case 23:
+      case 24: // Changed from 23
         return !!answers.whatsapp && answers.whatsapp.replace(/\D/g, "").length >= 10
-      case 24:
+      case 25: // Changed from 24
         return !!answers.nome_completo && answers.nome_completo.trim().length > 0
-      case 25:
+      case 26: // Changed from 25
         return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11
       default:
         return true
@@ -187,7 +195,7 @@ export default function QuizPage() {
 
       switch (currentStep) {
         // Updated step index for email error message
-        case 22:
+        case 23: // Changed from 22
           if (!answers.email) {
             errorMessage = "Por favor, informe seu e-mail para continuar."
           } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)) {
@@ -195,7 +203,7 @@ export default function QuizPage() {
           }
           break
         // Updated step index for phone error message
-        case 23:
+        case 24: // Changed from 23
           if (!answers.whatsapp) {
             errorMessage = "Por favor, informe seu número de WhatsApp."
           } else if (answers.whatsapp.replace(/\D/g, "").length < 10) {
@@ -203,11 +211,11 @@ export default function QuizPage() {
           }
           break
         // Updated step index for name error message
-        case 24:
+        case 25: // Changed from 24
           errorMessage = "Por favor, informe seu nome completo para continuar."
           break
         // Updated step index for CPF error message
-        case 25:
+        case 26: // Changed from 25
           if (!answers.cpf) {
             errorMessage = "Por favor, informe seu CPF para continuar."
           } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
@@ -215,15 +223,15 @@ export default function QuizPage() {
           }
           break
         // Updated step index for height error message
-        case 17:
+        case 18: // Changed from 17
           errorMessage = "Por favor, selecione sua altura antes de continuar."
           break
         // Updated step index for weight error message
-        case 18:
+        case 19: // Changed from 18
           errorMessage = "Por favor, informe seu peso atual para continuar."
           break
         // Updated step index for goal weight error message
-        case 19:
+        case 20: // Changed from 19
           errorMessage = "Por favor, defina sua meta de peso para continuar."
           break
         // Updated step index for habits error message
@@ -547,10 +555,7 @@ export default function QuizPage() {
               canGoBack={currentStep > 0}
             >
               <div className="flex justify-center items-center mb-6">
-                <Image
-                    src={Fogo}
-                    alt=""
-                  />
+                <Image src={Fogo || "/placeholder.svg"} alt="" />
               </div>
 
               <div className="flex flex-wrap gap-2 mb-4">
@@ -957,8 +962,93 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 17 - Height (was Step 16) */}
+          {/* Step 17 - Nutritionist Introduction */}
           {currentStep === 17 && (
+            <QuizStep
+              title="Conheça sua nutricionista"
+              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
+              onNext={handleNext}
+              onPrev={prevStep}
+              canGoBack={currentStep > 0}
+            >
+              <div className="space-y-6">
+                {/* Nutritionist Photo */}
+                <div className="flex justify-center">
+                  <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-[#4f6e2c] shadow-lg">
+                    <img
+                      src="/placeholder.svg?height=128&width=128"
+                      alt="Nutricionista"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                </div>
+
+                {/* Nutritionist Info */}
+                <div className="space-y-4 text-center">
+                  <h3 className="text-xl font-semibold text-[#4f6e2c]">Dra. Maria Silva</h3>
+                  <p className="text-sm text-gray-600">CRN 12345</p>
+                </div>
+
+                {/* About Sections */}
+                <div className="space-y-4">
+                  <div className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-full bg-[#4f6e2c] flex items-center justify-center flex-shrink-0">
+                        <GraduationCap className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-gray-800 mb-1">Formação</h4>
+                        <p className="text-sm text-gray-600">
+                          Nutricionista formada pela Universidade Federal, com especialização em nutrição clínica e
+                          emagrecimento saudável.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-full bg-[#4f6e2c] flex items-center justify-center flex-shrink-0">
+                        <Award className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-gray-800 mb-1">Experiência</h4>
+                        <p className="text-sm text-gray-600">
+                          Mais de 10 anos de experiência atendendo pacientes e criando planos alimentares personalizados
+                          com foco em resultados sustentáveis.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-full bg-[#4f6e2c] flex items-center justify-center flex-shrink-0">
+                        <Heart className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-gray-800 mb-1">Abordagem</h4>
+                        <p className="text-sm text-gray-600">
+                          Acredita em uma nutrição equilibrada, sem restrições extremas, priorizando sua saúde e
+                          bem-estar a longo prazo.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#4f6e2c]/10 rounded-xl p-4 text-center">
+                  <p className="text-sm text-gray-700">
+                    Seu plano alimentar será desenvolvido especialmente para você, considerando suas necessidades e
+                    objetivos únicos.
+                  </p>
+                </div>
+              </div>
+            </QuizStep>
+          )}
+
+          {/* Step 18 - Height (was Step 17) */}
+          {currentStep === 18 && (
             <QuizStep
               title="Qual é a sua altura (em centímetros)?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -975,8 +1065,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 18 - Weight (was Step 17) */}
-          {currentStep === 18 && (
+          {/* Step 19 - Weight (was Step 18) */}
+          {currentStep === 19 && (
             <QuizStep
               title="Informe seu peso atual (em kg):"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -989,8 +1079,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 19 - Goal Weight (was Step 18) */}
-          {currentStep === 19 && (
+          {/* Step 20 - Goal Weight (was Step 19) */}
+          {currentStep === 20 && (
             <QuizStep
               title="Qual é a sua meta de peso?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -1009,8 +1099,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 20 - BMI Display (was Step 19) */}
-          {currentStep === 20 && (
+          {/* Step 21 - BMI Display (was Step 20) */}
+          {currentStep === 21 && (
             <QuizStep
               title="Aqui está o seu perfil de bem-estar"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -1039,8 +1129,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 21 - Prediction (was Step 20) */}
-          {currentStep === 21 && (
+          {/* Step 22 - Prediction (was Step 21) */}
+          {currentStep === 22 && (
             <QuizStep
               title="A última dieta que você precisará para ficar em forma!"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -1054,8 +1144,8 @@ export default function QuizPage() {
               />
 
               <p className="mt-6 mb-4">
-                Plano alimentar de Emagrecimento quase pronto! De acordo com as suas respostas, você está
-                pronto(a) para alcançar resultados consistentes.
+                Plano alimentar de Emagrecimento quase pronto! De acordo com as suas respostas, você está pronto(a) para
+                alcançar resultados consistentes.
               </p>
               <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg">
                 Previsão de peso em 30 dias: <strong>{answers.meta_peso_30d || "--"} kg</strong>
@@ -1063,8 +1153,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 22 - Email (was Step 21) */}
-          {currentStep === 22 && (
+          {/* Step 23 - Email (was Step 22) */}
+          {currentStep === 23 && (
             <QuizStep
               title="Digite seu e-mail para receber seu plano alimentar personalizado:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -1083,8 +1173,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 23 - Phone (was Step 22) */}
-          {currentStep === 23 && (
+          {/* Step 24 - Phone (was Step 23) */}
+          {currentStep === 24 && (
             <QuizStep
               title="Informe seu número de WhatsApp:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -1101,8 +1191,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 24 - Name (was Step 23) */}
-          {currentStep === 24 && (
+          {/* Step 25 - Name (was Step 24) */}
+          {currentStep === 25 && (
             <QuizStep
               title="Qual seu nome?"
               subtitle="(nome completo)"
@@ -1122,8 +1212,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 25 - CPF (was Step 24) */}
-          {currentStep === 25 && (
+          {/* Step 26 - CPF (was Step 25) */}
+          {currentStep === 26 && (
             <QuizStep
               title="Informe seu CPF:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -1140,11 +1230,11 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 26 - Loading (was Step 25) */}
-          {currentStep === 26 && <LoadingScreen onComplete={nextStep} />}
+          {/* Step 27 - Loading (was Step 26) */}
+          {currentStep === 27 && <LoadingScreen onComplete={nextStep} />}
 
-          {/* Step 27 - Summary (was Step 26) */}
-          {currentStep === 27 && (
+          {/* Step 28 - Summary (was Step 27) */}
+          {currentStep === 28 && (
             <QuizStep
               title="Confirme suas informações"
               subtitle="Revise seu perfil antes de prosseguir"
@@ -1157,8 +1247,8 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 28 - Final Payment (was Step 27) */}
-          {currentStep >= 28 && (
+          {/* Step 29 - Final Payment (was Step 28) */}
+          {currentStep >= 29 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || ""} a nutri vai preparar seu plano alimentar exclusivo!`}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
@@ -1167,7 +1257,7 @@ export default function QuizPage() {
             >
               <p className="mb-4 text-base md:text-lg leading-relaxed">
                 {answers.nome_completo?.split(" ")[0] || "Você"}, a nutri vai preparar seu plano alimentar para alcançar{" "}
-                <strong className="text-[#4f6e2c]">{answers.meta_peso_30d || "sua melhor versão"} kg.</strong> 
+                <strong className="text-[#4f6e2c]">{answers.meta_peso_30d || "sua melhor versão"} kg.</strong>
                 Ele é flexível, leve e sem restrições extremas — ajustado à sua rotina.
               </p>
 
