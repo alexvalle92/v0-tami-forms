@@ -589,7 +589,7 @@ export default function QuizPage() {
                   { value: "8-10", label: "Entre 8h e 10h", icon: Sun },
                   { value: "10-12", label: "Entre 10h e 12h", icon: CloudSun },
                   { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -622,7 +622,7 @@ export default function QuizPage() {
                   { value: "12-13", label: "12h–13h", icon: Clock },
                   { value: "13-14", label: "13h–14h", icon: Clock },
                   { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -655,7 +655,7 @@ export default function QuizPage() {
                   { value: "15-16", label: "15h–16h", icon: Clock },
                   { value: "16-17", label: "16h–17h", icon: Clock },
                   { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -688,7 +688,7 @@ export default function QuizPage() {
                   { value: "18-20", label: "18h–20h", icon: Clock },
                   { value: "20-22", label: "20h–22h", icon: Clock },
                   { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
