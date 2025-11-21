@@ -65,7 +65,7 @@ import CafeManha from "@/src/img/cafeManha.png"
 import CafeTarde from "@/src/img/cafeTarde.png"
 import Sobremesa from "@/src/img/sobremesa.png"
 import PessoaComendo from "@/src/img/pessoaComendo.png"
-import Noite from "@/src/img/noite.png"
+import ContarCarneirinhos from "@/src/img/contarCarneirinho.gif"
 import Masculino from "@/src/img/masculino.png"
 import Feminino from "@/src/img/feminino.png"
 import Saude from "@/src/img/saude.png"
@@ -813,7 +813,7 @@ export default function QuizPage() {
           {currentStep === 13 && (
             <QuizStep
               title="Quantas horas de sono você costuma ter por noite?"
-              image={Noite}
+              image={ContarCarneirinhos}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
