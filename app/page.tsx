@@ -588,7 +588,8 @@ export default function QuizPage() {
                   { value: "6-8", label: "Entre 6h e 8h", icon: Sunrise },
                   { value: "8-10", label: "Entre 8h e 10h", icon: Sun },
                   { value: "10-12", label: "Entre 10h e 12h", icon: CloudSun },
-                  { value: "nao tomo", label: "Geralmente não tomo", icon: X },
+                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -617,10 +618,11 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "10-11", label: "10h–11h", icon: Clock },
                   { value: "11-12", label: "11h–12h", icon: Clock },
                   { value: "12-13", label: "12h–13h", icon: Clock },
                   { value: "13-14", label: "13h–14h", icon: Clock },
+                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -652,7 +654,8 @@ export default function QuizPage() {
                   { value: "14-15", label: "14h–15h", icon: Clock },
                   { value: "15-16", label: "15h–16h", icon: Clock },
                   { value: "16-17", label: "16h–17h", icon: Clock },
-                  { value: "nao faco", label: "Não faço", icon: X },
+                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -684,7 +687,8 @@ export default function QuizPage() {
                   { value: "16-18", label: "16h–18h", icon: Clock },
                   { value: "18-20", label: "18h–20h", icon: Clock },
                   { value: "20-22", label: "20h–22h", icon: Clock },
-                  { value: "nao janto", label: "Não janto", icon: X },
+                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
+                  { value: "nao faco e gostaria de fazer", label: "Não faço e não quero fazer", icon: Check },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -988,7 +992,7 @@ export default function QuizPage() {
           {/* Step 19 - Goal Weight (was Step 18) */}
           {currentStep === 19 && (
             <QuizStep
-              title="Qual é a sua meta de peso para os próximos 30 dias?"
+              title="Qual é a sua meta de peso?"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -1050,7 +1054,7 @@ export default function QuizPage() {
               />
 
               <p className="mt-6 mb-4">
-                Plano alimentar de 30 dias de Emagrecimento quase pronto! De acordo com as suas respostas, você está
+                Plano alimentar de Emagrecimento quase pronto! De acordo com as suas respostas, você está
                 pronto(a) para alcançar resultados consistentes.
               </p>
               <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg">
@@ -1122,7 +1126,6 @@ export default function QuizPage() {
           {currentStep === 25 && (
             <QuizStep
               title="Informe seu CPF:"
-              subtitle="(necessário para criar a cobrança)"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -1157,15 +1160,15 @@ export default function QuizPage() {
           {/* Step 28 - Final Payment (was Step 27) */}
           {currentStep >= 28 && (
             <QuizStep
-              title={`${answers.nome_completo?.split(" ")[0] || ""} seu plano alimentar exclusivo está pronto!`}
+              title={`${answers.nome_completo?.split(" ")[0] || ""} a nutri vai preparar seu plano alimentar exclusivo!`}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onPrev={prevStep}
               canGoBack={currentStep > 0 && !isSubmitting}
             >
               <p className="mb-4 text-base md:text-lg leading-relaxed">
-                {answers.nome_completo?.split(" ")[0] || "Você"}, seu plano alimentar para alcançar{" "}
-                <strong className="text-[#4f6e2c]">{answers.meta_peso_30d || "sua melhor versão"} kg</strong> está
-                pronto. Ele é flexível, leve e sem restrições extremas — ajustado à sua rotina.
+                {answers.nome_completo?.split(" ")[0] || "Você"}, a nutri vai preparar seu plano alimentar para alcançar{" "}
+                <strong className="text-[#4f6e2c]">{answers.meta_peso_30d || "sua melhor versão"} kg.</strong> 
+                Ele é flexível, leve e sem restrições extremas — ajustado à sua rotina.
               </p>
 
               <div className="space-y-3 mb-6">
