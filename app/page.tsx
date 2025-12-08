@@ -23,9 +23,6 @@ import {
   Dumbbell,
   Scale,
   Donut,
-  Sunrise,
-  Sun,
-  CloudSun,
   X,
   Clock,
   Apple,
@@ -149,7 +146,7 @@ export default function QuizPage() {
       case 4:
         return !!answers.peso_comportamento
       case 6:
-        return !!answers.cafe_da_manha
+        return !!answers.breakfast_foods && answers.breakfast_foods.length > 0
       case 7:
         return !!answers.almoco
       case 8:
@@ -237,6 +234,10 @@ export default function QuizPage() {
         // Updated step index for habits error message
         case 15:
           errorMessage = "Por favor, selecione pelo menos uma opção de hábito alimentar."
+          break
+        // Updated step index for breakfast food error message
+        case 6:
+          errorMessage = "Por favor, selecione pelo menos uma opção para o seu café da manhã."
           break
         default:
           errorMessage = "Por favor, selecione uma opção antes de continuar."
@@ -579,9 +580,10 @@ export default function QuizPage() {
           )}
 
           {/* Steps 7-11 - Meal Times (was Steps 6-10) */}
+          {/* Step 7 - Breakfast Food Preferences */}
           {currentStep === 6 && (
             <QuizStep
-              title="Em qual horário você costuma fazer o café da manhã?"
+              title="O que você quer comer no café da manhã?"
               image={CafeManha}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
@@ -590,20 +592,38 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "6-8", label: "Entre 6h e 8h", icon: Sunrise },
-                  { value: "8-10", label: "Entre 8h e 10h", icon: Sun },
-                  { value: "10-12", label: "Entre 10h e 12h", icon: CloudSun },
-                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
+                  { value: "pao-frances", label: "Pão francês" },
+                  { value: "pao-integral", label: "Pão de forma integral" },
+                  { value: "ovo", label: "Ovo" },
+                  { value: "requeijao", label: "Requeijão" },
+                  { value: "cafe", label: "Café" },
+                  { value: "cafe-com-leite", label: "Café com leite" },
+                  { value: "nao-quero", label: "Não gostaria de fazer café da manhã" },
                 ].map((option) => {
-                  const IconComponent = option.icon
+                  const isSelected = answers.breakfast_foods?.includes(option.value)
                   return (
                     <button
                       key={option.value}
-                      onClick={() => handleOptionClick("cafe_da_manha", option.value)}
-                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                      onClick={() => {
+                        const currentSelection = answers.breakfast_foods || []
+                        const newSelection = isSelected
+                          ? currentSelection.filter((item) => item !== option.value)
+                          : [...currentSelection, option.value]
+                        setAnswers({ ...answers, breakfast_foods: newSelection })
+                      }}
+                      className={`w-full border-2 rounded-xl p-4 flex items-center gap-3 transition-all text-left ${
+                        isSelected
+                          ? "border-[#4f6e2c] bg-[#f5f9f1]"
+                          : "border-[#e5e5e5] hover:border-[#4f6e2c] hover:bg-[#f5f9f1]"
+                      }`}
                     >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <div
+                        className={`w-6 h-6 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          isSelected ? "bg-[#4f6e2c] border-[#4f6e2c]" : "border-[#e5e5e5]"
+                        }`}
+                      >
+                        {isSelected && <Check className="w-4 h-4 text-white" />}
+                      </div>
                       <span className="text-base">{option.label}</span>
                     </button>
                   )
