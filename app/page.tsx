@@ -33,8 +33,6 @@ import {
   Droplet,
   GlassWater,
   Shirt,
-  Baby,
-  Pencil,
   ArrowRight,
   Ruler,
   Check,
@@ -148,7 +146,7 @@ export default function QuizPage() {
       case 6:
         return !!answers.breakfast_foods && answers.breakfast_foods.length > 0
       case 7:
-        return !!answers.almoco
+        return !!answers.almoco && answers.almoco.length > 0
       case 8:
         return !!answers.lanche_tarde
       case 9:
@@ -163,8 +161,8 @@ export default function QuizPage() {
         return !!answers.agua
       case 15:
         return answers.habitos && answers.habitos.length > 0
-      case 16:
-        return !!answers.motivo
+      case 16: // Changed from 15 to 16, motivation question removed
+        return true
       // Updated step indices for height, weight, and goal weight
       case 18: // Changed from 17
         return !!answers.altura_cm
@@ -238,6 +236,10 @@ export default function QuizPage() {
         // Updated step index for breakfast food error message
         case 6:
           errorMessage = "Por favor, selecione pelo menos uma opção para o seu café da manhã."
+          break
+        // Updated step index for lunch food error message
+        case 7:
+          errorMessage = "Por favor, selecione pelo menos uma opção para o seu almoço."
           break
         default:
           errorMessage = "Por favor, selecione uma opção antes de continuar."
@@ -638,7 +640,7 @@ export default function QuizPage() {
 
           {currentStep === 7 && (
             <QuizStep
-              title="Qual é o horário em que você costuma almoçar?"
+              title="O que você quer comer no almoço?"
               image={Almoco}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
@@ -647,20 +649,38 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "11-12", label: "11h–12h", icon: Clock },
-                  { value: "12-13", label: "12h–13h", icon: Clock },
-                  { value: "13-14", label: "13h–14h", icon: Clock },
-                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
+                  { value: "frango", label: "Carne de frango" },
+                  { value: "peixe", label: "Carne de Peixe" },
+                  { value: "porco", label: "Carne de porco" },
+                  { value: "boi", label: "Carne de boi" },
+                  { value: "com-feijao", label: "Com Feijão" },
+                  { value: "sem-feijao", label: "Sem feijão" },
+                  { value: "nao-quero", label: "Não quero fazer almoço" },
                 ].map((option) => {
-                  const IconComponent = option.icon
+                  const isSelected = answers.almoco?.includes(option.value)
                   return (
                     <button
                       key={option.value}
-                      onClick={() => handleOptionClick("almoco", option.value)}
-                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                      onClick={() => {
+                        const currentSelections = answers.almoco || []
+                        const newSelections = isSelected
+                          ? currentSelections.filter((v: string) => v !== option.value)
+                          : [...currentSelections, option.value]
+                        setAnswers({ ...answers, almoco: newSelections })
+                      }}
+                      className={`w-full border-2 rounded-xl p-4 flex items-center gap-3 transition-all text-left ${
+                        isSelected
+                          ? "border-[#4f6e2c] bg-[#f5f9f1]"
+                          : "border-[#e5e5e5] hover:border-[#4f6e2c] hover:bg-[#f5f9f1]"
+                      }`}
                     >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <div
+                        className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          isSelected ? "bg-[#4f6e2c] border-[#4f6e2c]" : "border-[#4f6e2c]"
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3 h-3 text-white" />}
+                      </div>
                       <span className="text-base">{option.label}</span>
                     </button>
                   )
@@ -671,7 +691,7 @@ export default function QuizPage() {
 
           {currentStep === 8 && (
             <QuizStep
-              title="Em qual horário você costuma fazer o lanche da tarde?"
+              title="O que você quer comer no lanche da tarde?"
               image={CafeTarde}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
@@ -680,20 +700,37 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "14-15", label: "14h–15h", icon: Clock },
-                  { value: "15-16", label: "15h–16h", icon: Clock },
-                  { value: "16-17", label: "16h–17h", icon: Clock },
-                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
+                  { value: "fruta", label: "Fruta" },
+                  { value: "crepioca", label: "Crepioca" },
+                  { value: "pao", label: "Pão" },
+                  { value: "vitamina", label: "Vitamina" },
+                  { value: "whey", label: "Whey" },
+                  { value: "bolo_caneca", label: "Bolo de caneca" },
                 ].map((option) => {
-                  const IconComponent = option.icon
+                  const isSelected = answers.lanche_tarde?.includes(option.value)
                   return (
                     <button
                       key={option.value}
-                      onClick={() => handleOptionClick("lanche_tarde", option.value)}
-                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                      onClick={() => {
+                        const currentSelections = answers.lanche_tarde || []
+                        const newSelections = isSelected
+                          ? currentSelections.filter((item) => item !== option.value)
+                          : [...currentSelections, option.value]
+                        setAnswers({ ...answers, lanche_tarde: newSelections })
+                      }}
+                      className={`w-full border-2 rounded-xl p-4 flex items-center gap-3 transition-all text-left ${
+                        isSelected
+                          ? "border-[#4f6e2c] bg-[#f5f9f1]"
+                          : "border-[#e5e5e5] hover:border-[#4f6e2c] hover:bg-[#f5f9f1]"
+                      }`}
                     >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
+                      <div
+                        className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          isSelected ? "bg-[#4f6e2c] border-[#4f6e2c]" : "border-gray-300"
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3 h-3 text-white" />}
+                      </div>
                       <span className="text-base">{option.label}</span>
                     </button>
                   )
@@ -953,33 +990,47 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
-          {/* Step 16 - Motivation (was Step 15) */}
+          {/* Step 16 - Health Benefits Info (was Motivation question) */}
           {currentStep === 16 && (
             <QuizStep
-              title="Qual é o principal motivo que te faz querer entrar em forma?"
+              title="Veja os resultados que você poderá perceber rapidamente na sua saúde e bem-estar:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {[
-                  { value: "autoestima", label: "Aumentar autoconfiança e autoestima", icon: Sparkles },
-                  { value: "saude", label: "Melhorar saúde e disposição", icon: Heart },
-                  { value: "roupas", label: "Voltar a usar as roupas que gosto", icon: Shirt },
-                  { value: "pos-gestacao", label: "Recuperar o corpo pós-gestação", icon: Baby },
-                  { value: "outro", label: "Outro motivo pessoal", icon: Pencil },
-                ].map((option) => {
-                  const IconComponent = option.icon
+                  {
+                    label: "Melhorar disposição e saúde no geral",
+                    icon: Heart,
+                  },
+                  {
+                    label: "Aumentar autoconfiança e autoestima",
+                    icon: Sparkles,
+                  },
+                  {
+                    label: "Voltar a usar roupas que gosto",
+                    icon: Shirt,
+                  },
+                  {
+                    label: "Controle de patologias como diabetes, hipertensão, colesterol alto",
+                    icon: Activity,
+                  },
+                ].map((item, index) => {
+                  const IconComponent = item.icon
                   return (
-                    <button
-                      key={option.value}
-                      onClick={() => handleOptionClick("motivo", option.value)}
-                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                    <div
+                      key={index}
+                      className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]"
                     >
-                      <IconComponent className="w-10 h-10 text-[#4f6e2c] flex-shrink-0" />
-                      <span className="text-base">{option.label}</span>
-                    </button>
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#4f6e2c] to-[#6a8f3a] flex items-center justify-center flex-shrink-0">
+                          <IconComponent className="w-6 h-6 text-white" />
+                        </div>
+                        <span className="text-base text-gray-700 leading-relaxed">{item.label}</span>
+                      </div>
+                    </div>
                   )
                 })}
               </div>
