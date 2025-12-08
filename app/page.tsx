@@ -598,7 +598,7 @@ export default function QuizPage() {
                   { value: "requeijao", label: "Requeijão" },
                   { value: "cafe", label: "Café" },
                   { value: "cafe-com-leite", label: "Café com leite" },
-                  { value: "nao-quero", label: "Não gostaria de fazer café da manhã" },
+                  { value: "nao-quero", label: "Não quero fazer café da manhã" },
                 ].map((option) => {
                   const isSelected = answers.breakfast_foods?.includes(option.value)
                   return (
@@ -628,6 +628,10 @@ export default function QuizPage() {
                     </button>
                   )
                 })}
+              </div>
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <CheckCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                <span>Dica: se marcar "Não quero fazer café da manhã", deixe os demais desmarcados.</span>
               </div>
             </QuizStep>
           )}
@@ -898,7 +902,7 @@ export default function QuizPage() {
           {/* Step 15 - Habits (was Step 14) */}
           {currentStep === 15 && (
             <QuizStep
-              title="🤔 Você se identifica com algum desses hábitos alimentares?"
+              title="🤦‍♀️ Você se identifica com algum desses hábitos alimentares?"
               subtitle="(selecione os que se aplicam)"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
