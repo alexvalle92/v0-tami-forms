@@ -898,7 +898,7 @@ export default function QuizPage() {
           {/* Step 15 - Habits (was Step 14) */}
           {currentStep === 15 && (
             <QuizStep
-              title="Você se identifica com algum desses hábitos alimentares?"
+              title="🤔 Você se identifica com algum desses hábitos alimentares?"
               subtitle="(selecione os que se aplicam)"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
