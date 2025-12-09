@@ -104,6 +104,10 @@ export default function QuizPage() {
     }
   }
 
+  const handleMultipleChoice = (key: string, value: any[]) => {
+    updateAnswer(key, value)
+  }
+
   useEffect(() => {
     // Updated step indices for height, weight, and goal weight
     if (currentStep === 18 && !answers.altura_cm) {
@@ -149,8 +153,8 @@ export default function QuizPage() {
         return !!answers.almoco && answers.almoco.length > 0
       case 8:
         return !!answers.lanche_tarde
-      case 9:
-        return !!answers.jantar
+      case 9: // Updated step for dinner
+        return !!answers.jantar && answers.jantar.length > 0
       case 10:
         return !!answers.sobremesa
       case 12:
@@ -240,6 +244,10 @@ export default function QuizPage() {
         // Updated step index for lunch food error message
         case 7:
           errorMessage = "Por favor, selecione pelo menos uma opção para o seu almoço."
+          break
+        // Updated step index for dinner error message
+        case 9:
+          errorMessage = "Por favor, selecione pelo menos uma opção para o seu jantar."
           break
         default:
           errorMessage = "Por favor, selecione uma opção antes de continuar."
@@ -739,9 +747,10 @@ export default function QuizPage() {
             </QuizStep>
           )}
 
+          {/* Step 9 - Dinner (Updated) */}
           {currentStep === 9 && (
             <QuizStep
-              title="Qual é o horário em que você costuma jantar?"
+              title="O que você quer comer no jantar?"
               image={Almoco}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
@@ -749,22 +758,32 @@ export default function QuizPage() {
               canGoBack={currentStep > 0}
             >
               <div className="space-y-3">
-                {[
-                  { value: "16-18", label: "16h–18h", icon: Clock },
-                  { value: "18-20", label: "18h–20h", icon: Clock },
-                  { value: "20-22", label: "20h–22h", icon: Clock },
-                  { value: "nao faco", label: "Não faço e não quero fazer", icon: X },
-                  { value: "nao faco e gostaria de fazer", label: "Não faço e gostaria de fazer", icon: Check },
-                ].map((option) => {
-                  const IconComponent = option.icon
+                {["Hamburguer", "Macarrão", "Mingau", "Sopa", "Batata doce", "Batata inglesa"].map((option) => {
+                  const isSelected = answers.jantar?.includes(option) || false
                   return (
                     <button
-                      key={option.value}
-                      onClick={() => handleOptionClick("jantar", option.value)}
-                      className="w-full border-2 border-[#e5e5e5] rounded-xl p-4 flex items-center gap-3 hover:border-[#4f6e2c] hover:bg-[#f5f9f1] transition-all text-left"
+                      key={option}
+                      onClick={() => {
+                        const currentSelections = answers.jantar || []
+                        const newSelections = isSelected
+                          ? currentSelections.filter((item) => item !== option)
+                          : [...currentSelections, option]
+                        handleMultipleChoice("jantar", newSelections)
+                      }}
+                      className={`w-full border-2 rounded-xl p-4 flex items-center gap-3 transition-all text-left ${
+                        isSelected
+                          ? "border-[#4f6e2c] bg-[#f5f9f1]"
+                          : "border-[#e5e5e5] hover:border-[#4f6e2c] hover:bg-[#f5f9f1]"
+                      }`}
                     >
-                      <IconComponent className="w-6 h-6 text-[#4f6e2c] flex-shrink-0" />
-                      <span className="text-base">{option.label}</span>
+                      <div
+                        className={`w-6 h-6 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          isSelected ? "border-[#4f6e2c] bg-[#4f6e2c]" : "border-gray-300"
+                        }`}
+                      >
+                        {isSelected && <Check className="w-4 h-4 text-white" />}
+                      </div>
+                      <span className="text-base">{option}</span>
                     </button>
                   )
                 })}
