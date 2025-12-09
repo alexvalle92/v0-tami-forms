@@ -845,30 +845,6 @@ export default function QuizPage() {
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <p className="mb-4">
-                Olha só o que você vai poder incluir no seu plano alimentar — com estratégia e moderação:
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { label: "Pão francês", icon: Croissant },
-                  { label: "Sobremesas na medida", icon: Cookie },
-                  { label: "Hambúrguer caseiro", icon: Pizza },
-                  { label: "Refrigerante", icon: CupSoda },
-                  { label: "Arroz", icon: CookingPot },
-                  { label: "Feijão", icon: Bean },
-                ].map((food) => {
-                  const IconComponent = food.icon
-                  return (
-                    <span
-                      key={food.label}
-                      className="inline-flex items-center gap-2 bg-[#eef6e8] text-[#2f4a18] rounded-full px-3 py-2 text-sm font-semibold"
-                    >
-                      <IconComponent className="w-6 h-6" />
-                      {food.label}
-                    </span>
-                  )
-                })}
-              </div>
             </QuizStep>
           )}
 
@@ -906,7 +882,7 @@ export default function QuizPage() {
           {/* Step 13 - Sleep (was Step 12) */}
           {currentStep === 13 && (
             <QuizStep
-              title="Quantas horas de sono você costuma ter por noite?"
+              title="Quantas horas você costuma dormir por noite?"
               image={ContarCarneirinhos}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
@@ -972,7 +948,7 @@ export default function QuizPage() {
           {/* Step 15 - Habits (was Step 14) */}
           {currentStep === 15 && (
             <QuizStep
-              title="🤦‍♀️ Você se identifica com algum desses hábitos alimentares?"
+              title="Você se identifica com algum desses hábitos alimentares? 🤦🏾‍♀️"
               subtitle="(selecione os que se aplicam)"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
