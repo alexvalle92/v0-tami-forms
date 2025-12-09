@@ -66,6 +66,7 @@ import Feminino from "@/src/img/feminino.png"
 import Saude from "@/src/img/saude.png"
 import AutoEstima from "@/src/img/auto-estima.png"
 import Peso from "@/src/img/peso.png"
+import Janta from "@/src/img/jantar.png"
 import Fogo from "@/src/img/fogo.gif"
 
 export default function QuizPage() {
@@ -694,6 +695,10 @@ export default function QuizPage() {
                   )
                 })}
               </div>
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <CheckCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                <span>Dica: se marcar "Não quero fazer almoço", deixe os demais desmarcados.</span>
+              </div>
             </QuizStep>
           )}
 
@@ -714,6 +719,7 @@ export default function QuizPage() {
                   { value: "vitamina", label: "Vitamina" },
                   { value: "whey", label: "Whey" },
                   { value: "bolo_caneca", label: "Bolo de caneca" },
+                  { value: "nao-quero", label: "Não quero fazer lanche da tarde" },
                 ].map((option) => {
                   const isSelected = answers.lanche_tarde?.includes(option.value)
                   return (
@@ -744,6 +750,10 @@ export default function QuizPage() {
                   )
                 })}
               </div>
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <CheckCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                <span>Dica: se marcar "Não quero fazer lanche da tarde", deixe os demais desmarcados.</span>
+              </div>
             </QuizStep>
           )}
 
@@ -751,14 +761,14 @@ export default function QuizPage() {
           {currentStep === 9 && (
             <QuizStep
               title="O que você quer comer no jantar?"
-              image={Almoco}
+              image={Janta}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
               <div className="space-y-3">
-                {["Hamburguer", "Macarrão", "Mingau", "Sopa", "Batata doce", "Batata inglesa"].map((option) => {
+                {["Hamburguer", "Macarrão", "Mingau", "Sopa", "Batata doce", "Batata inglesa", "Não quero fazer janta"].map((option) => {
                   const isSelected = answers.jantar?.includes(option) || false
                   return (
                     <button
@@ -787,6 +797,10 @@ export default function QuizPage() {
                     </button>
                   )
                 })}
+              </div>
+              <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
+                <CheckCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                <span>Dica: se marcar "Não quero fazer janta", deixe os demais desmarcados.</span>
               </div>
             </QuizStep>
           )}
