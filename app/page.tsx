@@ -1198,7 +1198,7 @@ export default function QuizPage() {
           {/* Step 22 - Prediction (was Step 21) */}
           {currentStep === 22 && (
             <QuizStep
-              title="A última dieta que você precisará para ficar em forma!"
+              title="Rumo ao seu objetivo!"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
@@ -1213,9 +1213,6 @@ export default function QuizPage() {
                 Plano alimentar de Emagrecimento quase pronto! De acordo com as suas respostas, você está pronto(a) para
                 alcançar resultados consistentes.
               </p>
-              <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg">
-                Previsão de peso em 30 dias: <strong>{answers.meta_peso_30d || "--"} kg</strong>
-              </div>
             </QuizStep>
           )}
 

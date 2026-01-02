@@ -144,13 +144,6 @@ export function WeightLossChart({ currentWeight, goalWeight }: WeightLossChartPr
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-xl p-6 border border-[#e5e5e5]">
-        <div className="mb-4 text-center">
-          <p className="text-lg text-[#555]">
-            Prevejo que você estará com <span className="font-bold text-[#bb951c] text-2xl">{goalWeight}kg</span> em{" "}
-            <span className="font-bold text-[#4f6e2c]">30 dias</span>
-          </p>
-        </div>
-
         <div className="relative">
           <canvas ref={canvasRef} width={600} height={300} className="w-full h-auto" />
 
@@ -166,7 +159,7 @@ export function WeightLossChart({ currentWeight, goalWeight }: WeightLossChartPr
             <p className="text-xl font-bold text-[#4f6e2c]">{currentWeight}kg</p>
           </div>
           <div className="bg-[#fff8e6] rounded-lg p-3 text-center">
-            <p className="text-xs text-[#555] mb-1">Meta em 30 dias</p>
+            <p className="text-xs text-[#555] mb-1">Meta</p>
             <p className="text-xl font-bold text-[#bb951c]">{goalWeight}kg</p>
           </div>
         </div>
