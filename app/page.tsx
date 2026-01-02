@@ -27,8 +27,6 @@ import {
   Clock,
   Apple,
   IceCream,
-  Croissant,
-  Cookie,
   Armchair,
   Droplet,
   GlassWater,
@@ -40,13 +38,8 @@ import {
   Lock,
   AlertTriangle,
   Loader,
-  CookingPot,
-  Bean,
-  CupSoda,
-  Pizza,
   Footprints,
   Activity,
-  GraduationCap,
   Award,
 } from "lucide-react"
 import CopoAgua from "@/src/img/copoAgua.png"
@@ -78,7 +71,7 @@ export default function QuizPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" })
 
-  const totalSteps = 29
+  const totalSteps = 30
 
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
@@ -185,6 +178,8 @@ export default function QuizPage() {
         return !!answers.nome_completo && answers.nome_completo.trim().length > 0
       case 26: // Changed from 25
         return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11
+      case 28:
+        return true // Allow navigation from confirmation page
       default:
         return true
     }
@@ -769,7 +764,15 @@ export default function QuizPage() {
               canGoBack={currentStep > 0}
             >
               <div className="space-y-3">
-                {["Hamburguer", "Macarrão", "Mingau", "Sopa", "Batata doce", "Batata inglesa", "Não quero fazer janta"].map((option) => {
+                {[
+                  "Hamburguer",
+                  "Macarrão",
+                  "Mingau",
+                  "Sopa",
+                  "Batata doce",
+                  "Batata inglesa",
+                  "Não quero fazer janta",
+                ].map((option) => {
                   const isSelected = answers.jantar?.includes(option) || false
                   return (
                     <button
@@ -845,8 +848,7 @@ export default function QuizPage() {
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
-            >
-            </QuizStep>
+            ></QuizStep>
           )}
 
           {/* Step 12 - Daily Routine (was Step 11) */}
@@ -1059,12 +1061,12 @@ export default function QuizPage() {
               <div className="space-y-6">
                 {/* Nutritionist Photo */}
                 <Image
-                    src={Nutri}
-                    alt="Nutricionista"
-                    width={400}
-                    height={300}
-                    className="mx-auto"
-                  />
+                  src={Nutri || "/placeholder.svg"}
+                  alt="Nutricionista"
+                  width={400}
+                  height={300}
+                  className="mx-auto"
+                />
 
                 {/* Nutritionist Info */}
                 <div className="space-y-4 text-center">
@@ -1312,7 +1314,7 @@ export default function QuizPage() {
           )}
 
           {/* Step 29 - Final Payment (was Step 28) */}
-          {currentStep >= 29 && (
+          {currentStep === 29 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || ""} a nutri vai preparar seu plano alimentar exclusivo!`}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}

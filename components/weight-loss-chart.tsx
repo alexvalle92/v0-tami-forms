@@ -27,7 +27,7 @@ export function WeightLossChart({ currentWeight, goalWeight }: WeightLossChartPr
       ctx.clearRect(0, 0, width, height)
 
       const progress = Math.min(frame / maxFrames, 1)
-      
+
       // Calculate animated weight loss curve
       const weightDiff = currentWeight - goalWeight
       const dayPoints = 30
@@ -36,11 +36,11 @@ export function WeightLossChart({ currentWeight, goalWeight }: WeightLossChartPr
       for (let i = 0; i <= dayPoints; i++) {
         const dayProgress = i / dayPoints
         const x = (i / dayPoints) * width
-        
+
         // Exponential decay curve for realistic weight loss
         const weightAtDay = currentWeight - weightDiff * (1 - Math.pow(1 - dayProgress, 1.5)) * progress
         const y = height - ((weightAtDay - goalWeight + 5) / (currentWeight - goalWeight + 10)) * (height - 40) - 20
-        
+
         points.push({ x, y })
       }
 
@@ -94,7 +94,7 @@ export function WeightLossChart({ currentWeight, goalWeight }: WeightLossChartPr
       if (progress > 0.8) {
         const endPoint = points[points.length - 1]
         const endProgress = Math.min((progress - 0.8) / 0.2, 1)
-        
+
         ctx.beginPath()
         ctx.arc(endPoint.x, endPoint.y, 8 * endProgress, 0, Math.PI * 2)
         ctx.fillStyle = "#bb951c"
@@ -146,19 +146,17 @@ export function WeightLossChart({ currentWeight, goalWeight }: WeightLossChartPr
       <div className="bg-white rounded-xl p-6 border border-[#e5e5e5]">
         <div className="mb-4 text-center">
           <p className="text-lg text-[#555]">
-            Prevejo que você estará com{" "}
-            <span className="font-bold text-[#bb951c] text-2xl">{goalWeight}kg</span> em{" "}
+            Prevejo que você estará com <span className="font-bold text-[#bb951c] text-2xl">{goalWeight}kg</span> em{" "}
             <span className="font-bold text-[#4f6e2c]">30 dias</span>
           </p>
         </div>
 
         <div className="relative">
           <canvas ref={canvasRef} width={600} height={300} className="w-full h-auto" />
-          
+
           <div className="flex justify-between mt-2 text-sm text-[#888]">
             <span>Hoje</span>
-            <span>15 dias</span>
-            <span>30 dias</span>
+            <span>Meta</span>
           </div>
         </div>
 
