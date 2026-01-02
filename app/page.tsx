@@ -68,6 +68,7 @@ import AutoEstima from "@/src/img/auto-estima.png"
 import Peso from "@/src/img/peso.png"
 import Janta from "@/src/img/jantar.png"
 import Fogo from "@/src/img/fogo.gif"
+import Nutri from "@/src/img/nutri.jpeg"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -1057,64 +1058,43 @@ export default function QuizPage() {
             >
               <div className="space-y-6">
                 {/* Nutritionist Photo */}
-                <div className="flex justify-center">
-                  <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-[#4f6e2c] shadow-lg">
-                    <img
-                      src="/placeholder.svg?height=128&width=128"
-                      alt="Nutricionista"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                </div>
+                <Image
+                    src={Nutri}
+                    alt="Nutricionista"
+                    width={400}
+                    height={300}
+                    className="mx-auto"
+                  />
 
                 {/* Nutritionist Info */}
                 <div className="space-y-4 text-center">
-                  <h3 className="text-xl font-semibold text-[#4f6e2c]">Dra. Maria Silva</h3>
-                  <p className="text-sm text-gray-600">CRN 12345</p>
+                  <h3 className="text-xl font-semibold text-[#4f6e2c]">Dra. Tâmili Valle</h3>
+                  <p className="text-sm text-gray-600">CRN 18263</p>
                 </div>
 
                 {/* About Sections */}
                 <div className="space-y-4">
                   <div className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-full bg-[#4f6e2c] flex items-center justify-center flex-shrink-0">
-                        <GraduationCap className="w-5 h-5 text-white" />
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-800 mb-1">Formação</h4>
-                        <p className="text-sm text-gray-600">
-                          Nutricionista formada pela Universidade Federal, com especialização em nutrição clínica e
-                          emagrecimento saudável.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]">
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-[#4f6e2c] flex items-center justify-center flex-shrink-0">
                         <Award className="w-5 h-5 text-white" />
                       </div>
                       <div>
-                        <h4 className="font-semibold text-gray-800 mb-1">Experiência</h4>
-                        <p className="text-sm text-gray-600">
-                          Mais de 10 anos de experiência atendendo pacientes e criando planos alimentares personalizados
-                          com foco em resultados sustentáveis.
+                        <p className="text-md text-gray-600">
+                          Nutricionista clinica com foco em saude - performance - estética
                         </p>
                       </div>
                     </div>
                   </div>
 
                   <div className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]">
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-[#4f6e2c] flex items-center justify-center flex-shrink-0">
                         <Heart className="w-5 h-5 text-white" />
                       </div>
                       <div>
-                        <h4 className="font-semibold text-gray-800 mb-1">Abordagem</h4>
-                        <p className="text-sm text-gray-600">
-                          Acredita em uma nutrição equilibrada, sem restrições extremas, priorizando sua saúde e
-                          bem-estar a longo prazo.
+                        <p className="text-md text-gray-600">
+                          Atuação focada em emagrecimento saudável, hipertrofia e definição
                         </p>
                       </div>
                     </div>
