@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { QuizStep } from "@/components/quiz-step"
 import Image from "next/image"
 import { ProgressBar } from "@/components/progress-bar"
@@ -73,6 +73,9 @@ export default function QuizPage() {
 
   const totalSteps = 30
 
+  const emailInputRef = useRef<HTMLInputElement>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
   }
@@ -103,6 +106,69 @@ export default function QuizPage() {
     updateAnswer(key, value)
   }
 
+  const handleContinue = () => {
+    if (canProceed()) {
+      nextStep()
+    } else {
+      let errorMessage = "Por favor, responda a pergunta antes de continuar."
+
+      switch (currentStep) {
+        case 23: // Email
+          if (!answers.email) {
+            errorMessage = "Por favor, informe seu e-mail para continuar."
+          } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)) {
+            errorMessage = "Por favor, insira um e-mail válido (exemplo: seuemail@exemplo.com)"
+          }
+          break
+        case 24: // Phone
+          if (!answers.whatsapp) {
+            errorMessage = "Por favor, informe seu número de WhatsApp."
+          } else if (answers.whatsapp.replace(/\D/g, "").length < 10) {
+            errorMessage = "Por favor, insira um telefone válido com DDD (exemplo: (11) 98765-4321)"
+          }
+          break
+        case 25: // Name
+          errorMessage = "Por favor, informe seu nome completo para continuar."
+          break
+        case 26: // CPF
+          if (!answers.cpf) {
+            errorMessage = "Por favor, informe seu CPF para continuar."
+          } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
+            errorMessage = "Por favor, insira um CPF válido com 11 dígitos."
+          }
+          break
+        case 18: // Height
+          errorMessage = "Por favor, selecione sua altura antes de continuar."
+          break
+        case 19: // Weight
+          errorMessage = "Por favor, informe seu peso atual para continuar."
+          break
+        case 20: // Goal Weight
+          errorMessage = "Por favor, defina sua meta de peso para continuar."
+          break
+        case 15: // Habits
+          errorMessage = "Por favor, selecione pelo menos uma opção de hábito alimentar."
+          break
+        case 6: // Breakfast
+          errorMessage = "Por favor, selecione pelo menos uma opção para o seu café da manhã."
+          break
+        case 7: // Lunch
+          errorMessage = "Por favor, selecione pelo menos uma opção para o seu almoço."
+          break
+        case 9: // Dinner
+          errorMessage = "Por favor, selecione pelo menos uma opção para o seu jantar."
+          break
+        default:
+          errorMessage = "Por favor, selecione uma opção antes de continuar."
+      }
+
+      setErrorModal({
+        isOpen: true,
+        message: errorMessage,
+      })
+    }
+  }
+
   useEffect(() => {
     // Updated step indices for height, weight, and goal weight
     if (currentStep === 18 && !answers.altura_cm) {
@@ -129,6 +195,14 @@ export default function QuizPage() {
       updateAnswer("imc", bmi.toFixed(2))
     }
   }, [currentStep, answers.altura_cm, answers.peso_kg])
+
+  useEffect(() => {
+    if (currentStep === 23 && emailInputRef.current) {
+      emailInputRef.current.focus()
+    } else if (currentStep === 25 && nameInputRef.current) {
+      nameInputRef.current.focus()
+    }
+  }, [currentStep])
 
   const canProceed = () => {
     switch (currentStep) {
@@ -1221,15 +1295,22 @@ export default function QuizPage() {
             <QuizStep
               title="Digite seu e-mail para receber seu plano alimentar personalizado:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
-              onNext={handleNext}
+              onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
               showNextButton
             >
               <input
+                ref={emailInputRef}
                 type="email"
                 value={answers.email || ""}
                 onChange={(e) => updateAnswer("email", e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    handleContinue()
+                  }
+                }}
                 placeholder="seuemail@exemplo.com"
                 className="w-full p-3 border border-[#e5e5e5] rounded-lg text-base"
               />
@@ -1241,12 +1322,16 @@ export default function QuizPage() {
             <QuizStep
               title="Informe seu número de WhatsApp:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
-              onNext={handleNext}
+              onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
               showNextButton
             >
-              <PhoneInput value={answers.whatsapp || ""} onChange={(value) => updateAnswer("whatsapp", value)} />
+              <PhoneInput
+                value={answers.whatsapp || ""}
+                onChange={(value) => updateAnswer("whatsapp", value)}
+                onEnter={handleContinue}
+              />
               <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
                 <Smartphone className="w-6 h-6 flex-shrink-0 mt-0.5" />
                 <span>Inclua o DDD antes do número.</span>
@@ -1260,15 +1345,22 @@ export default function QuizPage() {
               title="Qual seu nome?"
               subtitle="(nome completo)"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
-              onNext={handleNext}
+              onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
               showNextButton
             >
               <input
+                ref={nameInputRef}
                 type="text"
                 value={answers.nome_completo || ""}
                 onChange={(e) => updateAnswer("nome_completo", e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    handleContinue()
+                  }
+                }}
                 placeholder="Digite seu nome completo"
                 className="w-full p-3 border border-[#e5e5e5] rounded-lg text-base"
               />
@@ -1280,12 +1372,16 @@ export default function QuizPage() {
             <QuizStep
               title="Informe seu CPF:"
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
-              onNext={handleNext}
+              onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
               showNextButton
             >
-              <CpfInput value={answers.cpf || ""} onChange={(value) => updateAnswer("cpf", value)} />
+              <CpfInput
+                value={answers.cpf || ""}
+                onChange={(value) => updateAnswer("cpf", value)}
+                onEnter={handleContinue}
+              />
               <div className="mt-4 bg-[#fff8e6] border border-[#f1dfa9] text-[#6a5414] p-3 rounded-lg text-sm flex items-start gap-2">
                 <Lock className="w-6 h-6 flex-shrink-0 mt-0.5" />
                 <span>Seus dados estão seguros e protegidos.</span>
