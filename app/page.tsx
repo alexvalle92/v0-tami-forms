@@ -1438,10 +1438,6 @@ export default function QuizPage() {
                       <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
                       <span>Acesso ao aplicativo</span>
                     </li>
-                    <li className="flex items-start gap-3">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
-                      <span>Orientações nutricionais detalhadas</span>
-                    </li>
                   </ul>
                 </div>
 
@@ -1449,11 +1445,7 @@ export default function QuizPage() {
                   <p className="text-sm text-[#6a5414] mb-1 uppercase tracking-wide font-semibold">
                     Investimento único
                   </p>
-                  <p className="text-4xl md:text-5xl font-bold text-[#4f6e2c] mb-2">R$ 49,90</p>
-                  <p className="text-sm text-[#6a5414] flex items-center justify-center gap-2">
-                    <Check className="w-4 h-4" />
-                    Acesso imediato ao seu plano
-                  </p>
+                  <p className="text-4xl md:text-5xl font-bold text-[#4f6e2c] mb-2">R$ 39,90</p>
                 </div>
               </div>
 
