@@ -914,7 +914,9 @@ export default function QuizPage() {
                   )
                 })}
               </div>
+              
             </QuizStep>
+            
           )}
 
           {/* Step 11 - Foods Info (was Step 10) */}
@@ -926,8 +928,16 @@ export default function QuizPage() {
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
-            ></QuizStep>
+            >
+              <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg flex items-start gap-2">
+                <CheckCircle className="w-5 h-5 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
+                <span>
+                  Uma alimentação saudável comporta escolhas flexíveis. Pois não existe alimento proibido, existe contexto, quantidade e frequência
+                </span>
+              </div>
+            </QuizStep>
           )}
+          
 
           {/* Step 12 - Daily Routine (was Step 11) */}
           {currentStep === 12 && (
