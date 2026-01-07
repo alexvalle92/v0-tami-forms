@@ -204,6 +204,10 @@ export default function QuizPage() {
     }
   }, [currentStep])
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }, [currentStep])
+
   const canProceed = () => {
     switch (currentStep) {
       case 0:
