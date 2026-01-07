@@ -42,7 +42,6 @@ import {
   Activity,
   Award,
 } from "lucide-react"
-import CopoAgua from "@/src/img/copoAgua.png"
 import CorpoMagra from "@/src/img/magra.jpg"
 import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
 import CorpoGordinha from "@/src/img/gordinha.jpg"
@@ -62,6 +61,7 @@ import Peso from "@/src/img/peso.png"
 import Janta from "@/src/img/jantar.png"
 import Fogo from "@/src/img/fogo.gif"
 import Nutri from "@/src/img/nutri.jpeg"
+import Agua from "@/src/img/agua.gif"
 
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -993,7 +993,7 @@ export default function QuizPage() {
           {currentStep === 14 && (
             <QuizStep
               title="Qual é a sua média de consumo de água por dia?"
-              image={CopoAgua}
+              image={Agua}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
