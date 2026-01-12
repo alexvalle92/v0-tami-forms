@@ -14,8 +14,10 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
   const [hasRetried, setHasRetried] = useState(false)
 
   const submitToWebhook = async (isRetry = false): Promise<boolean> => {
+    const WEBHOOK_URL_NOVO_FORMULARIO =
+  "https://n8n.nutritamilivalle.com.br/webhook-test/e914138c-0f72-4bb9-a209-3f379a630473"
     try {
-      const response = await fetch("/api/submit-quiz", {
+      const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -62,6 +64,9 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
       }
     }, 15000) // 8 seconds after first attempt (7s + 8s = 15s total)
 
+    const duration = 16000 // 16 segundos
+    const intervalTime = duration / 100 // 160 ms
+
     interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) {
@@ -71,7 +76,7 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
         }
         return prev + 1
       })
-    }, 100) // 100ms * 100 steps = 10 seconds
+    }, intervalTime)
 
     return () => {
       clearInterval(interval)
