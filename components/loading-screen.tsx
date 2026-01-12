@@ -4,13 +4,65 @@ import { useEffect, useState } from "react"
 
 interface LoadingScreenProps {
   onComplete: () => void
+  answers: Record<string, any>
 }
 
-export function LoadingScreen({ onComplete }: LoadingScreenProps) {
+export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
   const [progress, setProgress] = useState(0)
+  const [linkPagamento, setLinkPagamento] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [hasRetried, setHasRetried] = useState(false)
+
+  const submitToWebhook = async (isRetry = false): Promise<boolean> => {
+    try {
+      const response = await fetch("/api/submit-quiz", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ answers }),
+      })
+
+      const data = await response.json()
+
+      if (data.linkPagamento) {
+        setLinkPagamento(data.linkPagamento)
+        return true
+      }
+
+      if (data.redirectUrl) {
+        setLinkPagamento(data.redirectUrl)
+        return true
+      }
+
+      return false
+    } catch (error) {
+      console.error(`Erro ao enviar formulário (${isRetry ? "retry" : "primeira tentativa"}):`, error)
+      return false
+    }
+  }
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    let interval: NodeJS.Timeout
+
+    const firstAttemptTimeout = setTimeout(async () => {
+      if (!isSubmitting && !linkPagamento) {
+        setIsSubmitting(true)
+        const success = await submitToWebhook(false)
+        if (success) {
+          setIsSubmitting(false)
+        }
+      }
+    }, 7000) // 7 seconds for first attempt
+
+    const retryTimeout = setTimeout(async () => {
+      if (!linkPagamento && !hasRetried) {
+        setHasRetried(true)
+        await submitToWebhook(true)
+      }
+    }, 15000) // 8 seconds after first attempt (7s + 8s = 15s total)
+
+    interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval)
@@ -19,10 +71,21 @@ export function LoadingScreen({ onComplete }: LoadingScreenProps) {
         }
         return prev + 1
       })
-    }, 100)
+    }, 100) // 100ms * 100 steps = 10 seconds
 
-    return () => clearInterval(interval)
-  }, [onComplete])
+    return () => {
+      clearInterval(interval)
+      clearTimeout(firstAttemptTimeout)
+      clearTimeout(retryTimeout)
+    }
+  }, [onComplete, answers, linkPagamento, hasRetried, isSubmitting])
+
+  useEffect(() => {
+    if (linkPagamento) {
+      // Store in sessionStorage so final page can access it
+      sessionStorage.setItem("linkPagamento", linkPagamento)
+    }
+  }, [linkPagamento])
 
   return (
     <div className="flex flex-col items-center justify-center py-12 animate-fade-in">

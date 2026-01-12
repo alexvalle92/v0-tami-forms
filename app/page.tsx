@@ -36,8 +36,6 @@ import {
   Check,
   Smartphone,
   Lock,
-  AlertTriangle,
-  Loader,
   Footprints,
   Activity,
   Award,
@@ -347,39 +345,15 @@ export default function QuizPage() {
     URL.revokeObjectURL(url)
   }
 
-  const handleSubmitQuiz = async () => {
-    setIsSubmitting(true)
-    setSubmitError(null)
-
-    try {
-      const response = await fetch("/api/submit-quiz", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ answers }),
+  const handleFinalRedirect = () => {
+    const linkPagamento = sessionStorage.getItem("linkPagamento")
+    if (linkPagamento) {
+      window.location.href = linkPagamento
+    } else {
+      setErrorModal({
+        isOpen: true,
+        message: "Erro ao processar pagamento. Por favor, tente novamente.",
       })
-
-      const data = await response.json()
-
-      if (data.redirectUrl) {
-        window.location.href = data.redirectUrl
-        return
-      }
-
-      if (!response.ok) {
-        throw new Error(data.error || "Erro ao processar formulário")
-      }
-
-      if (data.paymentUrl) {
-        window.location.href = data.paymentUrl
-      } else {
-        throw new Error("URL de pagamento não encontrada")
-      }
-    } catch (error) {
-      console.error("Erro ao enviar formulário:", error)
-      setSubmitError(error instanceof Error ? error.message : "Erro desconhecido")
-      setIsSubmitting(false)
     }
   }
 
@@ -914,9 +888,7 @@ export default function QuizPage() {
                   )
                 })}
               </div>
-              
             </QuizStep>
-            
           )}
 
           {/* Step 11 - Foods Info (was Step 10) */}
@@ -932,12 +904,12 @@ export default function QuizPage() {
               <div className="border-l-4 border-[#4f6e2c] bg-[#f7fbf3] p-4 rounded-lg flex items-start gap-2">
                 <CheckCircle className="w-5 h-5 text-[#4f6e2c] flex-shrink-0 mt-0.5" />
                 <span>
-                  Uma alimentação saudável comporta escolhas flexíveis. Pois não existe alimento proibido, existe contexto, quantidade e frequência
+                  Uma alimentação saudável comporta escolhas flexíveis. Pois não existe alimento proibido, existe
+                  contexto, quantidade e frequência
                 </span>
               </div>
             </QuizStep>
           )}
-          
 
           {/* Step 12 - Daily Routine (was Step 11) */}
           {currentStep === 12 && (
@@ -1404,93 +1376,36 @@ export default function QuizPage() {
           )}
 
           {/* Step 27 - Loading (was Step 26) */}
-          {currentStep === 27 && <LoadingScreen onComplete={nextStep} />}
+          {currentStep === 27 && <LoadingScreen onComplete={nextStep} answers={answers} />}
 
           {/* Step 28 - Summary (was Step 27) */}
           {currentStep === 28 && (
-            <QuizStep
-              title="Confirme suas informações"
-              subtitle="Revise seu perfil antes de prosseguir"
+            <SummaryStep
+              answers={answers}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
-              canGoBack={currentStep > 0}
-            >
-              <SummaryStep answers={answers} />
-            </QuizStep>
+            />
           )}
 
           {/* Step 29 - Final Payment (was Step 28) */}
           {currentStep === 29 && (
             <QuizStep
-              title={`${answers.nome_completo?.split(" ")[0] || ""} a nutri vai preparar seu plano alimentar exclusivo!`}
+              title="Seu plano está pronto!"
+              subtitle="Clique no botão abaixo para finalizar e acessar seu plano alimentar personalizado."
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
+              onNext={handleNext}
               onPrev={prevStep}
-              canGoBack={currentStep > 0 && !isSubmitting}
+              canGoBack={currentStep > 0}
             >
-              <p className="mb-4 text-base md:text-lg leading-relaxed">
-                {answers.nome_completo?.split(" ")[0] || "Você"}, a nutri vai preparar seu plano alimentar para alcançar{" "}
-                <strong className="text-[#4f6e2c]">{answers.meta_peso_30d || "sua melhor versão"} kg.</strong>
-                Ele é flexível, leve e sem restrições extremas — ajustado à sua rotina.
-              </p>
-
-              <div className="space-y-3 mb-6">
-                <div className="bg-gradient-to-br from-[#eef6e8] to-[#f7fbf3] border-2 border-[#4f6e2c] p-5 md:p-6 rounded-xl shadow-sm">
-                  <p className="font-bold text-[#2f4a18] mb-4 flex items-center gap-2 text-lg">
-                    <Sparkles className="w-6 h-6" />O que você receberá:
-                  </p>
-                  <ul className="text-base text-[#2f4a18] space-y-3">
-                    <li className="flex items-start gap-3">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
-                      <span>Plano alimentar completo para 30 dias</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
-                      <span>Cardápio personalizado baseado no seu perfil</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
-                      <span>Acesso ao aplicativo</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="bg-gradient-to-r from-[#fff8e6] to-[#fffbf0] border-2 border-[#bb951c] p-5 rounded-xl text-center shadow-sm">
-                  <p className="text-sm text-[#6a5414] mb-1 uppercase tracking-wide font-semibold">
-                    Investimento único
-                  </p>
-                  <p className="text-4xl md:text-5xl font-bold text-[#4f6e2c] mb-2">R$ 39,90</p>
-                </div>
+              <div className="text-center py-8">
+                <button
+                  onClick={handleFinalRedirect}
+                  className="w-full bg-gradient-to-r from-[#4f6e2c] to-[#6b9638] text-white py-4 px-8 rounded-xl font-bold text-lg hover:shadow-lg transition-all duration-300 hover:scale-105 active:scale-95"
+                >
+                  Finalizar e ir para pagamento
+                </button>
               </div>
-
-              {submitError && (
-                <div className="mb-4 bg-red-50 border-2 border-red-200 text-red-700 p-4 rounded-lg text-sm md:text-base flex items-start gap-3 animate-fade-in">
-                  <AlertTriangle className="w-6 h-6 flex-shrink-0 mt-0.5" />
-                  <span>{submitError}</span>
-                </div>
-              )}
-
-              <button
-                onClick={handleSubmitQuiz}
-                disabled={isSubmitting}
-                className="w-full bg-[#4f6e2c] text-white font-bold py-5 px-6 rounded-xl hover:brightness-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg md:text-xl flex items-center justify-center gap-3 shadow-lg hover:shadow-xl active:scale-95 min-h-[60px]"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader className="w-6 h-6 animate-spin" />
-                    Processando...
-                  </>
-                ) : (
-                  <>
-                    <Lock className="w-6 h-6" />
-                    Garantir Meu Plano Alimentar Agora
-                  </>
-                )}
-              </button>
-
-              <p className="text-xs md:text-sm text-center text-[#888] mt-4 leading-relaxed">
-                🔒 Você será redirecionado para a página de pagamento seguro
-              </p>
             </QuizStep>
           )}
         </div>
