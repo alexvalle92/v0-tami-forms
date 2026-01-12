@@ -27,13 +27,11 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
 
       const data = await response.json()
 
-      if (data.linkPagamento) {
-        setLinkPagamento(data.linkPagamento)
-        return true
-      }
-
-      if (data.redirectUrl) {
-        setLinkPagamento(data.redirectUrl)
+      if (data.sucesso == true) {
+        if (data.linkPagamento) {
+          setLinkPagamento(data.linkPagamento)
+        }
+        // TODO: Exibir mensagem de erro na tela
         return true
       }
 
