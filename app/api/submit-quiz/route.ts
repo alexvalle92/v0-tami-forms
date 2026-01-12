@@ -1,6 +1,4 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-import { getConfig } from "@/lib/config"
 
 const WEBHOOK_URL_NOVO_FORMULARIO =
   "https://n8n.nutritamilivalle.com.br/webhook-test/e914138c-0f72-4bb9-a209-3f379a630473"
@@ -22,9 +20,6 @@ function validateCPF(cpf: string | null): boolean {
 
 export async function POST(request: NextRequest) {
   try {
-    const config = await getConfig()
-
-    const supabase = createClient(config.NEXT_PUBLIC_SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY)
 
     const body = await request.json()
     const { answers } = body
