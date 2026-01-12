@@ -350,10 +350,9 @@ export default function QuizPage() {
     if (linkPagamento) {
       window.location.href = linkPagamento
     } else {
-      setErrorModal({
-        isOpen: true,
-        message: "Erro ao processar pagamento. Por favor, tente novamente.",
-      })
+      // Store answers in sessionStorage for confirmation page
+      sessionStorage.setItem("quizAnswers", JSON.stringify(answers))
+      window.location.href = "/confirmation"
     }
   }
 

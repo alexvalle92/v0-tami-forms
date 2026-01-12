@@ -138,6 +138,21 @@
   animation: fade-in 0.34s ease;
 }
 
+/* Added bounce-slow animation for confirmation page success icon */
+@keyframes bounce-slow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-bounce-slow {
+  animation: bounce-slow 2s ease-in-out infinite;
+}
+
 /* Enhanced range slider styling for better touch experience */
 input[type="range"] {
   -webkit-appearance: none;
