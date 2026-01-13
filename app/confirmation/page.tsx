@@ -20,7 +20,9 @@ export default function ConfirmationPage() {
       } catch (error) {
         console.error("Error parsing answers:", error)
       }
+      sessionStorage.removeItem('quizAnswers')
     }
+    
   }, [])
 
   return (

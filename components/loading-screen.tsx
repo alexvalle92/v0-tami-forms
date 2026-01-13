@@ -32,26 +32,29 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
         body: JSON.stringify({ answers }),
       })
 
-      const data = await response.json()
+      let data = null
+      const contentType = response.headers?.get('content-type')
 
-      if (data.sucesso == true) {
-        if (data.linkPagamento) {
-          sessionStorage.setItem("linkPagamento", data.linkPagamento)
+      if (contentType?.includes('application/json')) {
+        const text = await response.text()
+
+        if (text) {
+          data = JSON.parse(text)
+          if (data.sucesso == true) {
+            if (data.linkPagamento) {
+              sessionStorage.setItem("linkPagamento", data.linkPagamento)
+            }
+          } else if (data.mensagemErro) {
+            setErrorMessage(data.mensagemErro)
+            setShowError(true)
+            setShouldBlockProgress(true)
+          }
         }
-      } else if (data.mensagemErro) {
-        setErrorMessage(data.mensagemErro)
-        setShowError(true)
-        setShouldBlockProgress(true)
-      } else if (!data.continueFluxo) {
-        setErrorMessage(
-          "Houve um problema ao processar seu pagamento. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
-        )
-        setShowError(true)
-        setShouldBlockProgress(true)
       }
+      
     } catch (error) {
       setErrorMessage(
-        "Houve um problema ao processar seu pagamento. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+        "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
       )
       setShowError(true)
       setShouldBlockProgress(true)
@@ -83,7 +86,7 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
   useEffect(() => {
     const webhookTimeout = setTimeout(() => {
       submitToWebhook()
-    }, 7000)
+    }, 12000)
 
     return () => {
       clearTimeout(webhookTimeout)

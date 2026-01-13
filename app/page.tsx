@@ -95,10 +95,10 @@ export default function QuizPage() {
       peso_kg: "75",
       meta_peso_30d: "68",
       // imc will be calculated later
-      email: "teste@exemplo.com",
+      email: "teste10@exemplo.com",
       whatsapp: "(11) 98765-4321",
       nome_completo: "Maria Silva Teste",
-      cpf: "123.456.789-00",
+      cpf: "123.456.789-10",
     }
     setAnswers(testData)
     setCurrentStep(27) // Jump to loading screen (step after CPF)
@@ -378,12 +378,14 @@ export default function QuizPage() {
   const handleFinalRedirect = () => {
     const linkPagamento = sessionStorage.getItem("linkPagamento")
     if (linkPagamento) {
+      sessionStorage.removeItem('quizAnswers')
       window.location.href = linkPagamento
     } else {
       // Store answers in sessionStorage for confirmation page
       sessionStorage.setItem("quizAnswers", JSON.stringify(answers))
       window.location.href = "/confirmation"
     }
+    sessionStorage.removeItem('linkPagamento')
   }
 
   return (
@@ -496,25 +498,25 @@ export default function QuizPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
                   {
-                    value: "Magro(a)",
+                    value: "Magro(a). Baixo percentual de gordura, estrutura mais fina.",
                     image: CorpoMagra,
                     title: "Magro(a)",
                     desc: "Baixo percentual de gordura, estrutura mais fina.",
                   },
                   {
-                    value: "Falso Magro(a)",
+                    value: "Falso Magro(a). Peso normal, gordura localizada e pouca definição.",
                     image: CorpoFalsaMagra,
                     title: "Falso Magro(a)",
                     desc: "Peso normal, gordura localizada e pouca definição.",
                   },
                   {
-                    value: "Gordinho(a)",
+                    value: "Gordinho(a). Leve excesso de gordura corporal.",
                     image: CorpoGordinha,
                     title: "Gordinho(a)",
                     desc: "Leve excesso de gordura corporal.",
                   },
                   {
-                    value: "Muito gordinho(a)",
+                    value: "Muito gordinho(a). Acúmulo de gordura evidente.",
                     image: CorpoMuitoGordinha,
                     title: "Muito gordinho(a)",
                     desc: "Acúmulo de gordura evidente.",
@@ -689,13 +691,13 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "pao-frances", label: "Pão francês" },
-                  { value: "pao-integral", label: "Pão de forma integral" },
-                  { value: "ovo", label: "Ovo" },
-                  { value: "requeijao", label: "Requeijão" },
-                  { value: "cafe", label: "Café" },
-                  { value: "cafe-com-leite", label: "Café com leite" },
-                  { value: "nao-quero", label: "Não quero fazer café da manhã" },
+                  { value: "Pão francês", label: "Pão francês" },
+                  { value: "Pão de forma integral", label: "Pão de forma integral" },
+                  { value: "Ovo", label: "Ovo" },
+                  { value: "Requeijão", label: "Requeijão" },
+                  { value: "Café", label: "Café" },
+                  { value: "Café com leite", label: "Café com leite" },
+                  { value: "Não quero fazer café da manhã", label: "Não quero fazer café da manhã" },
                 ].map((option) => {
                   const isSelected = answers.breakfast_foods?.includes(option.value)
                   return (
@@ -744,13 +746,13 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "frango", label: "Carne de frango" },
-                  { value: "peixe", label: "Carne de Peixe" },
-                  { value: "porco", label: "Carne de porco" },
-                  { value: "boi", label: "Carne de boi" },
-                  { value: "com-feijao", label: "Com Feijão" },
-                  { value: "sem-feijao", label: "Sem feijão" },
-                  { value: "nao-quero", label: "Não quero fazer almoço" },
+                  { value: "Carne de frango", label: "Carne de frango" },
+                  { value: "Carne de peixe", label: "Carne de Peixe" },
+                  { value: "Carne de porco", label: "Carne de porco" },
+                  { value: "Carne de boi", label: "Carne de boi" },
+                  { value: "Com Feijão", label: "Com Feijão" },
+                  { value: "Sem Feijão", label: "Sem feijão" },
+                  { value: "Não quero fazer almoço", label: "Não quero fazer almoço" },
                 ].map((option) => {
                   const isSelected = answers.almoco?.includes(option.value)
                   return (
@@ -799,13 +801,13 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "fruta", label: "Fruta" },
-                  { value: "crepioca", label: "Crepioca" },
-                  { value: "pao", label: "Pão" },
-                  { value: "vitamina", label: "Vitamina" },
-                  { value: "whey", label: "Whey" },
-                  { value: "bolo_caneca", label: "Bolo de caneca" },
-                  { value: "nao-quero", label: "Não quero fazer lanche da tarde" },
+                  { value: "Fruta", label: "Fruta" },
+                  { value: "Crepioca", label: "Crepioca" },
+                  { value: "Pão", label: "Pão" },
+                  { value: "Vitamina", label: "Vitamina" },
+                  { value: "Whey Protein", label: "Whey Protein" },
+                  { value: "Bolo de caneca", label: "Bolo de caneca" },
+                  { value: "Não quero fazer lanche da tarde", label: "Não quero fazer lanche da tarde" },
                 ].map((option) => {
                   const isSelected = answers.lanche_tarde?.includes(option.value)
                   return (
@@ -910,8 +912,8 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "sim", label: "Sim, com certeza!", icon: IceCream },
-                  { value: "nao", label: "Não, prefiro evitar.", icon: Apple },
+                  { value: "Sim", label: "Sim, com certeza!", icon: IceCream },
+                  { value: "Não", label: "Não, prefiro evitar.", icon: Apple },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -960,9 +962,9 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "sedentario", label: "Passo a maior parte do tempo sentado(a)", icon: Armchair },
-                  { value: "moderado", label: "Pausas ativas ou movimento ocasional", icon: Activity },
-                  { value: "ativo", label: "Em pé ou em movimento quase todo o dia", icon: Footprints },
+                  { value: "Passo a maior parte do tempo sentado(a)", label: "Passo a maior parte do tempo sentado(a)", icon: Armchair },
+                  { value: "Pausas ativas ou movimento ocasional", label: "Pausas ativas ou movimento ocasional", icon: Activity },
+                  { value: "Em pé ou em movimento quase todo o dia", label: "Em pé ou em movimento quase todo o dia", icon: Footprints },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -992,10 +994,10 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "<5", label: "Menos de 5 horas", icon: Clock },
-                  { value: "5-6", label: "5–6 horas", icon: Clock },
-                  { value: "7-8", label: "7–8 horas", icon: Clock },
-                  { value: ">8", label: "Mais de 8 horas", icon: Clock },
+                  { value: "Menos de 5 horas", label: "Menos de 5 horas", icon: Clock },
+                  { value: "5–6 horas", label: "5–6 horas", icon: Clock },
+                  { value: "7–8 horas", label: "7–8 horas", icon: Clock },
+                  { value: "Mais de 8 horas", label: "Mais de 8 horas", icon: Clock },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -1025,10 +1027,10 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "quase nao", label: "Quase não bebo água", icon: X },
-                  { value: "~500ml", label: "Aproximadamente 2 copos (500 ml)", icon: GlassWater },
-                  { value: "0.5-1.5L", label: "2–6 copos (0,5–1,5 L)", icon: Droplet },
-                  { value: ">6 copos", label: "Mais de 6 copos", icon: GlassWater },
+                  { value: "Quase não bebo água", label: "Quase não bebo água", icon: X },
+                  { value: "Aproximadamente 2 copos (500 ml)", label: "Aproximadamente 2 copos (500 ml)", icon: GlassWater },
+                  { value: "2–6 copos (0,5–1,5 L)", label: "2–6 copos (0,5–1,5 L)", icon: Droplet },
+                  { value: "Mais de 6 copos", label: "Mais de 6 copos", icon: GlassWater },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -1059,11 +1061,11 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "madrugada", label: "Como de madrugada", icon: Moon },
-                  { value: "emocional", label: "Como por emoção/ansiedade/tédio", icon: Heart },
-                  { value: "doces", label: "Dificuldade em resistir a doces", icon: Candy },
-                  { value: "finais de semana", label: "Exagero nos fins de semana", icon: Calendar },
-                  { value: "nenhum", label: "Nenhum desses", icon: CheckCircle },
+                  { value: "Como de madrugada", label: "Como de madrugada", icon: Moon },
+                  { value: "Como por emoção/ansiedade/tédio", label: "Como por emoção/ansiedade/tédio", icon: Heart },
+                  { value: "Dificuldade em resistir a doces", label: "Dificuldade em resistir a doces", icon: Candy },
+                  { value: "Exagero nos fins de semana", label: "Exagero nos fins de semana", icon: Calendar },
+                  { value: "Nenhum desses", label: "Nenhum desses", icon: CheckCircle },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
