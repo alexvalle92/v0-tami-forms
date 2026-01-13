@@ -34,20 +34,26 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
       if (data.sucesso == true) {
         if (data.linkPagamento) {
           setLinkPagamento(data.linkPagamento)
-          return true
-        } else {
-          setErrorMessage(
-            "Houve um problema ao processar seu pagamento. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
-          )
-          setShowError(true)
-          setShouldBlockProgress(true)
-          return false
-        }
+        } 
+        return true
+      } else if (data.mensagemErro) {
+        setErrorMessage(data.mensagemErro)
+        setShowError(true)
+        setShouldBlockProgress(true)
+      } else if(!data.continueFluxo){
+        setErrorMessage(
+          "Houve um problema ao processar seu pagamento. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+        )
+        setShowError(true)
+        setShouldBlockProgress(true)
       }
-
-      return false
+      return true
     } catch (error) {
-      console.error(`Erro ao enviar formulário (${isRetry ? "retry" : "primeira tentativa"}):`, error)
+      setErrorMessage(
+        "Houve um problema ao processar seu pagamento. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+      )
+      setShowError(true)
+      setShouldBlockProgress(true)
       return false
     }
   }
