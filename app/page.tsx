@@ -39,6 +39,8 @@ import {
   Footprints,
   Activity,
   Award,
+  AlertTriangle,
+  Loader,
 } from "lucide-react"
 import CorpoMagra from "@/src/img/magra.jpg"
 import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
@@ -73,6 +75,34 @@ export default function QuizPage() {
 
   const emailInputRef = useRef<HTMLInputElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
+
+  const fillTestData = () => {
+    const testData = {
+      faixa_etaria: "25-34 anos",
+      sexo_biologico: "Feminino",
+      tipo_fisico: "Gordinho(a)",
+      peso_comportamento: "Já perdi e ganhei peso várias vezes",
+      breakfast_foods: ["Pão francês", "Café com leite"],
+      almoco: ["Carne de frango", "Com Feijão"],
+      lanche_tarde: ["Fruta", "Vitamina"],
+      jantar: ["Sopa", "Batata doce"],
+      sobremesa: "Sim, mas só às vezes",
+      rotina_dia: "Passo a maior parte do tempo sentado(a)",
+      sono: "Durmo bem a maior parte das noites",
+      agua: "1-2 copos por dia",
+      habitos: ["Comer muito doce", "Comer de madrugada"],
+      altura_cm: "165",
+      peso_kg: "75",
+      meta_peso_30d: "68",
+      // imc will be calculated later
+      email: "teste@exemplo.com",
+      whatsapp: "(11) 98765-4321",
+      nome_completo: "Maria Silva Teste",
+      cpf: "123.456.789-00",
+    }
+    setAnswers(testData)
+    setCurrentStep(27) // Jump to loading screen (step after CPF)
+  }
 
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
@@ -397,6 +427,15 @@ export default function QuizPage() {
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
+              <div className="mb-4">
+                <button
+                  onClick={fillTestData}
+                  className="w-full px-4 py-2 bg-gray-600 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  🧪 Modo Teste (Preencher dados e pular para envio)
+                </button>
+              </div>
+
               <div className="grid grid-cols-2 gap-3 md:gap-4">
                 {["18-24 anos", "25-34 anos", "35-44 anos", "45-59 anos"].map((age) => (
                   <button

@@ -12,12 +12,11 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
   const [progress, setProgress] = useState(0)
   const [linkPagamento, setLinkPagamento] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [hasRetried, setHasRetried] = useState(false)
   const [showError, setShowError] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
   const [shouldBlockProgress, setShouldBlockProgress] = useState(false)
 
-  const submitToWebhook = async (isRetry = false): Promise<boolean> => {
+  const submitToWebhook = async (): Promise<boolean> => {
     const WEBHOOK_URL_NOVO_FORMULARIO =
       "https://n8n.nutritamilivalle.com.br/webhook-test/e914138c-0f72-4bb9-a209-3f379a630473"
     try {
@@ -34,13 +33,13 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
       if (data.sucesso == true) {
         if (data.linkPagamento) {
           setLinkPagamento(data.linkPagamento)
-        } 
+        }
         return true
       } else if (data.mensagemErro) {
         setErrorMessage(data.mensagemErro)
         setShowError(true)
         setShouldBlockProgress(true)
-      } else if(!data.continueFluxo){
+      } else if (!data.continueFluxo) {
         setErrorMessage(
           "Houve um problema ao processar seu pagamento. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
         )
@@ -64,19 +63,10 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
     const firstAttemptTimeout = setTimeout(async () => {
       if (!isSubmitting && !linkPagamento) {
         setIsSubmitting(true)
-        const success = await submitToWebhook(false)
-        if (success) {
-          setIsSubmitting(false)
-        }
+        await submitToWebhook()
+        setIsSubmitting(false)
       }
-    }, 7000) // 7 seconds for first attempt
-
-    const retryTimeout = setTimeout(async () => {
-      if (!linkPagamento && !hasRetried) {
-        setHasRetried(true)
-        await submitToWebhook(true)
-      }
-    }, 15000) // 8 seconds after first attempt (7s + 8s = 15s total)
+    }, 7000)
 
     const duration = 16000 // 16 segundos
     const intervalTime = duration / 100 // 160 ms
@@ -97,9 +87,8 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
     return () => {
       clearInterval(interval)
       clearTimeout(firstAttemptTimeout)
-      clearTimeout(retryTimeout)
     }
-  }, [onComplete, answers, linkPagamento, hasRetried, isSubmitting, shouldBlockProgress])
+  }, [onComplete, answers, linkPagamento, isSubmitting, shouldBlockProgress])
 
   useEffect(() => {
     if (linkPagamento) {
