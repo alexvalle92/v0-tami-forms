@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { ErrorModal } from "./error-modal"
 
 interface LoadingScreenProps {
@@ -10,15 +10,19 @@ interface LoadingScreenProps {
 
 export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
   const [progress, setProgress] = useState(0)
-  const [linkPagamento, setLinkPagamento] = useState<string | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [showError, setShowError] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
   const [shouldBlockProgress, setShouldBlockProgress] = useState(false)
 
-  const submitToWebhook = async (): Promise<boolean> => {
+  const hasSubmitted = useRef(false)
+
+  const submitToWebhook = async (): Promise<void> => {
+    if (hasSubmitted.current) return
+    hasSubmitted.current = true
+
     const WEBHOOK_URL_NOVO_FORMULARIO =
       "https://n8n.nutritamilivalle.com.br/webhook-test/e914138c-0f72-4bb9-a209-3f379a630473"
+
     try {
       const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
         method: "POST",
@@ -32,9 +36,8 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
 
       if (data.sucesso == true) {
         if (data.linkPagamento) {
-          setLinkPagamento(data.linkPagamento)
+          sessionStorage.setItem("linkPagamento", data.linkPagamento)
         }
-        return true
       } else if (data.mensagemErro) {
         setErrorMessage(data.mensagemErro)
         setShowError(true)
@@ -46,32 +49,20 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
         setShowError(true)
         setShouldBlockProgress(true)
       }
-      return true
     } catch (error) {
       setErrorMessage(
         "Houve um problema ao processar seu pagamento. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
       )
       setShowError(true)
       setShouldBlockProgress(true)
-      return false
     }
   }
 
   useEffect(() => {
-    let interval: NodeJS.Timeout
+    const duration = 16000
+    const intervalTime = duration / 100
 
-    const firstAttemptTimeout = setTimeout(async () => {
-      if (!isSubmitting && !linkPagamento) {
-        setIsSubmitting(true)
-        await submitToWebhook()
-        setIsSubmitting(false)
-      }
-    }, 7000)
-
-    const duration = 16000 // 16 segundos
-    const intervalTime = duration / 100 // 160 ms
-
-    interval = setInterval(() => {
+    const interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval)
@@ -86,16 +77,18 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
 
     return () => {
       clearInterval(interval)
-      clearTimeout(firstAttemptTimeout)
     }
-  }, [onComplete, answers, linkPagamento, isSubmitting, shouldBlockProgress])
+  }, [onComplete, shouldBlockProgress])
 
   useEffect(() => {
-    if (linkPagamento) {
-      // Store in sessionStorage so final page can access it
-      sessionStorage.setItem("linkPagamento", linkPagamento)
+    const webhookTimeout = setTimeout(() => {
+      submitToWebhook()
+    }, 7000)
+
+    return () => {
+      clearTimeout(webhookTimeout)
     }
-  }, [linkPagamento])
+  }, []) // Empty dependency array ensures this runs only once
 
   return (
     <>
