@@ -98,10 +98,41 @@ export default function QuizPage() {
       email: "teste10@exemplo.com",
       whatsapp: "(11) 98765-4321",
       nome_completo: "Maria Silva Teste",
-      cpf: "123.456.789-10",
+      cpf: "123.456.789-09",
     }
     setAnswers(testData)
     setCurrentStep(27) // Jump to loading screen (step after CPF)
+  }
+
+  const validateCPF = (cpf: string): boolean => {
+    // Remove formatting
+    const cleanCPF = cpf.replace(/\D/g, "")
+
+    // Check if has 11 digits
+    if (cleanCPF.length !== 11) return false
+
+    // Check if all digits are the same
+    if (/^(\d)\1+$/.test(cleanCPF)) return false
+
+    // Validate first check digit
+    let sum = 0
+    for (let i = 0; i < 9; i++) {
+      sum += Number.parseInt(cleanCPF.charAt(i)) * (10 - i)
+    }
+    let checkDigit = 11 - (sum % 11)
+    if (checkDigit === 10 || checkDigit === 11) checkDigit = 0
+    if (checkDigit !== Number.parseInt(cleanCPF.charAt(9))) return false
+
+    // Validate second check digit
+    sum = 0
+    for (let i = 0; i < 10; i++) {
+      sum += Number.parseInt(cleanCPF.charAt(i)) * (11 - i)
+    }
+    checkDigit = 11 - (sum % 11)
+    if (checkDigit === 10 || checkDigit === 11) checkDigit = 0
+    if (checkDigit !== Number.parseInt(cleanCPF.charAt(10))) return false
+
+    return true
   }
 
   const updateAnswer = (key: string, value: any) => {
@@ -163,6 +194,8 @@ export default function QuizPage() {
             errorMessage = "Por favor, informe seu CPF para continuar."
           } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
             errorMessage = "Por favor, insira um CPF válido com 11 dígitos."
+          } else if (!validateCPF(answers.cpf)) {
+            errorMessage = "CPF inválido. Por favor, verifique os dados e tente novamente."
           }
           break
         case 18: // Height
@@ -283,7 +316,7 @@ export default function QuizPage() {
       case 25: // Changed from 24
         return !!answers.nome_completo && answers.nome_completo.trim().length > 0
       case 26: // Changed from 25
-        return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11
+        return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11 && validateCPF(answers.cpf)
       case 28:
         return true // Allow navigation from confirmation page
       default:
@@ -322,6 +355,8 @@ export default function QuizPage() {
             errorMessage = "Por favor, informe seu CPF para continuar."
           } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
             errorMessage = "Por favor, insira um CPF válido com 11 dígitos."
+          } else if (!validateCPF(answers.cpf)) {
+            errorMessage = "CPF inválido. Por favor, verifique os dados e tente novamente."
           }
           break
         // Updated step index for height error message
@@ -378,14 +413,14 @@ export default function QuizPage() {
   const handleFinalRedirect = () => {
     const linkPagamento = sessionStorage.getItem("linkPagamento")
     if (linkPagamento) {
-      sessionStorage.removeItem('quizAnswers')
+      sessionStorage.removeItem("quizAnswers")
       window.location.href = linkPagamento
     } else {
       // Store answers in sessionStorage for confirmation page
       sessionStorage.setItem("quizAnswers", JSON.stringify(answers))
       window.location.href = "/confirmation"
     }
-    sessionStorage.removeItem('linkPagamento')
+    sessionStorage.removeItem("linkPagamento")
   }
 
   return (
@@ -962,9 +997,21 @@ export default function QuizPage() {
             >
               <div className="space-y-3">
                 {[
-                  { value: "Passo a maior parte do tempo sentado(a)", label: "Passo a maior parte do tempo sentado(a)", icon: Armchair },
-                  { value: "Pausas ativas ou movimento ocasional", label: "Pausas ativas ou movimento ocasional", icon: Activity },
-                  { value: "Em pé ou em movimento quase todo o dia", label: "Em pé ou em movimento quase todo o dia", icon: Footprints },
+                  {
+                    value: "Passo a maior parte do tempo sentado(a)",
+                    label: "Passo a maior parte do tempo sentado(a)",
+                    icon: Armchair,
+                  },
+                  {
+                    value: "Pausas ativas ou movimento ocasional",
+                    label: "Pausas ativas ou movimento ocasional",
+                    icon: Activity,
+                  },
+                  {
+                    value: "Em pé ou em movimento quase todo o dia",
+                    label: "Em pé ou em movimento quase todo o dia",
+                    icon: Footprints,
+                  },
                 ].map((option) => {
                   const IconComponent = option.icon
                   return (
@@ -1028,7 +1075,11 @@ export default function QuizPage() {
               <div className="space-y-3">
                 {[
                   { value: "Quase não bebo água", label: "Quase não bebo água", icon: X },
-                  { value: "Aproximadamente 2 copos (500 ml)", label: "Aproximadamente 2 copos (500 ml)", icon: GlassWater },
+                  {
+                    value: "Aproximadamente 2 copos (500 ml)",
+                    label: "Aproximadamente 2 copos (500 ml)",
+                    icon: GlassWater,
+                  },
                   { value: "2–6 copos (0,5–1,5 L)", label: "2–6 copos (0,5–1,5 L)", icon: Droplet },
                   { value: "Mais de 6 copos", label: "Mais de 6 copos", icon: GlassWater },
                 ].map((option) => {
