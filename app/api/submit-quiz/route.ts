@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-const WEBHOOK_URL_NOVO_FORMULARIO =
-  "https://n8n.nutritamilivalle.com.br/webhook-test/e914138c-0f72-4bb9-a209-3f379a630473"
+const WEBHOOK_URL_NOVO_FORMULARIO = process.env.WEBHOOK_URL_FORMULARIO
 
 function validateEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
