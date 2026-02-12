@@ -23,6 +23,7 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
     const WEBHOOK_URL_NOVO_FORMULARIO = process.env.WEBHOOK_URL_FORMULARIO
 
     try {
+      console.log('Efetuando requisição em ' + WEBHOOK_URL_NOVO_FORMULARIO)
       const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
         method: "POST",
         headers: {
