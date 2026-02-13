@@ -12,15 +12,28 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
   const [progress, setProgress] = useState(0)
   const [showError, setShowError] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
-  const [shouldBlockProgress, setShouldBlockProgress] = useState(false)
 
   const hasSubmitted = useRef(false)
+  const shouldBlockProgressRef = useRef(false)
+
+  const blockProgress = (message: string) => {
+    shouldBlockProgressRef.current = true
+    setErrorMessage(message)
+    setShowError(true)
+  }
 
   const submitToWebhook = async (): Promise<void> => {
     if (hasSubmitted.current) return
     hasSubmitted.current = true
 
-    const WEBHOOK_URL_NOVO_FORMULARIO = process.env.WEBHOOK_URL_FORMULARIO
+    const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL_FORMULARIO
+
+    if (!WEBHOOK_URL_NOVO_FORMULARIO) {
+      blockProgress(
+        "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+      )
+      return
+    }
 
     try {
       console.log('Efetuando requisição em ' + WEBHOOK_URL_NOVO_FORMULARIO)
@@ -32,32 +45,34 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
         body: JSON.stringify({ answers }),
       })
 
-      let data = null
+      if (!response.ok) {
+        blockProgress(
+          "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+        )
+        return
+      }
+
       const contentType = response.headers?.get('content-type')
 
       if (contentType?.includes('application/json')) {
         const text = await response.text()
 
         if (text) {
-          data = JSON.parse(text)
+          const data = JSON.parse(text)
           if (data.sucesso == true) {
             if (data.linkPagamento) {
               sessionStorage.setItem("linkPagamento", data.linkPagamento)
             }
           } else if (data.mensagemErro) {
-            setErrorMessage(data.mensagemErro)
-            setShowError(true)
-            setShouldBlockProgress(true)
+            blockProgress(data.mensagemErro)
           }
         }
       }
       
     } catch (error) {
-      setErrorMessage(
+      blockProgress(
         "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
       )
-      setShowError(true)
-      setShouldBlockProgress(true)
     }
   }
 
@@ -69,7 +84,7 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
       setProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval)
-          if (!shouldBlockProgress) {
+          if (!shouldBlockProgressRef.current) {
             setTimeout(() => onComplete(), 1000)
           }
           return 100
@@ -81,7 +96,7 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
     return () => {
       clearInterval(interval)
     }
-  }, [onComplete, shouldBlockProgress])
+  }, [onComplete])
 
   useEffect(() => {
     const webhookTimeout = setTimeout(() => {
