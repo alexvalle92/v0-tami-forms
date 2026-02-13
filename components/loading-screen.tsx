@@ -30,7 +30,7 @@ export function LoadingScreen({ onComplete, answers }: LoadingScreenProps) {
 
     if (!WEBHOOK_URL_NOVO_FORMULARIO) {
       blockProgress(
-        "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+        "Houve um problema ao registrar seus dados. Aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
       )
       return
     }
