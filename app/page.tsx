@@ -12,7 +12,6 @@ import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
 import { WeightLossChart } from "@/components/weight-loss-chart"
 import { ErrorModal } from "@/components/error-modal"
-import { SummaryStep } from "@/components/summary-step"
 import {
   Moon,
   Heart,
@@ -71,7 +70,7 @@ export default function QuizPage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" })
 
-  const totalSteps = 30
+  const totalSteps = 29
 
   const emailInputRef = useRef<HTMLInputElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -318,7 +317,7 @@ export default function QuizPage() {
       case 26: // Changed from 25
         return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11 && validateCPF(answers.cpf)
       case 28:
-        return true // Allow navigation from confirmation page
+        return true
       default:
         return true
     }
@@ -1467,20 +1466,10 @@ export default function QuizPage() {
           )}
 
           {/* Step 27 - Loading (was Step 26) */}
-          {currentStep === 27 && <LoadingScreen onComplete={nextStep} answers={answers} />}
+          {currentStep === 27 && <LoadingScreen onComplete={nextStep} onGoBack={prevStep} answers={answers} />}
 
-          {/* Step 28 - Summary (was Step 27) */}
+          {/* Step 28 - Final Payment */}
           {currentStep === 28 && (
-            <SummaryStep
-              answers={answers}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
-              onNext={handleNext}
-              onPrev={prevStep}
-            />
-          )}
-
-          {/* Step 29 - Final Payment (was Step 28) */}
-          {currentStep === 29 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || ""} a nutri vai preparar seu plano alimentar exclusivo!`}
               counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
