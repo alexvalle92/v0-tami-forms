@@ -85,15 +85,31 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
     hasSubmitted.current = false
     setProgress(0)
 
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    let retryProgress = 0
+    const retryInterval = setInterval(() => {
+      retryProgress += 5
+      if (retryProgress <= 90) {
+        setProgress(retryProgress)
+      }
+    }, 200)
+
     await submitToWebhook()
     hasSubmitted.current = true
 
+    clearInterval(retryInterval)
+
     if (!shouldBlockProgressRef.current) {
       setProgress(100)
-      setTimeout(() => onComplete(), 1000)
+      setTimeout(() => {
+        setIsRetrying(false)
+        onComplete()
+      }, 1000)
+    } else {
+      setProgress(100)
+      setIsRetrying(false)
     }
-
-    setIsRetrying(false)
   }
 
   useEffect(() => {
@@ -161,7 +177,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
       {!hasError && (
         <>
           <h2 className="text-2xl md:text-3xl font-bold text-[#4f6e2c] mb-4 text-center">
-            {isRetrying ? "Tentando novamente..." : "Montando seu plano alimentar personalizado..."}
+            {isRetrying ? "Reenviando seus dados..." : "Montando seu plano alimentar personalizado..."}
           </h2>
 
           <div className="space-y-2 text-center text-[#555]">
@@ -172,7 +188,15 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
         </>
       )}
 
-      {hasError && (
+      {isRetrying && !hasError && (
+        <div className="mt-4">
+          <p className="text-sm text-[#4f6e2c] font-medium text-center animate-pulse">
+            Aguarde, estamos reenviando seus dados...
+          </p>
+        </div>
+      )}
+
+      {hasError && !isRetrying && (
         <div className="w-full max-w-md">
           <h2 className="text-xl md:text-2xl font-bold text-red-600 mb-3 text-center">
             Ops! Algo deu errado
