@@ -1466,7 +1466,7 @@ export default function QuizPage() {
           )}
 
           {/* Step 27 - Loading (was Step 26) */}
-          {currentStep === 27 && <LoadingScreen onComplete={nextStep} answers={answers} />}
+          {currentStep === 27 && <LoadingScreen onComplete={nextStep} onGoBack={prevStep} answers={answers} />}
 
           {/* Step 28 - Final Payment */}
           {currentStep === 28 && (
