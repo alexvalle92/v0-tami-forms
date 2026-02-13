@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { AlertTriangle, ArrowLeft, RefreshCw, MessageCircle } from "lucide-react"
 
 interface LoadingScreenProps {
@@ -13,24 +13,22 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
   const [progress, setProgress] = useState(0)
   const [hasError, setHasError] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
-  const [isRetrying, setIsRetrying] = useState(false)
+  const [showButtons, setShowButtons] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
 
-  const hasSubmitted = useRef(false)
-  const shouldBlockProgressRef = useRef(false)
+  const webhookResultRef = useRef<"pending" | "success" | "error">("pending")
+  const webhookErrorMsgRef = useRef("")
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  const blockProgress = (message: string) => {
-    shouldBlockProgressRef.current = true
-    setErrorMessage(message)
-    setHasError(true)
-  }
+  const submitToWebhook = useCallback(async () => {
+    webhookResultRef.current = "pending"
+    webhookErrorMsgRef.current = ""
 
-  const submitToWebhook = async (): Promise<void> => {
     const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL_FORMULARIO
 
     if (!WEBHOOK_URL_NOVO_FORMULARIO) {
-      blockProgress(
-        "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
-      )
+      webhookResultRef.current = "error"
+      webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
       return
     }
 
@@ -45,9 +43,8 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
       })
 
       if (!response.ok) {
-        blockProgress(
-          "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
-        )
+        webhookResultRef.current = "error"
+        webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
         return
       }
 
@@ -55,97 +52,100 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
 
       if (contentType?.includes('application/json')) {
         const text = await response.text()
-
         if (text) {
           const data = JSON.parse(text)
           if (data.sucesso == true) {
             if (data.linkPagamento) {
               sessionStorage.setItem("linkPagamento", data.linkPagamento)
             }
-            shouldBlockProgressRef.current = false
-            setHasError(false)
+            webhookResultRef.current = "success"
           } else if (data.mensagemErro) {
-            blockProgress(data.mensagemErro)
+            webhookResultRef.current = "error"
+            webhookErrorMsgRef.current = data.mensagemErro
+          } else {
+            webhookResultRef.current = "success"
           }
+        } else {
+          webhookResultRef.current = "success"
         }
+      } else {
+        webhookResultRef.current = "success"
       }
-      
     } catch (error) {
-      blockProgress(
-        "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
-      )
+      webhookResultRef.current = "error"
+      webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
     }
-  }
+  }, [answers])
 
-  const handleRetry = async () => {
-    setIsRetrying(true)
-    setHasError(false)
-    setErrorMessage("")
-    shouldBlockProgressRef.current = false
-    hasSubmitted.current = false
+  const startProgressAnimation = useCallback((duration: number, webhookDelay: number) => {
     setProgress(0)
+    setHasError(false)
+    setShowButtons(false)
+    setErrorMessage("")
+    webhookResultRef.current = "pending"
 
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    let retryProgress = 0
-    const retryInterval = setInterval(() => {
-      retryProgress += 5
-      if (retryProgress <= 90) {
-        setProgress(retryProgress)
-      }
-    }, 200)
-
-    await submitToWebhook()
-    hasSubmitted.current = true
-
-    clearInterval(retryInterval)
-
-    if (!shouldBlockProgressRef.current) {
-      setProgress(100)
-      setTimeout(() => {
-        setIsRetrying(false)
-        onComplete()
-      }, 1000)
-    } else {
-      setProgress(100)
-      setIsRetrying(false)
-    }
-  }
-
-  useEffect(() => {
-    const duration = 16000
+    let currentProgress = 0
     const intervalTime = duration / 100
 
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval)
-          if (!shouldBlockProgressRef.current) {
-            setTimeout(() => onComplete(), 1000)
-          }
-          return 100
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current)
+    }
+
+    const webhookTimer = setTimeout(() => {
+      submitToWebhook()
+    }, webhookDelay)
+
+    progressIntervalRef.current = setInterval(() => {
+      currentProgress += 1
+      setProgress(currentProgress)
+
+      if (currentProgress >= 100) {
+        if (progressIntervalRef.current) {
+          clearInterval(progressIntervalRef.current)
+          progressIntervalRef.current = null
         }
-        return prev + 1
-      })
+
+        setTimeout(() => {
+          if (webhookResultRef.current === "error") {
+            setErrorMessage(webhookErrorMsgRef.current)
+            setHasError(true)
+            setShowButtons(true)
+          } else if (webhookResultRef.current === "success") {
+            onComplete()
+          } else {
+            const checkResult = setInterval(() => {
+              if (webhookResultRef.current === "error") {
+                clearInterval(checkResult)
+                setErrorMessage(webhookErrorMsgRef.current)
+                setHasError(true)
+                setShowButtons(true)
+              } else if (webhookResultRef.current === "success") {
+                clearInterval(checkResult)
+                onComplete()
+              }
+            }, 300)
+          }
+        }, 500)
+      }
     }, intervalTime)
 
     return () => {
-      clearInterval(interval)
+      clearTimeout(webhookTimer)
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current)
+      }
     }
-  }, [onComplete])
+  }, [submitToWebhook, onComplete])
 
   useEffect(() => {
-    const webhookTimeout = setTimeout(() => {
-      if (!hasSubmitted.current) {
-        hasSubmitted.current = true
-        submitToWebhook()
-      }
-    }, 12000)
-
-    return () => {
-      clearTimeout(webhookTimeout)
-    }
+    const cleanup = startProgressAnimation(16000, 12000)
+    return cleanup
   }, [])
+
+  const handleRetry = () => {
+    setRetryCount((prev) => prev + 1)
+    startProgressAnimation(8000, 3000)
+  }
 
   return (
     <div className="flex flex-col items-center justify-center py-12 animate-fade-in">
@@ -177,7 +177,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
       {!hasError && (
         <>
           <h2 className="text-2xl md:text-3xl font-bold text-[#4f6e2c] mb-4 text-center">
-            {isRetrying ? "Reenviando seus dados..." : "Montando seu plano alimentar personalizado..."}
+            {retryCount > 0 ? "Reenviando seus dados..." : "Montando seu plano alimentar personalizado..."}
           </h2>
 
           <div className="space-y-2 text-center text-[#555]">
@@ -188,15 +188,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
         </>
       )}
 
-      {isRetrying && !hasError && (
-        <div className="mt-4">
-          <p className="text-sm text-[#4f6e2c] font-medium text-center animate-pulse">
-            Aguarde, estamos reenviando seus dados...
-          </p>
-        </div>
-      )}
-
-      {hasError && !isRetrying && (
+      {showButtons && hasError && (
         <div className="w-full max-w-md">
           <h2 className="text-xl md:text-2xl font-bold text-red-600 mb-3 text-center">
             Ops! Algo deu errado
@@ -209,11 +201,10 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
           <div className="space-y-3">
             <button
               onClick={handleRetry}
-              disabled={isRetrying}
-              className="w-full flex items-center justify-center gap-3 bg-[#4f6e2c] text-white font-semibold py-4 px-6 rounded-xl hover:brightness-90 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full flex items-center justify-center gap-3 bg-[#4f6e2c] text-white font-semibold py-4 px-6 rounded-xl hover:brightness-90 transition-all active:scale-95"
             >
-              <RefreshCw className={`w-5 h-5 ${isRetrying ? "animate-spin" : ""}`} />
-              {isRetrying ? "Tentando novamente..." : "Tentar novamente"}
+              <RefreshCw className="w-5 h-5" />
+              Tentar novamente
             </button>
 
             <button
