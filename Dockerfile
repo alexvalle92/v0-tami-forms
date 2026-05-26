@@ -29,7 +29,4 @@ USER nextjs
 
 EXPOSE 5000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "fetch('http://localhost:5000/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
-
 CMD ["node", "server.js"]
