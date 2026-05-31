@@ -36,9 +36,6 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
       console.log('Efetuando requisição em ' + WEBHOOK_URL_NOVO_FORMULARIO)
       const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({ answers }),
       })
 
