@@ -21,7 +21,6 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         {children}
       </body>
-      <footer>Build 2026-05-31-1850</footer>
     </html>
   )
 }
