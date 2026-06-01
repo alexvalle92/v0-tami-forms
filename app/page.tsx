@@ -463,15 +463,6 @@ export default function QuizPage() {
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <div className="mb-4">
-                <button
-                  onClick={fillTestData}
-                  className="w-full px-4 py-2 bg-gray-600 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
-                >
-                  🧪 Modo Teste (Preencher dados e pular para envio)
-                </button>
-              </div>
-
               <div className="grid grid-cols-2 gap-3 md:gap-4">
                 {["18-24 anos", "25-34 anos", "35-44 anos", "45-59 anos"].map((age) => (
                   <button
