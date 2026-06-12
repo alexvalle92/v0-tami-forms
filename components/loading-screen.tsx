@@ -25,6 +25,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
     webhookErrorMsgRef.current = ""
 
     const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL;
+    
 
     if (!WEBHOOK_URL_NOVO_FORMULARIO) {
       webhookResultRef.current = "error"
