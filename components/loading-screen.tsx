@@ -24,18 +24,8 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
     webhookResultRef.current = "pending"
     webhookErrorMsgRef.current = ""
 
-    const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL;
-    
-
-    if (!WEBHOOK_URL_NOVO_FORMULARIO) {
-      webhookResultRef.current = "error"
-      webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
-      return
-    }
-
     try {
-      console.log('Efetuando requisição em ' + WEBHOOK_URL_NOVO_FORMULARIO)
-      const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
+      const response = await fetch("/api/submit-quiz", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
