@@ -7,6 +7,9 @@ COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --no-frozen-lockfile
 COPY . .
 
+ARG NEXT_PUBLIC_WEBHOOK_URL
+ENV NEXT_PUBLIC_WEBHOOK_URL=$NEXT_PUBLIC_WEBHOOK_URL
+
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 
