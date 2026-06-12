@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           sucesso: false,
-          mensagemErro: "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+          mensagemErro: "111 Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
         },
         { status: 500 }
       )
@@ -43,13 +43,13 @@ export async function POST(request: NextRequest) {
       }
     )
   } catch (error) {
-    console.error("Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.", error)
+    console.error("222 Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.", error)
 
     return NextResponse.json(
       {
         sucesso: false,
         mensagemErro:
-          "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+          "333 Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
       },
       { status: 500 }
     )
