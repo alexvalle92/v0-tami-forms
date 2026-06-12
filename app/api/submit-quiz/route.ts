@@ -1,86 +1,57 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 
-const WEBHOOK_URL_NOVO_FORMULARIO = process.env.WEBHOOK_URL_FORMULARIO
-
-function validateEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-}
-
-function validatePhone(phone: string): boolean {
-  const cleanPhone = phone.replace(/\D/g, "")
-  return cleanPhone.length >= 10 && cleanPhone.length <= 11
-}
-
-function validateCPF(cpf: string | null): boolean {
-  if (!cpf) return true
-  const cleanCPF = cpf.replace(/\D/g, "")
-  return cleanCPF.length === 11
-}
+const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL
 
 export async function POST(request: NextRequest) {
   try {
-
-    const body = await request.json()
-    const { answers } = body
-
-    if (!answers || !answers.nome_completo || !answers.email || !answers.whatsapp) {
-      return NextResponse.json(
-        { error: "Dados incompletos. Nome, email e WhatsApp são obrigatórios." },
-        { status: 400 },
-      )
-    }
-
-    if (!validateEmail(answers.email)) {
-      return NextResponse.json({ error: "Email inválido." }, { status: 400 })
-    }
-
-    if (!validatePhone(answers.whatsapp)) {
-      return NextResponse.json(
-        { error: "Telefone inválido. Deve conter DDD + número (10 ou 11 dígitos)." },
-        { status: 400 },
-      )
-    }
-
-    const cpf = answers.cpf || null
-    if (!validateCPF(cpf)) {
-      return NextResponse.json({ error: "CPF inválido." }, { status: 400 })
-    }
-
-    try {
-      const webhookResponse = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          answers: answers,
-        }),
-      })
-
-      const webhookData = await webhookResponse.json()
-
-      if (webhookData.linkPagamento) {
-        return NextResponse.json({
-          linkPagamento: webhookData.linkPagamento,
-        })
-      }
-
-      // Fallback if webhook doesn't return linkPagamento
-      return NextResponse.json({
-        linkPagamento: "https://pay.kiwify.com.br/default-checkout-url",
-      })
-    } catch (webhookError) {
-      console.error("Erro ao enviar para webhook:", webhookError)
+    if (!WEBHOOK_URL_NOVO_FORMULARIO) {
       return NextResponse.json(
         {
-          error:
-            "Desculpe pelo transtorno, mas não conseguimos efetuar o seu cadastro! Tente novamente em alguns instantes.",
+          sucesso: false,
+          mensagemErro: "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
         },
-        { status: 500 },
+        { status: 500 }
       )
     }
+
+    const body = await request.json()
+
+    const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+
+    const contentType = response.headers.get("content-type")
+
+    if (contentType?.includes("application/json")) {
+      const data = await response.json()
+
+      return NextResponse.json(data, {
+        status: response.status,
+      })
+    }
+
+    return NextResponse.json(
+      {
+        sucesso: true,
+      },
+      {
+        status: response.status,
+      }
+    )
   } catch (error) {
-    console.error("Erro no processamento:", error)
-    return NextResponse.json({ error: "Desculpe pelo transtorno! Tente novamente mais tarde." }, { status: 500 })
+    console.error("Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.", error)
+
+    return NextResponse.json(
+      {
+        sucesso: false,
+        mensagemErro:
+          "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte.",
+      },
+      { status: 500 }
+    )
   }
 }
