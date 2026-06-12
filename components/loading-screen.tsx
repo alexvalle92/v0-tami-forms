@@ -24,7 +24,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
     webhookResultRef.current = "pending"
     webhookErrorMsgRef.current = ""
 
-    const WEBHOOK_URL_NOVO_FORMULARIO = process.env.WEBHOOK_URL;
+    const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL;
 
     if (!WEBHOOK_URL_NOVO_FORMULARIO) {
       webhookResultRef.current = "error"
