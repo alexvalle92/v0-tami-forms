@@ -35,7 +35,8 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
 
       if (!response.ok) {
         webhookResultRef.current = "error"
-        webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
+        //webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
+        webhookErrorMsgRef.current = response.mensagemErro
         return
       }
 
