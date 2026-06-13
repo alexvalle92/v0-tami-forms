@@ -23,9 +23,27 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
   const submitToWebhook = useCallback(async () => {
     webhookResultRef.current = "pending"
     webhookErrorMsgRef.current = ""
+    var WEBHOOK_URL_NOVO_FORMULARIO = ""
+
+    const isTestEnvironment =
+      typeof window !== "undefined" &&
+      window.location.hostname.includes("test")
+
+    if (isTestEnvironment) {
+      WEBHOOK_URL_NOVO_FORMULARIO = "https://n8n-n8n-start.z8qram.easypanel.host/webhook-test/e914138c-0f72-4bb9-a209-3f379a630473"
+    } else {
+      WEBHOOK_URL_NOVO_FORMULARIO = "https://n8n-n8n-start.z8qram.easypanel.host/webhook/fdf9906e-e31c-4d36-b113-200dc6ed842a"
+    }
+
+    if (!WEBHOOK_URL_NOVO_FORMULARIO) {
+      webhookResultRef.current = "error"
+      webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
+      return
+    }
 
     try {
-      const response = await fetch("/api/submit-quiz", {
+      console.log('Efetuando requisição em ' + WEBHOOK_URL_NOVO_FORMULARIO)
+      const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -35,8 +53,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
 
       if (!response.ok) {
         webhookResultRef.current = "error"
-        //webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
-        webhookErrorMsgRef.current = response.mensagemErro
+        webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
         return
       }
 
