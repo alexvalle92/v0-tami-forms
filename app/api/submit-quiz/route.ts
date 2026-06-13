@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
 
-const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL
+export async function GET() {
+  return NextResponse.json({
+    ok: true
+  });
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const WEBHOOK_URL_NOVO_FORMULARIO = process.env.NEXT_PUBLIC_WEBHOOK_URL
+
+      console.log("Testando aqui" + WEBHOOK_URL_NOVO_FORMULARIO)
+
     if (!WEBHOOK_URL_NOVO_FORMULARIO) {
       return NextResponse.json(
         {
