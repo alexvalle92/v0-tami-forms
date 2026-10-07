@@ -11,7 +11,7 @@ export function createEvolutionWhatsAppSender(cfg: {
   fetchImpl?: typeof fetch
   sleep?: (ms: number) => Promise<void>
 }): WhatsAppSender {
-  const url = `${cfg.baseUrl}/message/sendText/${encodeURIComponent(cfg.instance)}`
+  const url = `${cfg.baseUrl.replace(/\/+$/, "")}/message/sendText/${encodeURIComponent(cfg.instance)}`
   return {
     async sendText(number, text) {
       const response = await fetchWithRetry(
