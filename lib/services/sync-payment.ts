@@ -5,7 +5,7 @@ import { MAX_PAYMENT_ATTEMPTS, jobBackoffMs } from "@/lib/jobs/backoff"
 import type { Logger } from "@/lib/log"
 import { addDaysISO, todayInSaoPaulo } from "@/lib/time"
 import type { AlertAdmin } from "./alert-admin"
-import { toLastError } from "./last-error"
+import { safeErrorMessage, toLastError } from "./last-error"
 
 export type SyncResult =
   | { status: "synced"; paymentUrl: string }
@@ -14,8 +14,10 @@ export type SyncResult =
 export type SyncPayment = (paymentId: string, opts: { deadline: number }) => Promise<SyncResult>
 
 const LOCK_TTL_MS = 120_000
-
-const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
+// O lock expira em 120 s e o repositório não confere o dono ao soltar/gravar. Se uma chamada ao Asaas
+// durasse além disso, outro worker poderia pegar o lock vencido e criar uma cobrança em duplicidade.
+// Por isso o deadline efetivo nunca passa de 100 s depois que o lock foi tomado.
+const LOCK_SAFE_WINDOW_MS = 100_000
 
 /** Resultado de uma cobrança que não está mais `PENDING_ASAAS`: sincronizada (com URL) ou falha. */
 function settledResult(p: PaymentView): SyncResult {
@@ -61,7 +63,7 @@ export function createSyncPayment(d: {
         error,
       })
     } catch (recordErr) {
-      d.log.error("payment.sync.record_failure_failed", { ...fields, recordMessage: errorMessage(recordErr) })
+      d.log.error("payment.sync.record_failure_failed", { ...fields, recordMessage: safeErrorMessage(recordErr) })
       return { result: { status: "retry_scheduled" }, lockCleared: false }
     }
 
@@ -74,7 +76,7 @@ export function createSyncPayment(d: {
     try {
       await d.alertAdmin({ kind: "payment", id: payment.id, patientName: payment.patient.name, error })
     } catch (alertErr) {
-      d.log.error("payment.sync.alert_failed", { paymentId: payment.id, message: errorMessage(alertErr) })
+      d.log.error("payment.sync.alert_failed", { paymentId: payment.id, message: safeErrorMessage(alertErr) })
     }
     return { result: { status: "failed" }, lockCleared: true }
   }
@@ -87,6 +89,8 @@ export function createSyncPayment(d: {
     if (!(await d.payments.tryLock(paymentId, LOCK_TTL_MS))) return { status: "busy" }
 
     // `markSynced` e `markSyncFailure` soltam o lock; em qualquer outro caminho o `finally` o solta.
+    const lockTakenAtMs = d.now().getTime()
+    const asaasOpts = { deadline: Math.min(opts.deadline, lockTakenAtMs + LOCK_SAFE_WINDOW_MS) }
     let lockHeld = true
     try {
       // Outro processo pode ter terminado entre o `get` e o lock: relê para não repetir nem recontar tentativas.
@@ -99,7 +103,7 @@ export function createSyncPayment(d: {
         const { patient } = payment
         let customerId = patient.asaasCustomerId
         if (!customerId) {
-          let customer = await d.asaas.findCustomerByCpf(patient.cpf, opts)
+          let customer = await d.asaas.findCustomerByCpf(patient.cpf, asaasOpts)
           if (!customer) {
             step = "asaas.create_customer"
             customer = await d.asaas.createCustomer(
@@ -110,7 +114,7 @@ export function createSyncPayment(d: {
                 mobilePhone: patient.phone,
                 externalReference: patient.id,
               },
-              opts,
+              asaasOpts,
             )
           }
           customerId = customer.id
@@ -120,7 +124,7 @@ export function createSyncPayment(d: {
 
         const dueDate = addDaysISO(todayInSaoPaulo(d.now()), d.config.dueDays)
         step = "asaas.find_payment"
-        let asaasPayment: AsaasPayment | null = await d.asaas.findPaymentByExternalReference(payment.id, opts)
+        let asaasPayment: AsaasPayment | null = await d.asaas.findPaymentByExternalReference(payment.id, asaasOpts)
         if (!asaasPayment) {
           step = "asaas.create_payment"
           asaasPayment = await d.asaas.createPayment(
@@ -133,7 +137,7 @@ export function createSyncPayment(d: {
               externalReference: payment.id,
               callback: { successUrl: d.config.successUrl },
             },
-            opts,
+            asaasOpts,
           )
         }
 
@@ -164,7 +168,7 @@ export function createSyncPayment(d: {
         try {
           await d.payments.unlock(paymentId)
         } catch (err) {
-          d.log.error("payment.sync.unlock_failed", { paymentId, message: errorMessage(err) })
+          d.log.error("payment.sync.unlock_failed", { paymentId, message: safeErrorMessage(err) })
         }
       }
     }

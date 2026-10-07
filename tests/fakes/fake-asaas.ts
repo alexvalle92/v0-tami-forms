@@ -16,6 +16,8 @@ export type FakeAsaas = AsaasClient & {
   payments: Map<string, AsaasPayment>
   /** Entradas recebidas por createPayment (para conferir o que foi enviado). */
   createdPayments: CreatePaymentInput[]
+  /** Entradas recebidas por createCustomer. */
+  createdCustomers: CreateCustomerInput[]
   /** Faz a próxima chamada de `method` lançar `err` (a chamada é registrada em `calls`). */
   failNext(method: string, err: Error): void
 }
@@ -26,6 +28,7 @@ export function createFakeAsaas(): FakeAsaas {
   const customers = new Map<string, { id: string }>()
   const payments = new Map<string, AsaasPayment>()
   const createdPayments: CreatePaymentInput[] = []
+  const createdCustomers: CreateCustomerInput[] = []
   const failures = new Map<string, Error[]>()
   let seq = 0
 
@@ -40,6 +43,7 @@ export function createFakeAsaas(): FakeAsaas {
     customers,
     payments,
     createdPayments,
+    createdCustomers,
     failNext(method, err) {
       failures.set(method, [...(failures.get(method) ?? []), err])
     },
@@ -51,6 +55,7 @@ export function createFakeAsaas(): FakeAsaas {
 
     async createCustomer(i: CreateCustomerInput) {
       enter("createCustomer")
+      createdCustomers.push(i)
       const customer = { id: `cus_${++seq}` }
       customers.set(i.cpfCnpj, customer)
       return customer

@@ -21,6 +21,7 @@ async function setup(
     payments?: PaymentRepo
     notifications?: NotificationRepo
   } = () => ({}),
+  nowDate: Date = NOW,
 ) {
   const repos = createMemoryRepos()
   const asaas = createFakeAsaas()
@@ -41,7 +42,7 @@ async function setup(
     asaas,
     alertAdmin,
     log,
-    now: () => NOW,
+    now: () => nowDate,
     config: { dueDays: 2, successUrl: SUCCESS_URL, channels: CHANNELS },
   })
   return { repos, asaas, alertAdmin, log, sync, paymentId: created.paymentId }
@@ -80,6 +81,16 @@ describe("createSyncPayment", () => {
         description: "Plano Alimentar Personalizado - Ana Souza - 30 dias",
         externalReference: s.paymentId,
         callback: { successUrl: SUCCESS_URL },
+      },
+    ])
+    const patientId = (await s.repos.payments.get(s.paymentId))!.patientId
+    expect(s.asaas.createdCustomers).toEqual([
+      {
+        name: "Ana Souza",
+        cpfCnpj: CPF,
+        email: "ana@example.com",
+        mobilePhone: "11999990000",
+        externalReference: patientId,
       },
     ])
     expect((await s.repos.payments.get(s.paymentId))!.patient.asaasCustomerId).toBe(s.asaas.customers.get(CPF)!.id)
@@ -393,5 +404,102 @@ describe("createSyncPayment", () => {
 
     expect(await s.sync(s.paymentId, OPTS)).toEqual({ status: "retry_scheduled" })
     await expectUnlocked(s)
+  })
+
+  it("dueDate usa o dia de São Paulo, não o de UTC (01:00Z de 08/10 ainda é 07/10 em SP)", async () => {
+    const s = await setup(() => ({}), new Date("2026-10-08T01:00:00Z"))
+
+    expect((await s.sync(s.paymentId, { deadline: Date.parse("2026-10-08T01:01:00Z") })).status).toBe("synced")
+    expect(s.asaas.createdPayments[0].dueDate).toBe("2026-10-09")
+  })
+
+  it("limita o deadline ao TTL do lock: um deadline a 10 min vira now + 100 s", async () => {
+    const s = await setup()
+    const spy = vi.spyOn(s.asaas, "createPayment")
+    const findSpy = vi.spyOn(s.asaas, "findCustomerByCpf")
+
+    await s.sync(s.paymentId, { deadline: NOW.getTime() + 10 * 60_000 })
+
+    expect(findSpy.mock.calls[0][1]).toEqual({ deadline: NOW.getTime() + 100_000 })
+    expect(spy.mock.calls[0][1]).toEqual({ deadline: NOW.getTime() + 100_000 })
+  })
+
+  it("não aumenta um deadline que já é menor que o limite do lock", async () => {
+    const s = await setup()
+    const spy = vi.spyOn(s.asaas, "createPayment")
+    await s.sync(s.paymentId, { deadline: NOW.getTime() + 5_000 })
+    expect(spy.mock.calls[0][1]).toEqual({ deadline: NOW.getTime() + 5_000 })
+  })
+
+  describe("sem PII nem corpo bruto em logs, last_error e alerta", () => {
+    class DrizzleQueryError extends Error {
+      constructor(message: string, cause?: unknown) {
+        super(message, { cause })
+        this.name = "DrizzleQueryError"
+      }
+    }
+    const PII = "Failed query: insert into notifications (recipient) values (?, ?)\nparams: ana@example.com,5511999990000"
+    const failingEnqueue = (repos: ReturnType<typeof createMemoryRepos>) => ({
+      notifications: {
+        ...repos.notifications,
+        enqueuePaymentLink: async () => {
+          throw new DrizzleQueryError(PII, { code: "ER_LOCK_DEADLOCK", errno: 1213 })
+        },
+      },
+    })
+    const leaks = (s: Setup) =>
+      JSON.stringify({
+        logs: loggedText(s.log),
+        lastError: row(s).lastError,
+        alerts: s.alertAdmin.mock.calls,
+      })
+
+    it("enqueue com erro do Drizzle (falha transitória)", async () => {
+      const s = await setup(failingEnqueue)
+
+      expect(await s.sync(s.paymentId, OPTS)).toEqual({ status: "retry_scheduled" })
+
+      expect(row(s).lastError).toMatchObject({
+        step: "db.enqueue_notifications",
+        message: "DrizzleQueryError: ER_LOCK_DEADLOCK",
+      })
+      for (const pii of ["ana@example.com", "5511999990000"]) expect(leaks(s)).not.toContain(pii)
+    })
+
+    it("enqueue com erro do Drizzle na falha definitiva (alerta ao admin)", async () => {
+      const s = await setup(failingEnqueue)
+      await s.repos.payments.markSyncFailure(s.paymentId, {
+        attempts: 7,
+        nextSyncAt: NOW,
+        failed: false,
+        error: seedError,
+      })
+
+      expect(await s.sync(s.paymentId, OPTS)).toEqual({ status: "failed" })
+
+      expect(s.alertAdmin).toHaveBeenCalledTimes(1)
+      for (const pii of ["ana@example.com", "5511999990000"]) expect(leaks(s)).not.toContain(pii)
+    })
+
+    it("markSyncFailure com erro cuja mensagem carrega o last_error serializado: o corpo não vai ao log", async () => {
+      const MARKER = "MARCADOR-CORPO-BRUTO"
+      const s = await setup((repos) => ({
+        payments: {
+          ...repos.payments,
+          markSyncFailure: async () => {
+            throw new Error(
+              "Failed query: update payments set last_error = ? where id = ?\nparams: " +
+                JSON.stringify({ step: "x", responseBody: MARKER }),
+            )
+          },
+        },
+      }))
+      s.asaas.failNext("createPayment", new HttpError("asaas 503", { transient: true, status: 503, body: MARKER }))
+
+      expect(await s.sync(s.paymentId, OPTS)).toEqual({ status: "retry_scheduled" })
+
+      expect(s.log.error).toHaveBeenCalled()
+      expect(loggedText(s.log)).not.toContain(MARKER)
+    })
   })
 })

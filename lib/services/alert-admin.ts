@@ -1,6 +1,7 @@
 import type { LastError } from "@/lib/db/repos/types"
 import type { Logger } from "@/lib/log"
 import type { EmailSender } from "@/lib/notify/email"
+import { safeErrorMessage } from "./last-error"
 
 export type AdminAlert = {
   kind: "payment" | "notification"
@@ -46,7 +47,7 @@ export function createAlertAdmin(d: { email: EmailSender; to: string; log: Logge
       d.log.error("alert_admin.send_failed", {
         kind: a.kind,
         id: a.id,
-        message: err instanceof Error ? err.message : String(err),
+        message: safeErrorMessage(err),
       })
     }
   }
