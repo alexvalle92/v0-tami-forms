@@ -33,8 +33,8 @@ export function normalizePhone(raw: string): string | null {
 
 const answersSchema = z
   .object({
-    nome_completo: z.string().trim().min(1, "nome_completo obrigatório"),
-    email: z.string().trim().toLowerCase().email("email inválido"),
+    nome_completo: z.string().trim().min(1, "nome_completo obrigatório").max(200, "nome_completo muito longo"),
+    email: z.string().trim().toLowerCase().email("email inválido").max(254, "email muito longo"),
     whatsapp: z.string().refine((v) => normalizePhone(v) !== null, "whatsapp inválido"),
     cpf: z.string().refine(isValidCpf, "cpf inválido"),
   })

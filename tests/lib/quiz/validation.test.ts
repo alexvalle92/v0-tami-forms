@@ -87,6 +87,33 @@ describe("parseSubmitRequest", () => {
     expect(parseSubmitRequest(body).ok).toBe(false)
   })
 
+  it("limita o nome a 200 caracteres (VARCHAR(200)), depois do trim", () => {
+    const ok = { submissionId, answers: { ...validAnswers, nome_completo: `  ${"a".repeat(200)}  ` } }
+    const result = parseSubmitRequest(ok)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.patient.name).toHaveLength(200)
+
+    const tooLong = { submissionId, answers: { ...validAnswers, nome_completo: "a".repeat(201) } }
+    const bad = parseSubmitRequest(tooLong)
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.issues.join(" ")).toContain("nome_completo")
+  })
+
+  it("limita o e-mail a 254 caracteres (VARCHAR(254))", () => {
+    const domain = `${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(63)}.com`
+    const local = "a".repeat(254 - domain.length - 1)
+    const email254 = `${local}@${domain}`
+    expect(email254).toHaveLength(254)
+    const ok = parseSubmitRequest({ submissionId, answers: { ...validAnswers, email: email254 } })
+    expect(ok.ok).toBe(true)
+
+    const email255 = `a${email254}`
+    expect(email255).toHaveLength(255)
+    const bad = parseSubmitRequest({ submissionId, answers: { ...validAnswers, email: email255 } })
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.issues.join(" ")).toContain("email")
+  })
+
   it("rejeita body nulo", () => {
     const result = parseSubmitRequest(null)
     expect(result.ok).toBe(false)
