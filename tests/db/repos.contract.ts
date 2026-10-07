@@ -56,6 +56,16 @@ function expectRef(r: SubmissionRef | "duplicate"): SubmissionRef {
   return r
 }
 
+const synced = (status: string, dueDate: string) => ({
+  asaasId: `pay_${randomUUID()}`,
+  asaasCustomerId: "cus_1",
+  status,
+  paymentUrl: "https://asaas.example/i/1",
+  invoiceNumber: "123",
+  billingType: "UNDEFINED",
+  dueDate,
+})
+
 const syncError = (step: string) => ({
   step,
   httpStatus: 500,
@@ -109,14 +119,24 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       expect((await payments.get(r1.paymentId))!.patientId).toBe(view!.patientId)
     })
 
-    it("3. o mesmo submissionId duas vezes devolve duplicate e preserva o primeiro", async () => {
-      const { submissions } = await setup()
-      const s = newSub()
+    it("3. o mesmo submissionId duas vezes devolve duplicate sem tocar em nada", async () => {
+      const { submissions, payments } = await setup()
+      const cpf = randomCpf()
+      const s = newSub({ patient: { name: "Carla", cpf, email: "carla@example.com" } })
       const first = expectRef(await submissions.create(s))
-      const again = await submissions.create(newSub({ submissionId: s.submissionId }))
+      const again = await submissions.create(
+        newSub({
+          submissionId: s.submissionId,
+          patient: { name: "Outro Nome", cpf, email: "outro@example.com" },
+        }),
+      )
 
       expect(again).toBe("duplicate")
       expect(await submissions.findBySubmissionId(s.submissionId)).toEqual(first)
+      // O duplicado não pode ter alterado o paciente.
+      const view = await payments.get(first.paymentId)
+      expect(view!.patient.name).toBe("Carla")
+      expect(view!.patient.email).toBe("carla@example.com")
     })
 
     it("4. duas chamadas concorrentes com o mesmo submissionId: exatamente um ref e um duplicate", async () => {
@@ -144,16 +164,6 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
         return { first, second }
       }
-
-      const synced = (status: string, dueDate: string) => ({
-        asaasId: `pay_${randomUUID()}`,
-        asaasCustomerId: "cus_1",
-        status,
-        paymentUrl: "https://asaas.example/i/1",
-        invoiceNumber: "123",
-        billingType: "UNDEFINED",
-        dueDate,
-      })
 
       it("PENDING com vencimento hoje é reaproveitada", async () => {
         const { first, second } = await secondSubmissionAfter((r, id) =>
@@ -189,11 +199,9 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       })
     })
 
-    it("6. locks: exclusivo, liberável e com expiração", async () => {
-      const { submissions, payments, notifications } = await setup()
+    it("6a. locks de cobrança: exclusivo, liberável e com expiração", async () => {
+      const { submissions, payments } = await setup()
       const ref = expectRef(await submissions.create(newSub()))
-      await notifications.enqueuePaymentLink({ paymentId: ref.paymentId }, ["email"])
-      const [notificationId] = await notifications.listPendingIdsForQuizResponse(ref.quizResponseId)
 
       expect(await payments.tryLock(ref.paymentId, 60_000)).toBe(true)
       expect(await payments.tryLock(ref.paymentId, 60_000)).toBe(false)
@@ -207,20 +215,37 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       expect(await payments.tryLock(other.paymentId, 1)).toBe(true)
       await sleep(10)
       expect(await payments.tryLock(other.paymentId, 60_000)).toBe(true)
+    })
 
-      expect(await notifications.tryLock(notificationId, 60_000)).toBe(true)
-      expect(await notifications.tryLock(notificationId, 60_000)).toBe(false)
-      expect(await notifications.listDue(new Date(), BIG)).not.toContain(notificationId)
-      await notifications.markFailure(notificationId, {
+    it("6b. locks de notificação: exclusivo, liberável e com expiração", async () => {
+      const { submissions, notifications } = await setup()
+      const ref = expectRef(await submissions.create(newSub()))
+      await notifications.enqueuePaymentLink({ paymentId: ref.paymentId }, ["email"])
+      const [id] = await notifications.listPendingIdsForQuizResponse(ref.quizResponseId)
+
+      expect(await notifications.tryLock(id, 60_000)).toBe(true)
+      expect(await notifications.tryLock(id, 60_000)).toBe(false)
+      expect(await notifications.listDue(new Date(), BIG)).not.toContain(id)
+      expect(await notifications.tryLock(UNKNOWN_ID, 60_000)).toBe(false)
+
+      // markFailure e markSent sempre limpam a reserva.
+      await notifications.markFailure(id, {
         attempts: 1,
         nextAttemptAt: new Date(),
         failed: false,
         error: syncError("notify.email"),
       })
-      expect(await notifications.tryLock(notificationId, 60_000)).toBe(true) // markFailure limpou
-      await notifications.markSent(notificationId)
-      expect(await notifications.tryLock(notificationId, 60_000)).toBe(true) // markSent limpou
-      expect(await notifications.tryLock(UNKNOWN_ID, 60_000)).toBe(false)
+      expect(await notifications.tryLock(id, 60_000)).toBe(true)
+      await notifications.markSent(id)
+      expect(await notifications.tryLock(id, 60_000)).toBe(true)
+
+      // Reserva expirada pode ser retomada.
+      const other = expectRef(await submissions.create(newSub()))
+      await notifications.enqueuePaymentLink({ paymentId: other.paymentId }, ["email"])
+      const [otherId] = await notifications.listPendingIdsForQuizResponse(other.quizResponseId)
+      expect(await notifications.tryLock(otherId, 1)).toBe(true)
+      await sleep(10)
+      expect(await notifications.tryLock(otherId, 60_000)).toBe(true)
     })
 
     it("7. falhas de sincronização, reabertura individual e em massa", async () => {
@@ -241,27 +266,33 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       expect(afterFailure!.status).toBe("PENDING_ASAAS")
       expect(afterFailure!.syncAttempts).toBe(1)
       expect(await payments.listDue(new Date(), BIG)).not.toContain(a.paymentId)
-      expect(await payments.listDue(inMinutes(3), BIG)).toContain(a.paymentId) // o lock foi limpo
+      expect(await payments.listDue(inMinutes(3), BIG)).toContain(a.paymentId)
+      // markSyncFailure limpou a reserva (o lock de 60 s ainda estaria ativo agora).
+      expect(await payments.tryLock(a.paymentId, 60_000)).toBe(true)
 
-      // Falha definitiva.
+      // Falha definitiva (também limpa a reserva que acabamos de tomar).
       await payments.markSyncFailure(a.paymentId, { attempts: 8, nextSyncAt: null, failed: true, error })
+      expect(await payments.tryLock(a.paymentId, 60_000)).toBe(true)
       await payments.markSyncFailure(b.paymentId, { attempts: 8, nextSyncAt: null, failed: true, error })
       expect((await payments.get(a.paymentId))!.status).toBe("ASAAS_FAILED")
       expect(await payments.listDue(inMinutes(60), BIG)).not.toContain(a.paymentId)
 
-      // Reabertura individual.
+      // Reabertura individual (a reserva ativa de `a` é limpa).
       expect(await payments.reopen(a.paymentId)).toBe(true)
       const reopened = await payments.get(a.paymentId)
       expect(reopened!.status).toBe("PENDING_ASAAS")
       expect(reopened!.syncAttempts).toBe(0)
       expect(await payments.listDue(new Date(), BIG)).toContain(a.paymentId)
+      expect(await payments.tryLock(a.paymentId, 60_000)).toBe(true)
       expect(await payments.reopen(a.paymentId)).toBe(false) // não está mais falha
       expect(await payments.reopen(UNKNOWN_ID)).toBe(false)
 
-      // Reabertura em massa.
+      // Reabertura em massa (também limpa a reserva).
+      expect(await payments.tryLock(b.paymentId, 60_000)).toBe(true)
       expect(await payments.reopenAllFailed()).toBeGreaterThanOrEqual(1)
       expect((await payments.get(b.paymentId))!.status).toBe("PENDING_ASAAS")
       expect(await payments.listDue(new Date(), BIG)).toContain(b.paymentId)
+      expect(await payments.tryLock(b.paymentId, 60_000)).toBe(true)
     })
 
     it("8. fila de notificações: idempotente, por cobrança ou por envio", async () => {
@@ -341,14 +372,18 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       await notifications.markFailure(id, { attempts: 5, nextAttemptAt: null, failed: true, error })
       expect((await notifications.get(id))!.status).toBe("failed")
       expect(await notifications.listDue(inMinutes(60), BIG)).not.toContain(id)
+      expect(await notifications.tryLock(id, 60_000)).toBe(true)
       expect(await notifications.reopen(id)).toBe(true)
       expect((await notifications.get(id))!).toMatchObject({ status: "pending", attempts: 0, partsSent: 2 })
-      expect(await notifications.listDue(new Date(), BIG)).toContain(id)
+      expect(await notifications.listDue(new Date(), BIG)).toContain(id) // reopen limpou a reserva
+      expect(await notifications.tryLock(id, 60_000)).toBe(true)
       expect(await notifications.reopen(UNKNOWN_ID)).toBe(false)
 
       await notifications.markFailure(id, { attempts: 5, nextAttemptAt: null, failed: true, error })
+      expect(await notifications.tryLock(id, 60_000)).toBe(true)
       expect(await notifications.reopenAllFailed()).toBeGreaterThanOrEqual(1)
       expect((await notifications.get(id))!).toMatchObject({ status: "pending", partsSent: 2 })
+      expect(await notifications.tryLock(id, 60_000)).toBe(true) // reopenAllFailed limpou a reserva
 
       await notifications.markSent(id)
       expect((await notifications.get(id))!.status).toBe("sent")
@@ -365,6 +400,107 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
 
       expect((await payments.get(ref.paymentId))!.patient.name).toBe(name)
       expect((await notifications.get(id))!.patientName).toBe(name)
+    })
+
+    it("8b. enqueue por quizResponseId só cria linha para aquele envio, mesmo com cobrança compartilhada", async () => {
+      const { submissions, notifications } = await setup()
+      const cpf = randomCpf()
+      const r1 = expectRef(await submissions.create(newSub({ patient: { cpf } })))
+      const r2 = expectRef(await submissions.create(newSub({ patient: { cpf } })))
+      expect(r2.paymentId).toBe(r1.paymentId)
+
+      await notifications.enqueuePaymentLink({ quizResponseId: r1.quizResponseId }, ["email"])
+      await notifications.enqueuePaymentLink({ quizResponseId: r1.quizResponseId }, ["email"])
+
+      expect(await notifications.listPendingIdsForQuizResponse(r1.quizResponseId)).toHaveLength(1)
+      expect(await notifications.listPendingIdsForQuizResponse(r2.quizResponseId)).toEqual([])
+    })
+
+    it("11. markSynced grava o resultado do Asaas e limpa a reserva; setPatientAsaasCustomer persiste", async () => {
+      const { submissions, payments } = await setup()
+      const ref = expectRef(await submissions.create(newSub()))
+      const before = (await payments.get(ref.paymentId))!
+
+      await payments.setPatientAsaasCustomer(before.patientId, "cus_abc")
+      expect((await payments.get(ref.paymentId))!.patient.asaasCustomerId).toBe("cus_abc")
+
+      await payments.markSyncFailure(ref.paymentId, {
+        attempts: 3,
+        nextSyncAt: inMinutes(2),
+        failed: false,
+        error: syncError("asaas.create_payment"),
+      })
+      expect(await payments.tryLock(ref.paymentId, 60_000)).toBe(true)
+      const data = synced("PENDING", "2026-10-14")
+      await payments.markSynced(ref.paymentId, data)
+
+      const view = (await payments.get(ref.paymentId))!
+      expect(view.status).toBe("PENDING")
+      expect(view.asaasId).toBe(data.asaasId)
+      expect(view.paymentUrl).toBe(data.paymentUrl)
+      expect(view.syncAttempts).toBe(3) // markSynced não zera as tentativas
+      expect(await payments.tryLock(ref.paymentId, 60_000)).toBe(true) // reserva limpa
+      expect(await payments.listDue(inMinutes(60), BIG)).not.toContain(ref.paymentId)
+    })
+
+    it("12a. listDue de cobranças: ordenado por next_sync_at e respeita o limite", async () => {
+      const { submissions, payments } = await setup()
+      const a = expectRef(await submissions.create(newSub()))
+      const b = expectRef(await submissions.create(newSub()))
+      const error = syncError("asaas.create_payment")
+      const retryAt = (paymentId: string, nextSyncAt: Date) =>
+        payments.markSyncFailure(paymentId, { attempts: 1, nextSyncAt, failed: false, error })
+      const giveUp = (paymentId: string) =>
+        payments.markSyncFailure(paymentId, { attempts: 8, nextSyncAt: null, failed: true, error })
+
+      try {
+        // `b` (criada depois) venceu há um ano, mais antiga que qualquer outra linha possível;
+        // `a` (criada antes) venceu há uma hora. A ordem de inserção é oposta à de vencimento.
+        await retryAt(a.paymentId, new Date(Date.now() - 3_600_000))
+        await retryAt(b.paymentId, new Date(Date.now() - 365 * 86_400_000))
+        const now = new Date()
+
+        const all = await payments.listDue(now, BIG)
+        expect(all).toContain(a.paymentId)
+        expect(all).toContain(b.paymentId)
+        expect(all.indexOf(b.paymentId)).toBeLessThan(all.indexOf(a.paymentId))
+        expect(await payments.listDue(now, 1)).toEqual([b.paymentId])
+        expect((await payments.listDue(now, 2)).length).toBeLessThanOrEqual(2)
+      } finally {
+        await giveUp(a.paymentId)
+        await giveUp(b.paymentId)
+      }
+    })
+
+    it("12b. listDue de notificações: ordenado por next_attempt_at e respeita o limite", async () => {
+      const { submissions, notifications } = await setup()
+      const error = syncError("notify.email")
+      const mk = async () => {
+        const ref = expectRef(await submissions.create(newSub()))
+        await notifications.enqueuePaymentLink({ quizResponseId: ref.quizResponseId }, ["email"])
+        return (await notifications.listPendingIdsForQuizResponse(ref.quizResponseId))[0]
+      }
+      const a = await mk()
+      const b = await mk()
+      const retryAt = (id: string, nextAttemptAt: Date) =>
+        notifications.markFailure(id, { attempts: 1, nextAttemptAt, failed: false, error })
+
+      try {
+        // `b` (criada depois) é a mais antiga; a ordem de inserção é oposta à de vencimento.
+        await retryAt(a, new Date(Date.now() - 3_600_000))
+        await retryAt(b, new Date(Date.now() - 365 * 86_400_000))
+        const now = new Date()
+
+        const all = await notifications.listDue(now, BIG)
+        expect(all).toContain(a)
+        expect(all).toContain(b)
+        expect(all.indexOf(b)).toBeLessThan(all.indexOf(a))
+        expect(await notifications.listDue(now, 1)).toEqual([b])
+        expect((await notifications.listDue(now, 2)).length).toBeLessThanOrEqual(2)
+      } finally {
+        await notifications.markSent(a)
+        await notifications.markSent(b)
+      }
     })
   })
 }

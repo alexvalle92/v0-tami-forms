@@ -139,7 +139,7 @@ export function createMemoryRepos(): Repos {
         id: randomUUID(),
         submissionId: s.submissionId,
         patientId,
-        answers: s.answers,
+        answers: structuredClone(s.answers),
         firstQuiz,
         paymentId: payment.id,
       }
@@ -203,7 +203,7 @@ export function createMemoryRepos(): Repos {
       const p = payments.get(id)
       if (!p) return
       p.syncAttempts = d.attempts
-      p.lastError = d.error
+      p.lastError = structuredClone(d.error)
       if (d.failed) {
         p.status = "ASAAS_FAILED"
         p.nextSyncAt = null
@@ -346,7 +346,7 @@ export function createMemoryRepos(): Repos {
       const n = notifications.get(id)
       if (!n) return
       n.attempts = d.attempts
-      n.lastError = d.error
+      n.lastError = structuredClone(d.error)
       if (d.failed) {
         n.status = "failed"
       } else if (d.nextAttemptAt) {
