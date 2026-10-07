@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react"
 import { AlertTriangle, ArrowLeft, RefreshCw, MessageCircle } from "lucide-react"
+import { submitQuizRequest } from "@/lib/client/submit-quiz"
 
 interface LoadingScreenProps {
   onComplete: () => void
@@ -19,70 +20,24 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
   const webhookResultRef = useRef<"pending" | "success" | "error">("pending")
   const webhookErrorMsgRef = useRef("")
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const submissionIdRef = useRef(crypto.randomUUID())
 
   const submitToWebhook = useCallback(async () => {
     webhookResultRef.current = "pending"
     webhookErrorMsgRef.current = ""
-    var WEBHOOK_URL_NOVO_FORMULARIO = ""
 
-    const isTestEnvironment =
-      typeof window !== "undefined" &&
-      window.location.hostname.includes("test")
+    sessionStorage.removeItem("linkPagamento")
 
-    if (isTestEnvironment) {
-      WEBHOOK_URL_NOVO_FORMULARIO = "https://n8n-n8n-start.z8qram.easypanel.host/webhook/e914138c-0f72-4bb9-a209-3f379a630473"
+    const result = await submitQuizRequest({ submissionId: submissionIdRef.current, answers })
+
+    if (result.ok) {
+      if (result.linkPagamento) {
+        sessionStorage.setItem("linkPagamento", result.linkPagamento)
+      }
+      webhookResultRef.current = "success"
     } else {
-      WEBHOOK_URL_NOVO_FORMULARIO = "https://n8n-n8n-start.z8qram.easypanel.host/webhook/fdf9906e-e31c-4d36-b113-200dc6ed842a"
-    }
-
-    if (!WEBHOOK_URL_NOVO_FORMULARIO) {
       webhookResultRef.current = "error"
-      webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
-      return
-    }
-
-    try {
-      console.log('Efetuando requisição em ' + WEBHOOK_URL_NOVO_FORMULARIO)
-      const response = await fetch(WEBHOOK_URL_NOVO_FORMULARIO, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ answers }),
-      })
-
-      if (!response.ok) {
-        webhookResultRef.current = "error"
-        webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
-        return
-      }
-
-      const contentType = response.headers?.get('content-type')
-
-      if (contentType?.includes('application/json')) {
-        const text = await response.text()
-        if (text) {
-          const data = JSON.parse(text)
-          if (data.sucesso == true) {
-            if (data.linkPagamento) {
-              sessionStorage.setItem("linkPagamento", data.linkPagamento)
-            }
-            webhookResultRef.current = "success"
-          } else if (data.mensagemErro) {
-            webhookResultRef.current = "error"
-            webhookErrorMsgRef.current = data.mensagemErro
-          } else {
-            webhookResultRef.current = "success"
-          }
-        } else {
-          webhookResultRef.current = "success"
-        }
-      } else {
-        webhookResultRef.current = "success"
-      }
-    } catch (error) {
-      webhookResultRef.current = "error"
-      webhookErrorMsgRef.current = "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
+      webhookErrorMsgRef.current = result.message
     }
   }, [answers])
 
@@ -147,13 +102,13 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
   }, [submitToWebhook, onComplete])
 
   useEffect(() => {
-    const cleanup = startProgressAnimation(16000, 12000)
+    const cleanup = startProgressAnimation(16000, 0)
     return cleanup
   }, [])
 
   const handleRetry = () => {
     setRetryCount((prev) => prev + 1)
-    startProgressAnimation(8000, 3000)
+    startProgressAnimation(8000, 0)
   }
 
   return (
