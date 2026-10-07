@@ -76,14 +76,9 @@ const row = (s: Setup, channel: Channel) => s.repos.state.notifications.get(s.id
 
 async function expectUnlocked(s: Setup, channel: Channel) {
   expect(row(s, channel).lockedUntil).toBeNull()
-  expect(await s.repos.notifications.tryLock(s.ids[channel], 1000)).toBe(true)
-  // devolve o lock de teste (markFailure sempre limpa o lock; o resto da linha fica como estava)
-  await s.repos.notifications.markFailure(s.ids[channel], {
-    attempts: row(s, channel).attempts,
-    nextAttemptAt: row(s, channel).nextAttemptAt,
-    failed: row(s, channel).status === "failed",
-    error: row(s, channel).lastError ?? seedError,
-  })
+  expect(await s.repos.notifications.tryLock(s.ids[channel], 60_000)).toBe(true)
+  await s.repos.notifications.unlock(s.ids[channel])
+  expect(row(s, channel).lockedUntil).toBeNull()
 }
 
 function loggedText(log: Logger): string {
@@ -394,7 +389,14 @@ describe("createDispatchNotification", () => {
 
     expect(await s.dispatch(s.ids.whatsapp)).toBe("retry_scheduled")
     expect(row(s, "whatsapp").lastError?.step).toBe("db.mark_part_sent")
+    // A parte 1 saiu, mas não foi gravada: a nova tentativa a reenvia (comportamento aceito, ver o serviço).
+    expect(s.whatsapp.sendText.mock.calls).toEqual([[RECIPIENT_WA, PARTS[0]]])
+    expect(row(s, "whatsapp").partsSent).toBe(0)
     await expectUnlocked(s, "whatsapp")
+
+    s.whatsapp.sendText.mockClear()
+    expect(await s.dispatch(s.ids.whatsapp)).toBe("retry_scheduled")
+    expect(s.whatsapp.sendText.mock.calls).toEqual([[RECIPIENT_WA, PARTS[0]]])
   })
 
   it("exceção inesperada fora do try de envio (releitura): o lock é solto", async () => {
@@ -488,6 +490,39 @@ describe("createDispatchNotification", () => {
       expect(s.log.error).toHaveBeenCalled()
       expect(loggedText(s.log)).not.toContain(MARKER)
       expect(loggedText(s.log)).not.toContain(EMAIL)
+    })
+
+    describe("rejeição SMTP que ecoa o destinatário", () => {
+      const SMTP = `Can't send mail - all recipients were rejected: 550 5.1.1 <${EMAIL}>: Recipient address rejected`
+      const everything = (s: Setup) =>
+        JSON.stringify({
+          logs: loggedText(s.log),
+          lastError: row(s, "email").lastError,
+          alerts: s.alertAdmin.mock.calls,
+        })
+
+      it("tentativa reagendada: o destinatário não aparece em log nem em last_error", async () => {
+        const s = await setup()
+        s.email.send.mockRejectedValueOnce(new Error(SMTP))
+
+        expect(await s.dispatch(s.ids.email)).toBe("retry_scheduled")
+
+        expect(row(s, "email").lastError?.message).toContain("[email]")
+        expect(everything(s)).not.toContain(EMAIL)
+        expect(everything(s)).not.toContain("gmail")
+      })
+
+      it("falha definitiva (5ª tentativa): nem o alerta ao admin carrega o destinatário", async () => {
+        const s = await setup()
+        await seedAttempts(s, "email", 4)
+        s.email.send.mockRejectedValueOnce(new Error(SMTP))
+
+        expect(await s.dispatch(s.ids.email)).toBe("failed")
+
+        expect(s.alertAdmin).toHaveBeenCalledTimes(1)
+        expect(everything(s)).not.toContain(EMAIL)
+        expect(everything(s)).not.toContain("gmail")
+      })
     })
 
     it("falha de e-mail não registra destinatário nem conteúdo nos logs", async () => {

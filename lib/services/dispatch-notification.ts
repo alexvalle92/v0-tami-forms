@@ -115,6 +115,8 @@ export function createDispatchNotification(d: {
             if (i > start) await d.sleep(WHATSAPP_PART_GAP_MS)
             step = "notify.whatsapp"
             await d.whatsapp.sendText(n.recipient, parts[i])
+            // Se a gravação falhar depois que a parte saiu, a nova tentativa a reenvia (parte duplicada):
+            // aceito, é o custo de não perder nenhuma parte sem transação com o provedor.
             step = "db.mark_part_sent"
             await d.notifications.markPartSent(id, i + 1)
             partsSent = i + 1

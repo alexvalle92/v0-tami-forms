@@ -5,17 +5,28 @@ const MAX_BODY_CHARS = 2048
 const MAX_MESSAGE_CHARS = 300
 const REDACTED = "[redacted]"
 
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
+// 10+ dígitos, com até 2 separadores entre dígitos (CPF 529.982.247-25, telefone (44) 9 9165-1250, 5544991651250).
+// Números curtos (status HTTP, errno, "8000ms") não casam.
+const LONG_NUMBER_RE = /\d(?:[ .\-()+]{0,2}\d){9,}/g
+
+/** Erros de SMTP/fetch ecoam o destinatário ou dados do paciente: troca e-mails e números longos por marcadores. */
+function scrub(text: string): string {
+  return text.replace(EMAIL_RE, "[email]").replace(LONG_NUMBER_RE, "[number]")
+}
+
 /**
  * Mensagem de um erro segura para log, `last_error.message` e e-mail ao admin.
  * O Drizzle embute no texto do erro a query e seus parâmetros (e-mail, telefone, `last_error`
  * serializado com o corpo da resposta), então esse texto nunca pode sair do processo.
  *  - HttpError: a mensagem ("HTTP 503", "timeout ...") é segura.
  *  - Erro com `cause` do mysql2 (`code`/`errno`): só `Nome: CÓDIGO`.
- *  - Outro Error: a mensagem, cortada em "params:" / "Failed query" e limitada a 300 caracteres.
+ *  - Outro Error (e valor que não é Error): a mensagem sem e-mails nem números longos (R21), cortada em
+ *    "params:" / "Failed query" e limitada a 300 caracteres.
  */
 export function safeErrorMessage(err: unknown): string {
   if (err instanceof HttpError) return err.message
-  if (!(err instanceof Error)) return String(err).slice(0, MAX_MESSAGE_CHARS)
+  if (!(err instanceof Error)) return scrub(String(err)).slice(0, MAX_MESSAGE_CHARS)
 
   const cause: unknown = err.cause
   if (typeof cause === "object" && cause !== null) {
@@ -24,7 +35,7 @@ export function safeErrorMessage(err: unknown): string {
     if (id !== undefined && id !== null) return `${err.name}: ${String(id)}`
   }
 
-  const msg = err.message
+  const msg = scrub(err.message)
   const paramsAt = msg.indexOf("params:")
   const startsFailedQuery = msg.startsWith("Failed query")
   if (paramsAt >= 0 || startsFailedQuery) {
