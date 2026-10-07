@@ -25,7 +25,7 @@ type PatientRow = {
   asaasCustomerId: string | null
 }
 
-type PaymentRow = {
+export type PaymentRow = {
   id: string
   patientId: string
   amount: string
@@ -51,7 +51,7 @@ type QuizResponseRow = {
   paymentId: string | null
 }
 
-type NotificationRow = {
+export type NotificationRow = {
   id: string
   quizResponseId: string
   paymentId: string
@@ -70,7 +70,13 @@ type NotificationRow = {
 const isLocked = (row: { lockedUntil: Date | null }, now: Date) =>
   row.lockedUntil !== null && row.lockedUntil.getTime() > now.getTime()
 
-export function createMemoryRepos(): Repos {
+/** Visão somente leitura das linhas guardadas, só para testes (inclui `lastError`, `status` etc.). */
+export type MemoryState = {
+  payments: ReadonlyMap<string, Readonly<PaymentRow>>
+  notifications: ReadonlyMap<string, Readonly<NotificationRow>>
+}
+
+export function createMemoryRepos(): Repos & { state: MemoryState } {
   const patients = new Map<string, PatientRow>()
   const payments = new Map<string, PaymentRow>()
   const quizResponses = new Map<string, QuizResponseRow>()
@@ -386,5 +392,10 @@ export function createMemoryRepos(): Repos {
     },
   }
 
-  return { submissions, payments: paymentsRepo, notifications: notificationsRepo }
+  return {
+    submissions,
+    payments: paymentsRepo,
+    notifications: notificationsRepo,
+    state: { payments, notifications },
+  }
 }
