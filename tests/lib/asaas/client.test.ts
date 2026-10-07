@@ -8,7 +8,9 @@ type Step = Response | Error | (() => Response)
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } })
 
-function setup(steps: Step[], env: "sandbox" | "production" = "sandbox") {
+type Extra = { now?: () => number; onSleep?: (ms: number) => void }
+
+function setup(steps: Step[], env: "sandbox" | "production" = "sandbox", extra: Extra = {}) {
   const queue = [...steps]
   const calls: Call[] = []
   const sleeps: number[] = []
@@ -27,8 +29,9 @@ function setup(steps: Step[], env: "sandbox" | "production" = "sandbox") {
   }) as unknown as typeof fetch
   const sleep = async (ms: number) => {
     sleeps.push(ms)
+    extra.onSleep?.(ms)
   }
-  const client = createAsaasClient({ env, apiKey: "key-secret", fetchImpl, sleep })
+  const client = createAsaasClient({ env, apiKey: "key-secret", fetchImpl, sleep, random: () => 0.5, now: extra.now })
   return { client, calls, sleeps }
 }
 
@@ -156,9 +159,7 @@ describe("asaas client: createPayment", () => {
     const t = setup([json({}, 503), json({ data: [] }), json(asaasPayment)])
     await expect(t.client.createPayment(paymentInput, opts())).resolves.toEqual(mappedPayment)
     expect(t.calls.map((c) => c.method)).toEqual(["POST", "GET", "POST"])
-    expect(t.sleeps).toHaveLength(1)
-    expect(t.sleeps[0]).toBeGreaterThanOrEqual(400)
-    expect(t.sleeps[0]).toBeLessThanOrEqual(600)
+    expect(t.sleeps).toEqual([500])
   })
 
   it("POST 503 três vezes com buscas vazias: rejeita transiente após exatamente 3 POSTs", async () => {
@@ -166,17 +167,49 @@ describe("asaas client: createPayment", () => {
     const err = await catchError(t.client.createPayment(paymentInput, opts()))
     expect(err.transient).toBe(true)
     expect(err.status).toBe(503)
-    expect(t.calls.filter((c) => c.method === "POST")).toHaveLength(3)
-    expect(t.sleeps).toHaveLength(2)
-    expect(t.sleeps[1]).toBeGreaterThanOrEqual(800)
-    expect(t.sleeps[1]).toBeLessThanOrEqual(1200)
+    expect(t.calls.map((c) => c.method)).toEqual(["POST", "GET", "POST", "GET", "POST"])
+    expect(t.sleeps).toEqual([500, 1000])
   })
 
-  it("falha transiente na busca não impede o próximo POST", async () => {
-    // a busca esgota as 3 tentativas de GET com 503; o segundo POST dá certo
-    const t = setup([json({}, 503), json({}, 503), json({}, 503), json({}, 503), json(asaasPayment)])
+  describe("busca que falha depois de POST transiente (resultado desconhecido): nunca reenvia o POST", () => {
+    const cases: Array<[string, Step[], number]> = [
+      ["503 na busca (3 GETs)", [json({}, 503), json({}, 503), json({}, 503)], 3],
+      ["erro de rede na busca (3 GETs)", [new Error("a"), new Error("b"), new Error("c")], 3],
+      ["404 permanente na busca", [json({}, 404)], 1],
+      ["data[0] malformado (sem id e sem invoiceUrl)", [json({ data: [{ status: "PENDING" }] })], 1],
+      ["data[0] nulo", [json({ data: [null] })], 1],
+    ]
+    for (const [name, lookupSteps, gets] of cases) {
+      it(name + ": um único POST e rejeita com o erro original transiente", async () => {
+        const t = setup([json({ errors: ["x"] }, 503), ...lookupSteps, json(asaasPayment)])
+        const err = await catchError(t.client.createPayment(paymentInput, opts()))
+        expect(err.transient).toBe(true)
+        expect(err.status).toBe(503)
+        expect(err.message).toBe("HTTP 503")
+        expect(t.calls.filter((c) => c.method === "POST")).toHaveLength(1)
+        expect(t.calls.filter((c) => c.method === "GET")).toHaveLength(gets)
+      })
+    }
+  })
+
+  it("busca retorna { data: [] }: faz o segundo POST", async () => {
+    const t = setup([json({}, 503), json({ data: [] }), json(asaasPayment)])
     await expect(t.client.createPayment(paymentInput, opts())).resolves.toEqual(mappedPayment)
     expect(t.calls.filter((c) => c.method === "POST")).toHaveLength(2)
+  })
+
+  it("deadline já vencido antes da busca: nenhuma busca nem novo POST, rejeita com o erro original", async () => {
+    let clock = 1_000_000
+    const t = setup([json({}, 503), json({ data: [] }), json(asaasPayment)], "sandbox", {
+      now: () => clock,
+      onSleep: () => {
+        clock += 10_000
+      },
+    })
+    const err = await catchError(t.client.createPayment(paymentInput, { deadline: clock + 1000 }))
+    expect(err.transient).toBe(true)
+    expect(err.status).toBe(503)
+    expect(t.calls.map((c) => c.method)).toEqual(["POST"])
   })
 
   it("não passa do deadline: sem tempo para esperar, rejeita sem novo POST", async () => {
@@ -211,6 +244,20 @@ describe("asaas client: createCustomer", () => {
     expect(t.calls[1].url).toBe("https://api-sandbox.asaas.com/v3/customers?cpfCnpj=52998224725")
   })
 
+  it("busca falha (404) depois de POST transiente: um único POST e erro original transiente", async () => {
+    const t = setup([json({}, 503), json({}, 404), json({ id: "cus_9" })])
+    const err = await catchError(t.client.createCustomer(customerInput, opts()))
+    expect(err.transient).toBe(true)
+    expect(err.status).toBe(503)
+    expect(t.calls.map((c) => c.method)).toEqual(["POST", "GET"])
+  })
+
+  it("busca retorna { data: [] }: faz o segundo POST", async () => {
+    const t = setup([json({}, 503), json({ data: [] }), json({ id: "cus_9" })])
+    await expect(t.client.createCustomer(customerInput, opts())).resolves.toEqual({ id: "cus_9" })
+    expect(t.calls.map((c) => c.method)).toEqual(["POST", "GET", "POST"])
+  })
+
   it("400 rejeita como permanente, com um único POST e sem busca", async () => {
     const t = setup([json({ errors: [] }, 400)])
     const err = await catchError(t.client.createCustomer(customerInput, opts()))
@@ -230,24 +277,50 @@ describe("asaas client: requisições", () => {
     expect(t.calls.every((c) => c.redirect === "error")).toBe(true)
   })
 
-  it("corpo 200 que nunca resolve rejeita com timeout transiente", async () => {
-    const pending = () => new Promise<never>(() => {})
+  it("corpo 200 que nunca resolve rejeita com timeout transiente e cancela o stream de verdade", async () => {
     let cancelled = false
-    const stalled = {
-      ok: true,
-      status: 200,
-      json: pending,
-      text: pending,
-      body: {
-        cancel: async () => {
+    const stalled = new Response(
+      new ReadableStream({
+        start() {},
+        cancel() {
           cancelled = true
         },
-      },
-    } as unknown as Response
+      }),
+      { status: 200 },
+    )
     const t = setup([() => stalled])
     const err = await catchError(t.client.findCustomerByCpf("1", { deadline: Date.now() + 50 }))
     expect(err.transient).toBe(true)
     expect(err.message).toContain("timeout")
     expect(cancelled).toBe(true)
+  })
+
+  it("corpo vazio ou não JSON rejeita como invalid asaas response transiente", async () => {
+    for (const body of ["", "<html>oops</html>"]) {
+      const t = setup([new Response(body, { status: 200 })])
+      const err = await catchError(t.client.findCustomerByCpf("1", opts()))
+      expect(err.transient).toBe(true)
+      expect(err.message).toBe("invalid asaas response")
+    }
+  })
+
+  it("lê corpo em vários chunks (UTF-8 partido entre chunks)", async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ data: [{ id: "cus_ã" }] }))
+    const cut = bytes.indexOf(0xc3) + 1 // no meio do caractere "ã"
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(bytes.slice(0, cut))
+        c.enqueue(bytes.slice(cut))
+        c.close()
+      },
+    })
+    const t = setup([new Response(body, { status: 200 })])
+    await expect(t.client.findCustomerByCpf("1", opts())).resolves.toEqual({ id: "cus_ã" })
+  })
+
+  it("busca com data: [null] é resposta inválida, não 'não encontrado'", async () => {
+    const t = setup([json({ data: [null] })])
+    const err = await catchError(t.client.findCustomerByCpf("1", opts()))
+    expect(err.message).toBe("invalid asaas response")
   })
 })

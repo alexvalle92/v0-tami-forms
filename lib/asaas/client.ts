@@ -50,31 +50,49 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 const invalidResponse = () => new HttpError("invalid asaas response", { transient: true })
 
 /**
- * Lê e interpreta o JSON de uma resposta 2xx sob timeout: o fetchWithRetry já
- * limpou o timer da tentativa, então um servidor que trava o corpo ficaria pendurado.
+ * Lê e interpreta o JSON de uma resposta 2xx sob timeout: o fetchWithRetry já limpou o timer
+ * da tentativa, então um servidor que trava o corpo ficaria pendurado. Lê pelo reader para
+ * poder cancelar o stream de verdade (json() o trava e o cancel() de body falharia).
  */
-async function readJson(response: Response, deadline: number): Promise<unknown> {
-  const limit = Math.max(0, Math.min(BODY_TIMEOUT_MS, deadline - Date.now()))
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new HttpError(`timeout reading body after ${limit}ms`, { transient: true })), limit)
-  })
-  const parsing = response.json() as Promise<unknown>
-  parsing.catch(() => {}) // evita rejeição não tratada se o timeout vencer a corrida
-  try {
-    return await Promise.race([parsing, timeout])
-  } catch (err) {
-    if (err instanceof HttpError) {
-      try {
-        await response.body?.cancel()
-      } catch {
-        // ignorado
-      }
-      throw err
+async function readJson(response: Response, deadline: number, now: () => number): Promise<unknown> {
+  const reader = response.body?.getReader()
+  if (!reader) throw invalidResponse() // corpo vazio
+
+  const limit = Math.max(0, Math.min(BODY_TIMEOUT_MS, deadline - now()))
+  const decoder = new TextDecoder()
+  const reading = (async () => {
+    let text = ""
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      text += decoder.decode(value, { stream: true })
     }
+    return text + decoder.decode()
+  })()
+  reading.catch(() => {}) // evita rejeição não tratada se o timeout vencer a corrida
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let text: string
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new HttpError(`timeout reading body after ${limit}ms`, { transient: true })),
+        limit,
+      )
+    })
+    text = await Promise.race([reading, timeout])
+  } catch (err) {
+    reader.cancel().catch(() => {}) // não espera: a fonte pode demorar a responder
+    if (err instanceof HttpError) throw err
     throw invalidResponse()
   } finally {
     clearTimeout(timer)
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw invalidResponse()
   }
 }
 
@@ -105,9 +123,10 @@ function toPayment(raw: unknown): AsaasPayment {
   }
 }
 
-function firstOfList(raw: unknown): unknown | null {
+/** Lista vazia = "não encontrado" (null); um primeiro item nulo é resposta inválida, validada por quem converte. */
+function firstOfList(raw: unknown): { item: unknown } | null {
   if (!isRecord(raw) || !Array.isArray(raw.data)) throw invalidResponse()
-  return raw.data[0] ?? null
+  return raw.data.length === 0 ? null : { item: raw.data[0] }
 }
 
 export function createAsaasClient(cfg: {
@@ -115,9 +134,13 @@ export function createAsaasClient(cfg: {
   apiKey: string
   fetchImpl?: typeof fetch
   sleep?: (ms: number) => Promise<void>
+  random?: () => number
+  now?: () => number
 }): AsaasClient {
   const baseUrl = BASE_URLS[cfg.env]
   const sleep = cfg.sleep ?? defaultSleep
+  const random = cfg.random ?? Math.random
+  const now = cfg.now ?? Date.now
   const headers = {
     access_token: cfg.apiKey,
     "Content-Type": "application/json",
@@ -133,68 +156,68 @@ export function createAsaasClient(cfg: {
     const response = await fetchWithRetry(
       `${baseUrl}${path}`,
       { ...init, headers, redirect: "error" },
-      { deadline: o.deadline, fetchImpl: cfg.fetchImpl, sleep, attempts },
+      { deadline: o.deadline, fetchImpl: cfg.fetchImpl, sleep, random, now, attempts },
     )
-    return readJson(response, o.deadline)
+    return readJson(response, o.deadline, now)
   }
 
   async function findCustomerByCpf(cpf: string, o: CallOpts) {
     const qs = new URLSearchParams({ cpfCnpj: cpf })
     const first = firstOfList(await request(`/customers?${qs}`, { method: "GET" }, o))
-    return first === null ? null : toCustomer(first)
+    return first === null ? null : toCustomer(first.item)
   }
 
   async function findPaymentByExternalReference(ref: string, o: CallOpts) {
     const qs = new URLSearchParams({ externalReference: ref })
     const first = firstOfList(await request(`/payments?${qs}`, { method: "GET" }, o))
-    return first === null ? null : toPayment(first)
+    return first === null ? null : toPayment(first.item)
   }
 
   /**
-   * POST não é repetido às cegas: depois de uma falha transiente, a busca diz se o recurso
-   * já foi criado (a resposta pode ter se perdido) antes de enviar o POST de novo.
+   * POST com recuperação: nunca é repetido às cegas. Depois de uma falha transiente espera o
+   * backoff e consulta o recurso (a resposta pode ter se perdido):
+   *  - achou: devolve, sem novo POST;
+   *  - não achou (lista vazia): tenta o próximo POST;
+   *  - a busca falhou (resultado desconhecido): para e lança o erro transiente original do POST,
+   *    para que quem chamou resolva depois, sem arriscar duplicar a criação.
    */
-  async function createOnce<T>(
+  async function postWithRecovery<T>(
     post: () => Promise<T>,
     lookup: () => Promise<T | null>,
     o: CallOpts,
   ): Promise<T> {
-    let lastError: HttpError | undefined
-    for (let i = 0; i < POST_ATTEMPTS; i++) {
+    for (let i = 0; ; i++) {
       try {
         return await post()
       } catch (err) {
-        if (!(err instanceof HttpError) || !err.transient) throw err
-        lastError = err
-      }
-      if (i === POST_ATTEMPTS - 1) break
+        if (!(err instanceof HttpError) || !err.transient || i === POST_ATTEMPTS - 1) throw err
 
-      const delay = BASE_DELAY_MS * 2 ** i * (0.8 + 0.4 * Math.random())
-      if (Date.now() + delay > o.deadline) throw new HttpError("deadline exceeded", { transient: true })
-      await sleep(delay)
+        const delay = BASE_DELAY_MS * 2 ** i * (0.8 + 0.4 * random())
+        if (now() + delay > o.deadline) throw new HttpError("deadline exceeded", { transient: true })
+        await sleep(delay)
 
-      try {
-        const existing = await lookup()
+        let existing: T | null
+        try {
+          existing = await lookup()
+        } catch {
+          throw err
+        }
         if (existing !== null) return existing
-      } catch (err) {
-        // falha transiente na busca não mascara o erro original: segue para o próximo POST
-        if (!(err instanceof HttpError) || !err.transient) throw err
       }
     }
-    throw lastError ?? new HttpError("no attempts made", { transient: true })
   }
 
   return {
     findCustomerByCpf,
     findPaymentByExternalReference,
     createCustomer: (i, o) =>
-      createOnce(
+      postWithRecovery(
         async () => toCustomer(await request("/customers", { method: "POST", body: JSON.stringify(i) }, o, 1)),
         () => findCustomerByCpf(i.cpfCnpj, o),
         o,
       ),
     createPayment: (i, o) =>
-      createOnce(
+      postWithRecovery(
         async () => toPayment(await request("/payments", { method: "POST", body: JSON.stringify(i) }, o, 1)),
         () => findPaymentByExternalReference(i.externalReference, o),
         o,
