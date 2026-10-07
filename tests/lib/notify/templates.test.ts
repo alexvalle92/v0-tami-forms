@@ -13,7 +13,7 @@ describe("renderPaymentLink", () => {
     expect(r.text).toContain("Olá Ana <b>!")
   })
 
-  it("gera o html exatamente como no n8n", () => {
+  it("gera o html exatamente como no fluxo antigo", () => {
     const { html } = renderPaymentLink({ name: "Ana", link: "https://asaas/i/1" })
     expect(html).toBe(
       "Olá Ana! 👋 <br>Recebemos seu cadastro com sucesso! 🎉 Seu <strong>Plano Alimentar Personalizado já está pronto</strong> e aguardando apenas a confirmação do pagamento. <br><br>Para liberar seu acesso, basta efetuar o pagamento pelo link abaixo: <br>\n" +

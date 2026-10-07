@@ -17,7 +17,7 @@ const unescapeHtml = (s: string) =>
     .replaceAll("&#39;", "'")
     .replaceAll("&amp;", "&")
 
-/** Mensagem de link de pagamento, com o mesmo texto do fluxo antigo do n8n. */
+/** Mensagem de link de pagamento, com o mesmo texto do fluxo antigo (anterior à refatoração). */
 export function renderPaymentLink(d: { name: string; link: string }): {
   subject: string
   html: string
@@ -31,7 +31,7 @@ export function renderPaymentLink(d: { name: string; link: string }): {
   return { subject: PAYMENT_LINK_TITLE, html, text }
 }
 
-/** Porta o node `textoFormatado` do n8n: o html vira partes de texto no formato do WhatsApp. */
+/** Porta o antigo `textoFormatado` do fluxo anterior: o html vira partes de texto no formato do WhatsApp. */
 export function toWhatsAppParts(title: string, html: string): string[] {
   const parts = html
     .replaceAll("<strong>", "*")

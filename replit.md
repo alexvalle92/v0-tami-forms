@@ -22,15 +22,16 @@ Desenvolver uma solução escalável e de baixo custo (modelo low ticket) que pe
 - **Radix UI** - Componentes acessíveis
 
 ### Backend & Integrações
-- **Supabase** - Banco de dados PostgreSQL e autenticação
-  - `@supabase/supabase-js` - Cliente JavaScript
-  - `@supabase/ssr` - Server-side rendering support
+- **MySQL 8** (Drizzle ORM) - Banco de dados
+- **Nodemailer** (SMTP) e **Evolution API** - E-mail e WhatsApp
 - **Asaas API** - Gateway de pagamentos brasileiro
 
 ### Gerenciamento de Pacotes
 - **pnpm** - Gerenciador de pacotes
 
-## Estrutura do Banco de Dados (Supabase)
+## Estrutura do Banco de Dados (MySQL)
+
+> O esquema atual está em `lib/db/schema.ts`; a descrição abaixo é anterior à refatoração do backend.
 
 ### Tabela: `patients`
 - `id` (UUID) - Primary Key
@@ -64,7 +65,7 @@ Desenvolver uma solução escalável e de baixo custo (modelo low ticket) que pe
 
 2. **Processamento**
    - Dados enviados para API `/api/submit-quiz`
-   - Criação/atualização do paciente no Supabase
+   - Criação/atualização do paciente no MySQL
    - Criação de cliente no Asaas (se necessário)
    - Geração automática de cobrança
 
@@ -81,117 +82,25 @@ O sistema possui duas estratégias diferentes de tratamento de erros dependendo 
 - **Exemplos**:
   - Validação de email inválido
   - Validação de telefone/CPF
-  - Erros ao criar/atualizar paciente no Supabase
+  - Erros ao gravar o paciente no banco (a tela mostra "Tentar novamente")
 - **Resposta API**: `{ error: "mensagem de erro" }` com status HTTP 4xx/5xx
 - **Frontend**: Exibe mensagem de erro para o usuário corrigir
 
-### Erros a partir da Linha 122 (Integração Asaas e Pagamentos)
-- **Comportamento**: Erros são enviados para webhook N8N e usuário é redirecionado
-- **Webhook N8N**: `https://n8n.nutritamilivalle.com.br/webhook/errors-app`
-- **Payload enviado**:
-  \`\`\`json
-  {
-    "patient_id": "uuid-do-paciente",
-    "error": {
-      "type": "tipo_do_erro",
-      "details": { objeto_erro_completo },
-      "context": "Descrição do contexto"
-    },
-    "timestamp": "ISO-8601"
-  }
-  \`\`\`
-- **Tipos de erro**:
-  - `asaas_customer_creation_error`: Falha ao criar cliente no Asaas
-  - `supabase_update_asaas_id_error`: Falha ao atualizar asaas_customer_id
-  - `asaas_payment_creation_error`: Falha ao criar cobrança no Asaas
-  - `supabase_payment_insert_error`: Falha ao salvar registro de pagamento
-- **Resposta API**: `{ success: false, redirectUrl: "https://nutritamilivalle.com.br/" }`
-- **Frontend**: Redireciona automaticamente para o site institucional
+### Erros de integração (Asaas)
+- **Comportamento**: a cobrança fica pendente no banco, o job de fundo tenta de novo com espera crescente e, se as tentativas acabarem, avisa o administrador por e-mail (detalhes no `README.md`)
+- **Resposta API**: `{ sucesso: true }` (sem link)
+- **Frontend**: vai para `/confirmation` ("logo enviaremos o link")
 
 ### Justificativa
 Esta abordagem garante que:
 1. Dados inválidos sejam corrigidos pelo usuário antes de criar registros
 2. Erros de integração (fora do controle do usuário) sejam tratados automaticamente
-3. A equipe seja notificada via N8N para resolver problemas de integração
+3. A equipe seja avisada por e-mail para resolver problemas de integração
 4. O usuário tenha uma experiência limpa mesmo quando há falhas técnicas
 
 ## Gerenciamento de Variáveis de Ambiente
 
-O sistema suporta duas formas de gerenciar variáveis de ambiente:
-
-### Produção (AWS Parameter Store)
-
-Para ambientes de produção na AWS, as variáveis são carregadas automaticamente do AWS Systems Manager Parameter Store:
-
-**Configuração necessária:**
-\`\`\`env
-USE_AWS_PARAMETER_STORE=true
-AWS_REGION=us-east-1  # Região da sua conta AWS
-AWS_PARAMETER_PATH=/nutritamilivalle/production  # Caminho dos parâmetros
-\`\`\`
-
-**Estrutura dos parâmetros no AWS Parameter Store:**
-\`\`\`
-/nutritamilivalle/production/
-├── NEXT_PUBLIC_SUPABASE_URL
-├── NEXT_PUBLIC_SUPABASE_ANON_KEY
-├── SUPABASE_SERVICE_ROLE_KEY
-├── ASAAS_API_KEY
-└── ASAAS_SANDBOX
-\`\`\`
-
-**Permissões IAM necessárias:**
-\`\`\`json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ssm:GetParameter",
-        "ssm:GetParameters",
-        "ssm:GetParametersByPath"
-      ],
-      "Resource": "arn:aws:ssm:*:*:parameter/nutritamilivalle/*"
-    }
-  ]
-}
-\`\`\`
-
-### Desenvolvimento Local
-
-Para desenvolvimento local, use o arquivo `.env.local`:
-
-1. Copie o template:
-   \`\`\`bash
-   cp .env.local.example .env.local
-   \`\`\`
-
-2. Preencha as variáveis no `.env.local`:
-   \`\`\`env
-   # Supabase
-   NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=sua_chave_anon_key_aqui
-   SUPABASE_SERVICE_ROLE_KEY=sua_service_role_key_aqui
-
-   # Asaas
-   ASAAS_API_KEY=sua_api_key_asaas_aqui
-   ASAAS_SANDBOX=true
-   \`\`\`
-
-3. O arquivo `.env.local` está no `.gitignore` e **nunca** deve ser commitado
-
-### Como Funciona
-
-O sistema detecta automaticamente o ambiente através da variável `USE_AWS_PARAMETER_STORE`:
-
-- **`USE_AWS_PARAMETER_STORE=true`**: Carrega do AWS Parameter Store
-- **Ausente ou `false`**: Carrega de variáveis de ambiente locais (`.env.local`)
-
-**Implementação:** `lib/config.ts` - Módulo utilitário que:
-- Cacheia as configurações em memória
-- Valida a presença de todas as variáveis obrigatórias
-- Lança erro descritivo se alguma variável estiver faltando
+As variáveis são lidas de `process.env` e validadas em `lib/env.ts` quando o app inicia. A lista completa está em `.env.example` e no `README.md`.
 
 ## Estrutura de Arquivos
 
@@ -215,13 +124,10 @@ O sistema detecta automaticamente o ambiente através da variável `USE_AWS_PARA
 │   ├── loading-screen.tsx        # Tela de carregamento
 │   └── theme-provider.tsx        # Provider de tema
 ├── lib/
-│   ├── supabase/
-│   │   ├── client.ts             # Cliente Supabase (browser)
-│   │   └── server.ts             # Cliente Supabase (server-side)
-│   ├── config.ts                 # Gerenciador de configuração (AWS/local)
+│   ├── db/                       # Schema Drizzle, migrations e repositórios (MySQL)
+│   ├── env.ts                    # Validação das variáveis de ambiente
 │   └── utils.ts                  # Utilitários
-├── supabase-schema.sql           # Script SQL para criar tabelas
-├── .env.local.example            # Template de variáveis locais
+├── .env.example                  # Modelo das variáveis de ambiente
 ├── package.json
 ├── tsconfig.json
 └── next.config.mjs
@@ -229,12 +135,9 @@ O sistema detecta automaticamente o ambiente através da variável `USE_AWS_PARA
 
 ## Setup do Projeto
 
-### 1. Configurar Supabase
+### 1. Configurar o banco (MySQL 8)
 
-1. Crie um projeto em [supabase.com](https://supabase.com)
-2. Execute o script `supabase-schema.sql` no SQL Editor
-3. Copie as credenciais (Project Settings → API)
-4. Adicione as variáveis de ambiente no Replit Secrets
+Crie o banco e informe `DATABASE_URL`. As migrations rodam sozinhas quando o app inicia. Passo a passo no `README.md`.
 
 ### 2. Configurar Asaas
 
@@ -263,10 +166,10 @@ A aplicação estará disponível em `http://0.0.0.0:5000`
 - Inputs formatados: telefone (DDD + número), CPF (999.999.999-99)
 - Valores padrão em seletores numéricos para evitar bloqueio de navegação
 
-### Integração com Supabase
+### Persistência (MySQL)
 - Armazenamento seguro de dados dos pacientes
 - Respostas do quiz salvas em JSON
-- Prevenção de duplicatas por email
+- Prevenção de duplicatas por CPF
 - Atualização automática de timestamps
 
 ### Integração com Asaas
@@ -296,7 +199,7 @@ A aplicação estará disponível em `http://0.0.0.0:5000`
 ## Suporte
 
 Para questões sobre:
-- **Supabase**: [supabase.com/docs](https://supabase.com/docs)
+- **MySQL**: [dev.mysql.com/doc](https://dev.mysql.com/doc/)
 - **Asaas**: [docs.asaas.com](https://docs.asaas.com)
 - **Next.js**: [nextjs.org/docs](https://nextjs.org/docs)
 
@@ -318,7 +221,7 @@ Para questões sobre:
 
 **Tratamento de Erros**
 - ✅ Sistema diferenciado de tratamento de erros (validação vs integração)
-- ✅ Webhook N8N para notificação de erros de integração
+- ✅ Notificação de erros de integração
 - ✅ Redirecionamento automático para site institucional em caso de falha
 - ✅ 4 tipos de erro categorizados e monitorados
 
