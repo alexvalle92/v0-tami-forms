@@ -111,6 +111,8 @@ export interface NotificationRepo {
   listPendingIdsForQuizResponse(quizResponseId: string): Promise<string[]>
   get(id: string): Promise<NotificationView | null>
   tryLock(id: string, ttlMs: number): Promise<boolean>
+  /** Solta a reserva sem alterar mais nada. Id inexistente é no-op. */
+  unlock(id: string): Promise<void>
   markPartSent(id: string, partsSent: number): Promise<void>
   /** Marca como enviada; limpa o lock. */
   markSent(id: string): Promise<void>

@@ -335,6 +335,11 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
       return true
     },
 
+    async unlock(id) {
+      const n = notifications.get(id)
+      if (n) n.lockedUntil = null
+    },
+
     async markPartSent(id, partsSent) {
       const n = notifications.get(id)
       if (n) n.partsSent = partsSent

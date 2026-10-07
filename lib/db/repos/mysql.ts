@@ -400,6 +400,13 @@ export function createMysqlRepos(db: Db): Repos {
       return affected(result) === 1
     },
 
+    async unlock(id) {
+      await db
+        .update(notifications)
+        .set({ lockedUntil: null, updatedAt: new Date() })
+        .where(eq(notifications.id, id))
+    },
+
     async markPartSent(id, partsSent) {
       await db
         .update(notifications)

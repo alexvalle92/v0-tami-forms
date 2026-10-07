@@ -228,6 +228,11 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       expect(await notifications.listDue(new Date(), BIG)).not.toContain(id)
       expect(await notifications.tryLock(UNKNOWN_ID, 60_000)).toBe(false)
 
+      // unlock solta a reserva; id inexistente não lança.
+      await notifications.unlock(id)
+      expect(await notifications.tryLock(id, 60_000)).toBe(true)
+      await expect(notifications.unlock(UNKNOWN_ID)).resolves.toBeUndefined()
+
       // markFailure e markSent sempre limpam a reserva.
       await notifications.markFailure(id, {
         attempts: 1,
