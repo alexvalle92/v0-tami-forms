@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react"
 import { AlertTriangle, ArrowLeft, RefreshCw, MessageCircle } from "lucide-react"
-import { submitQuizRequest } from "@/lib/client/submit-quiz"
+import { GENERIC_SUBMIT_ERROR, newSubmissionId, submitQuizRequest } from "@/lib/client/submit-quiz"
 
 interface LoadingScreenProps {
   onComplete: () => void
@@ -20,26 +20,38 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
   const webhookResultRef = useRef<"pending" | "success" | "error">("pending")
   const webhookErrorMsgRef = useRef("")
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const submissionIdRef = useRef(crypto.randomUUID())
+  // um id por montagem, gerado uma única vez (inicializador lazy) e reaproveitado nas tentativas
+  const [submissionId] = useState(() => newSubmissionId())
 
   const submitToWebhook = useCallback(async () => {
     webhookResultRef.current = "pending"
     webhookErrorMsgRef.current = ""
 
-    sessionStorage.removeItem("linkPagamento")
+    try {
+      sessionStorage.removeItem("linkPagamento")
+    } catch {
+      // armazenamento bloqueado: segue sem limpar
+    }
 
-    const result = await submitQuizRequest({ submissionId: submissionIdRef.current, answers })
+    const result = await submitQuizRequest({ submissionId, answers })
 
     if (result.ok) {
       if (result.linkPagamento) {
-        sessionStorage.setItem("linkPagamento", result.linkPagamento)
+        try {
+          sessionStorage.setItem("linkPagamento", result.linkPagamento)
+        } catch {
+          // sem o link no armazenamento o redirecionamento não funciona
+          webhookResultRef.current = "error"
+          webhookErrorMsgRef.current = GENERIC_SUBMIT_ERROR
+          return
+        }
       }
       webhookResultRef.current = "success"
     } else {
       webhookResultRef.current = "error"
       webhookErrorMsgRef.current = result.message
     }
-  }, [answers])
+  }, [answers, submissionId])
 
   const startProgressAnimation = useCallback((duration: number, webhookDelay: number) => {
     setProgress(0)
