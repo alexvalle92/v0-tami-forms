@@ -24,4 +24,9 @@ describe("isBearerAuthorized", () => {
     expect(() => isBearerAuthorized("Bearer x", T)).not.toThrow()
     expect(isBearerAuthorized("Bearer x", T)).toBe(false)
   })
+
+  it("não autoriza quando o token esperado é vazio (fail closed)", () => {
+    expect(isBearerAuthorized("Bearer ", "")).toBe(false)
+    expect(isBearerAuthorized(null, "")).toBe(false)
+  })
 })
