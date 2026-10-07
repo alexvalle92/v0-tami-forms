@@ -13,6 +13,11 @@ export function createSmtpEmailSender(
     port: cfg.port,
     secure: cfg.port === 465,
     auth: { user: cfg.user, pass: cfg.pass },
+    // Os padrões do nodemailer (~2 min) igualam o TTL do lock da notificação (120 s): um SMTP lento
+    // deixaria o lock expirar e outro worker enviaria o e-mail em duplicidade.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   })
   return {
     async send(m) {

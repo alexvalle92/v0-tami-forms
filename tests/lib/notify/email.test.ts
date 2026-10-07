@@ -28,6 +28,14 @@ describe("createSmtpEmailSender", () => {
     })
   })
 
+  it("R18: configura timeouts do SMTP abaixo do TTL do lock de 120 s", () => {
+    const { createTransport } = setup()
+    createSmtpEmailSender(cfg, createTransport)
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 }),
+    )
+  })
+
   it("usa secure true na porta 465 e false na 587", () => {
     const a = setup()
     createSmtpEmailSender({ ...cfg, port: 465 }, a.createTransport)
