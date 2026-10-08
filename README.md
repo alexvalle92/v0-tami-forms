@@ -80,7 +80,7 @@ Para gerar um `JOBS_TOKEN`: `node -e "console.log(require('crypto').randomBytes(
    - Start: `pnpm start`
    - Porta do app: `5000`
 4. Em `DATABASE_URL`, use a **URL interna** do serviço MySQL que o Easypanel mostra (nome do serviço como host).
-5. Cadastre todas as variáveis da seção 4 no ambiente do app. Comece com `ASAAS_ENV=sandbox`.
+5. Cadastre todas as variáveis da seção 4 no ambiente do app. Comece com `ASAAS_ENV=sandbox`, num banco separado do de produção (seção 9).
 6. Health check: caminho `/api/health`. Responde 200 quando o banco está acessível e 503 quando não está.
 7. Configure o domínio no proxy do Easypanel.
 
@@ -182,15 +182,15 @@ Crie antes o banco `tami_forms_test` (MySQL 8, mesmo collation da seção 3). Nu
 
 ## 9. Checklist antes de ir para produção (sandbox do Asaas)
 
-Faça num deploy de teste no Easypanel, com `ASAAS_ENV=sandbox` e a chave do sandbox:
+Faça num deploy de teste no Easypanel, com `ASAAS_ENV=sandbox` e a chave do sandbox. **Use um banco só para este teste (por exemplo `tami_forms_sandbox`) e não direcione o domínio público para esse deploy.** O banco guarda IDs de cliente e links de cobrança do Asaas: se o mesmo banco for usado depois em produção, quem enviou o quiz durante o teste recebe um link do sandbox, ou a cobrança falha porque o cliente do sandbox não existe em produção.
 
 - [ ] **Desfecho 1:** preencha o quiz até o fim. A pessoa é redirecionada ao link de pagamento do Asaas. Pague no sandbox e confira o redirecionamento para `PAYMENT_SUCCESS_URL`.
-- [ ] **Desfecho 2:** coloque uma chave do Asaas inválida e envie o quiz. Aparece a tela de confirmação (sem link). Chave recusada pelo Asaas (erro 4xx) é falha definitiva na hora: a cobrança vira `ASAAS_FAILED` e o e-mail de alerta chega em `ADMIN_ALERT_EMAIL`. Corrija a chave, reinicie o app e reabra com `/api/jobs/retry` (`paymentId`). A cobrança é criada e a pessoa recebe o link. (A repetição automática com espera crescente, para falhas temporárias como queda do Asaas, é coberta pelos testes automáticos.)
+- [ ] **Desfecho 2:** use um **CPF diferente** do desfecho 1 (com o mesmo CPF a cobrança é reaproveitada e o resultado vira o desfecho 1). Coloque uma chave do Asaas inválida e envie o quiz. Aparece a tela de confirmação (sem link). Chave recusada pelo Asaas (erro 4xx) é falha definitiva na hora: a cobrança vira `ASAAS_FAILED` e o e-mail de alerta chega em `ADMIN_ALERT_EMAIL`. Corrija a chave, reinicie o app e reabra com `/api/jobs/retry` (`paymentId`). A cobrança é criada e a pessoa recebe o link. (A repetição automática com espera crescente, para falhas temporárias como queda do Asaas, é coberta pelos testes automáticos.)
 - [ ] **Desfecho 3:** pare o MySQL e envie o quiz. Aparece o erro com "Tentar novamente". Suba o banco, clique em "Tentar novamente" e confira que nada ficou duplicado.
 - [ ] **E-mail e WhatsApp:** os dois chegam, com o link correto, nos desfechos 1 e 2.
 - [ ] **Alerta de falha e retry:** confira que o e-mail de alerta do desfecho 2 chegou, que o `last_error` explica a causa e que o `/api/jobs/retry` reabriu o item (`reopened: 1`).
 - [ ] **Evolution API:** confirme que o formato usado funciona na sua instância. O app faz `POST /message/sendText/{instância}` com o corpo `{ number, text }`, que é o formato da v2. Se a sua versão for outra, o WhatsApp falhará nesse teste.
-- [ ] Só então troque para `ASAAS_ENV=production` com a chave **nova** de produção.
+- [ ] Só então suba o deploy de produção com `ASAAS_ENV=production`, a chave **nova** de produção e um **banco novo e vazio** (nunca o banco usado no sandbox). Se precisar reaproveitar o banco do teste, apague antes o conteúdo das tabelas `notifications`, `quiz_responses`, `payments` e `patients`, nessa ordem.
 
 ## 10. Notas
 
