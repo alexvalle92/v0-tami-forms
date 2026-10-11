@@ -1,9 +1,19 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Channel, LastError, NotificationRepo } from "@/lib/db/repos/types"
+import { hashPassword, verifyPassword } from "@/lib/access/password-hash"
+import { deriveTempPassword } from "@/lib/access/temp-password"
 import { HttpError } from "@/lib/http/retry"
 import type { Logger } from "@/lib/log"
 import type { EmailSender } from "@/lib/notify/email"
-import { PAYMENT_LINK_TITLE, renderPaymentLink, toWhatsAppParts } from "@/lib/notify/templates"
+import {
+  FIRST_ACCESS_TITLE,
+  PAYMENT_LINK_TITLE,
+  PLAN_READY_TITLE,
+  renderFirstAccess,
+  renderPaymentLink,
+  renderPlanReady,
+  toWhatsAppParts,
+} from "@/lib/notify/templates"
 import type { WhatsAppSender } from "@/lib/notify/whatsapp"
 import { createDispatchNotification } from "@/lib/services/dispatch-notification"
 import { createMemoryRepos } from "../../fakes/memory-repos"
@@ -14,6 +24,9 @@ const NAME = "Ana Souza"
 const EMAIL = "ana@gmail.com"
 const PHONE = "44991651250"
 const RECIPIENT_WA = `55${PHONE}`
+const APP_URL = "https://plana.nutritamilivalle.com.br/"
+const ACCESS_SECRET = "segredo-de-teste-com-mais-de-32-caracteres"
+const tempPasswordOf = (patientId: string) => deriveTempPassword(ACCESS_SECRET, patientId)
 
 const seedError: LastError = { step: "seed", message: "seed", attempt: 1, at: NOW.toISOString() }
 const PARTS = toWhatsAppParts(PAYMENT_LINK_TITLE, renderPaymentLink({ name: NAME, link: PAY_URL }).html)
@@ -24,6 +37,7 @@ async function setup(
   opts: {
     synced?: boolean
     wrap?: (repos: ReturnType<typeof createMemoryRepos>) => NotificationRepo
+    tempPassword?: (patientId: string) => string
   } = {},
 ) {
   const repos = createMemoryRepos()
@@ -68,11 +82,51 @@ async function setup(
     sleep: async (ms) => {
       sleeps.push(ms)
     },
+    access: { tempPassword: opts.tempPassword ?? tempPasswordOf, verifyPassword },
+    appUrl: APP_URL,
   })
-  return { repos, ids, email, whatsapp, alertAdmin, log, sleeps, dispatch }
+  return { repos, ids, paymentId: created.paymentId, email, whatsapp, alertAdmin, log, sleeps, dispatch }
 }
 
 const row = (s: Setup, channel: Channel) => s.repos.state.notifications.get(s.ids[channel])!
+
+/**
+ * Pagamento confirmado e plano concluído: cria as notificações `plan_ready` (uma por canal) e grava `passwordHash`
+ * como credencial do paciente (null = paciente sem credencial).
+ */
+async function completePlan(s: Setup, passwordHash: string | null) {
+  const applied = await s.repos.webhooks.applyPaymentEvent(
+    {
+      eventId: "evt_paid_1",
+      event: "PAYMENT_RECEIVED",
+      group: "paid",
+      asaasPaymentId: "pay_1",
+      externalReference: s.paymentId,
+      status: "RECEIVED",
+      billingType: null,
+      invoiceNumber: null,
+      paymentDate: null,
+    },
+    NOW,
+  )
+  if (applied.outcome !== "processed" || !applied.pendingGeneration) throw new Error("esperava uma geração pendente")
+  await s.repos.planGenerations.complete(applied.pendingGeneration.id, {
+    title: "Plano Alimentar 10/2026",
+    startDate: "2026-10-07",
+    endDate: "2026-11-06",
+    planData: { meals: [], calories: 1800, observations: "" },
+    generation: { model: "claude-opus-5-5" },
+    passwordHash,
+    channels: ["email", "whatsapp"],
+  })
+  const planRows = [...s.repos.state.notifications.values()].filter((n) => n.kind === "plan_ready")
+  const planIds = Object.fromEntries(planRows.map((n) => [n.channel, n.id])) as Record<Channel, string>
+  const patientId = (await s.repos.notifications.get(planIds.email))!.patientId
+  return { planIds, patientId, tempPassword: tempPasswordOf(patientId) }
+}
+
+const planRow = (s: Setup, id: string) => s.repos.state.notifications.get(id)!
+const patientIdOf = (s: Setup) => s.repos.state.payments.get(s.paymentId)!.patientId
 
 async function expectUnlocked(s: Setup, channel: Channel) {
   expect(row(s, channel).lockedUntil).toBeNull()
@@ -414,6 +468,142 @@ describe("createDispatchNotification", () => {
     await expect(s.dispatch(s.ids.email)).rejects.toThrow()
     expect(s.email.send).not.toHaveBeenCalled()
     await expectUnlocked(s, "email")
+  })
+
+  describe("plan_ready", () => {
+    // Hash de uma senha que o paciente já escolheu (formato scrypt, mas não é a temporária).
+    const changedHash = () => hashPassword("minha-senha-nova-123")
+    // Formato antigo do PlanA (SHA-512 em base64, 88 caracteres): não é scrypt, então não confere.
+    const SHA512_BASE64 = `${"Zm9v".repeat(21)}Zg==`
+
+    it("e-mail de primeiro acesso: assunto e senha temporária no corpo", async () => {
+      const s = await setup()
+      const plan = await completePlan(s, await hashPassword(tempPasswordOf(patientIdOf(s))))
+
+      expect(await s.dispatch(plan.planIds.email)).toBe("sent")
+
+      expect(s.email.send).toHaveBeenCalledTimes(1)
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent).toMatchObject({ to: EMAIL, subject: FIRST_ACCESS_TITLE })
+      expect(sent.html).toBe(renderFirstAccess({ name: NAME, appUrl: APP_URL, tempPassword: plan.tempPassword }).html)
+      expect(sent.html).toContain(plan.tempPassword)
+      expect(sent.text).toContain(`Senha temporária: ${plan.tempPassword}`)
+      expect(planRow(s, plan.planIds.email)).toMatchObject({ status: "sent" })
+      expect(s.whatsapp.sendText).not.toHaveBeenCalled()
+      expect(s.alertAdmin).not.toHaveBeenCalled()
+    })
+
+    it("WhatsApp de primeiro acesso: as 3 partes, com 3 s entre elas", async () => {
+      const s = await setup()
+      const plan = await completePlan(s, await hashPassword(tempPasswordOf(patientIdOf(s))))
+      const parts = toWhatsAppParts(
+        FIRST_ACCESS_TITLE,
+        renderFirstAccess({ name: NAME, appUrl: APP_URL, tempPassword: plan.tempPassword }).html,
+      )
+      expect(parts).toHaveLength(3)
+
+      expect(await s.dispatch(plan.planIds.whatsapp)).toBe("sent")
+
+      expect(s.whatsapp.sendText.mock.calls).toEqual(parts.map((p) => [RECIPIENT_WA, p]))
+      expect(parts[1]).toContain(`*Senha temporária:* ${plan.tempPassword}`)
+      expect(s.sleeps).toEqual([3000, 3000])
+      expect(planRow(s, plan.planIds.whatsapp)).toMatchObject({ status: "sent", partsSent: 3 })
+      expect(s.email.send).not.toHaveBeenCalled()
+    })
+
+    it("senha já trocada: sai o texto de plano novo, sem a senha temporária", async () => {
+      const s = await setup()
+      const plan = await completePlan(s, await changedHash())
+
+      expect(await s.dispatch(plan.planIds.email)).toBe("sent")
+      expect(await s.dispatch(plan.planIds.whatsapp)).toBe("sent")
+
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.subject).toBe(PLAN_READY_TITLE)
+      expect(sent.html).toBe(renderPlanReady({ name: NAME, appUrl: APP_URL }).html)
+      expect(sent.html).not.toContain(plan.tempPassword)
+      expect(sent.text).not.toContain(plan.tempPassword)
+
+      const parts = toWhatsAppParts(PLAN_READY_TITLE, renderPlanReady({ name: NAME, appUrl: APP_URL }).html)
+      expect(parts).toHaveLength(2)
+      expect(s.whatsapp.sendText.mock.calls).toEqual(parts.map((p) => [RECIPIENT_WA, p]))
+      expect(s.whatsapp.sendText.mock.calls.map((c) => c[1]).join("\n")).not.toContain(plan.tempPassword)
+      expect(s.sleeps).toEqual([3000])
+    })
+
+    it("hash em outro formato (SHA-512 base64): sai o texto de plano novo", async () => {
+      const s = await setup()
+      const plan = await completePlan(s, SHA512_BASE64)
+
+      expect(await s.dispatch(plan.planIds.email)).toBe("sent")
+
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.subject).toBe(PLAN_READY_TITLE)
+      expect(sent.html).not.toContain(plan.tempPassword)
+    })
+
+    it("paciente sem hash: nova tentativa agendada, nada é enviado", async () => {
+      const s = await setup()
+      const plan = await completePlan(s, null)
+
+      expect(await s.dispatch(plan.planIds.email)).toBe("retry_scheduled")
+      expect(await s.dispatch(plan.planIds.whatsapp)).toBe("retry_scheduled")
+
+      expect(s.email.send).not.toHaveBeenCalled()
+      expect(s.whatsapp.sendText).not.toHaveBeenCalled()
+      expect(planRow(s, plan.planIds.email)).toMatchObject({ status: "pending", attempts: 1 })
+      expect(planRow(s, plan.planIds.email).lastError).toMatchObject({ step: "notify.email" })
+      expect(planRow(s, plan.planIds.email).nextAttemptAt).toEqual(new Date(NOW.getTime() + 2 * 60_000))
+      expect(planRow(s, plan.planIds.whatsapp).lastError).toMatchObject({ step: "notify.whatsapp" })
+      expect(s.alertAdmin).not.toHaveBeenCalled()
+      expect(planRow(s, plan.planIds.email).lockedUntil).toBeNull()
+    })
+
+    it("plan_ready não exige payment_url", async () => {
+      const s = await setup({ synced: false })
+      const plan = await completePlan(s, await hashPassword(tempPasswordOf(patientIdOf(s))))
+      expect((await s.repos.notifications.get(plan.planIds.email))!.paymentUrl).toBeNull()
+
+      expect(await s.dispatch(plan.planIds.email)).toBe("sent")
+
+      expect(s.email.send.mock.calls[0][0].subject).toBe(FIRST_ACCESS_TITLE)
+    })
+
+    it("tempPassword que lança (segredo vazio): nova tentativa normal, sem vazar nada", async () => {
+      const s = await setup({ tempPassword: (patientId) => deriveTempPassword("", patientId) })
+      const plan = await completePlan(s, await hashPassword("qualquer-senha-1"))
+
+      expect(await s.dispatch(plan.planIds.email)).toBe("retry_scheduled")
+
+      expect(s.email.send).not.toHaveBeenCalled()
+      expect(planRow(s, plan.planIds.email)).toMatchObject({ status: "pending", attempts: 1 })
+      expect(planRow(s, plan.planIds.email).lastError).toMatchObject({
+        step: "notify.email",
+        message: "deriveTempPassword: segredo vazio",
+      })
+    })
+
+    it("nenhum log, last_error nem alerta contém a senha temporária", async () => {
+      const s = await setup()
+      const plan = await completePlan(s, await hashPassword(tempPasswordOf(patientIdOf(s))))
+      s.email.send.mockRejectedValueOnce(new Error("socket hang up"))
+      s.whatsapp.sendText
+        .mockImplementationOnce(async () => {})
+        .mockRejectedValueOnce(new HttpError("evolution 503", { transient: true, status: 503 }))
+
+      expect(await s.dispatch(plan.planIds.email)).toBe("retry_scheduled") // falha
+      expect(await s.dispatch(plan.planIds.email)).toBe("sent") // sucesso
+      expect(await s.dispatch(plan.planIds.whatsapp)).toBe("retry_scheduled") // falha na parte 2
+      expect(await s.dispatch(plan.planIds.whatsapp)).toBe("sent")
+
+      const everything = JSON.stringify({
+        logs: loggedText(s.log),
+        errors: [planRow(s, plan.planIds.email).lastError, planRow(s, plan.planIds.whatsapp).lastError],
+        alerts: s.alertAdmin.mock.calls,
+      })
+      expect(loggedText(s.log)).not.toBe("[]")
+      expect(everything).not.toContain(plan.tempPassword)
+    })
   })
 
   describe("R17: sem PII, texto da mensagem nem corpo bruto em logs, last_error e alerta", () => {

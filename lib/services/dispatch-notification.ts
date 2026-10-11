@@ -3,7 +3,7 @@ import { HttpError } from "@/lib/http/retry"
 import { MAX_NOTIFICATION_ATTEMPTS, jobBackoffMs } from "@/lib/jobs/backoff"
 import type { Logger } from "@/lib/log"
 import type { EmailSender } from "@/lib/notify/email"
-import { PAYMENT_LINK_TITLE, renderPaymentLink, toWhatsAppParts } from "@/lib/notify/templates"
+import { renderFirstAccess, renderPaymentLink, renderPlanReady, toWhatsAppParts } from "@/lib/notify/templates"
 import type { WhatsAppSender } from "@/lib/notify/whatsapp"
 import type { AlertAdmin } from "./alert-admin"
 import { safeErrorMessage, toLastError } from "./last-error"
@@ -16,7 +16,7 @@ const LOCK_TTL_MS = 120_000
 const WHATSAPP_PART_GAP_MS = 3000
 
 /**
- * Envia uma notificação enfileirada (e-mail ou WhatsApp). O WhatsApp é retomável: cada parte enviada
+ * Envia uma notificação enfileirada (e-mail ou WhatsApp; `payment_link` ou `plan_ready`). O WhatsApp é retomável: cada parte enviada
  * é gravada (`parts_sent`), então uma nova tentativa continua da próxima parte e não reenvia as anteriores.
  * Falhas viram nova tentativa com backoff; a definitiva (erro permanente ou 5ª tentativa) alerta o admin.
  */
@@ -28,6 +28,13 @@ export function createDispatchNotification(d: {
   log: Logger
   now: () => Date
   sleep: (ms: number) => Promise<void>
+  /** Senha temporária do paciente (derivada) e conferência contra o `password_hash` gravado (§8). */
+  access: {
+    tempPassword: (patientId: string) => string
+    verifyPassword: (password: string, stored: string) => Promise<boolean>
+  }
+  /** Endereço do PlanA, o `PLANA_APP_URL`. */
+  appUrl: string
 }): DispatchNotification {
   async function recordFailure(
     n: NotificationView,
@@ -82,6 +89,26 @@ export function createDispatchNotification(d: {
     return { result: "failed", lockCleared: true }
   }
 
+  /**
+   * Conteúdo conforme o `kind`. No `plan_ready` a escolha é feita agora, contra a credencial atual do paciente (§9):
+   * a senha ainda é a temporária derivada → primeiro acesso; qualquer outra coisa (já trocada, ou hash em outro
+   * formato, que `verifyPassword` recusa) → plano novo disponível. Sem credencial é erro (vira nova tentativa).
+   * A senha temporária só existe nesta função e no corpo da mensagem: nunca em log nem em erro.
+   */
+  async function renderMessage(n: NotificationView): Promise<{ subject: string; html: string; text: string }> {
+    if (n.kind === "payment_link") {
+      if (!n.paymentUrl) throw new Error("payment without url")
+      return renderPaymentLink({ name: n.patientName, link: n.paymentUrl })
+    }
+
+    if (!n.patientPasswordHash) throw new Error("patient without password hash")
+    const tempPassword = d.access.tempPassword(n.patientId)
+    if (await d.access.verifyPassword(tempPassword, n.patientPasswordHash)) {
+      return renderFirstAccess({ name: n.patientName, appUrl: d.appUrl, tempPassword })
+    }
+    return renderPlanReady({ name: n.patientName, appUrl: d.appUrl })
+  }
+
   return async function dispatchNotification(id) {
     const first = await d.notifications.get(id)
     if (!first || first.status !== "pending") return "skipped"
@@ -98,8 +125,7 @@ export function createDispatchNotification(d: {
       let step = `notify.${n.channel}`
       let partsSent = n.partsSent
       try {
-        if (!n.paymentUrl) throw new Error("payment without url")
-        const message = renderPaymentLink({ name: n.patientName, link: n.paymentUrl })
+        const message = await renderMessage(n)
 
         if (n.channel === "email") {
           await d.email.send({
@@ -109,7 +135,7 @@ export function createDispatchNotification(d: {
             text: message.text,
           })
         } else {
-          const parts = toWhatsAppParts(PAYMENT_LINK_TITLE, message.html)
+          const parts = toWhatsAppParts(message.subject, message.html)
           const start = n.partsSent
           for (let i = start; i < parts.length; i++) {
             if (i > start) await d.sleep(WHATSAPP_PART_GAP_MS)

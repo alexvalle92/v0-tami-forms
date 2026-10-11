@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
+import { verifyPassword } from "@/lib/access/password-hash"
+import { deriveTempPassword } from "@/lib/access/temp-password"
 import type { Channel, NotificationRepo, PaymentRepo } from "@/lib/db/repos/types"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
 import type { Logger } from "@/lib/log"
@@ -13,6 +15,7 @@ const PATIENTS = [
   { name: "Bia Lima", cpf: "11144477735", email: "bia@example.com", phone: "11888880000" },
 ]
 const LIMITS = { payments: 20, notifications: 50 }
+const ACCESS_SECRET = "segredo-de-teste-com-mais-de-32-caracteres"
 
 type Overrides = {
   payments?: (r: ReturnType<typeof createMemoryRepos>) => PaymentRepo
@@ -59,6 +62,8 @@ async function setup(patientCount = 1, o: Overrides = {}) {
     log,
     now,
     sleep: async () => {},
+    access: { tempPassword: (patientId) => deriveTempPassword(ACCESS_SECRET, patientId), verifyPassword },
+    appUrl: "https://plana.example.com/",
   })
   const runJobs = createRunJobs({
     payments: o.payments ? o.payments(repos) : repos.payments,
