@@ -19,7 +19,7 @@ export class PlanGenerationError extends Error {
 
 export type GeneratorResult = {
   plan: GeneratedPlan
-  /** Modelo que de fato respondeu (pode ser outro, se a API refez o pedido por fallback). */
+  /** Modelo que de fato respondeu: o do `fallback_message` em `usage.iterations` quando a API refez o pedido por fallback; senão, o modelo da resposta. */
   model: string
   inputTokens: number
   outputTokens: number
