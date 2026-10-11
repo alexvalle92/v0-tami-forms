@@ -1,34 +1,41 @@
-import type { NotificationRepo, PaymentRepo } from "@/lib/db/repos/types"
+import type { NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
 import type { Logger } from "@/lib/log"
 import type { DispatchNotification } from "@/lib/services/dispatch-notification"
+import type { GeneratePlan } from "@/lib/services/generate-plan"
 import { safeErrorMessage } from "@/lib/services/last-error"
 import type { SyncPayment } from "@/lib/services/sync-payment"
 
-/** `payments` e `notifications` contam os itens tentados (qualquer desfecho); `errors`, as exceções. */
-export type RunSummary = { payments: number; notifications: number; errors: number }
+/** `payments`, `plans` e `notifications` contam os itens tentados (qualquer desfecho); `errors`, as exceções. */
+export type RunSummary = { payments: number; plans: number; notifications: number; errors: number }
 
 /**
  * Uma rodada do job: primeiro as cobranças vencidas (para que um link criado agora já seja enviado
- * na mesma rodada) e depois as notificações vencidas. Itens em sequência; a exceção de um item é
- * logada (mensagem segura, sem dados pessoais), conta em `errors` e não interrompe os demais.
+ * na mesma rodada), depois as gerações de plano vencidas e por fim as notificações vencidas (as
+ * `plan_ready` criadas por uma geração concluída agora saem na mesma rodada). Itens em sequência; a
+ * exceção de um item é logada (mensagem segura, sem dados pessoais), conta em `errors` e não
+ * interrompe os demais.
  */
 export function createRunJobs(d: {
   payments: PaymentRepo
+  planGenerations: PlanGenerationRepo
   notifications: NotificationRepo
   syncPayment: SyncPayment
+  generatePlan: GeneratePlan
   dispatchNotification: DispatchNotification
   log: Logger
   now: () => Date
   paymentDeadlineMs: number
-  limits: { payments: number; notifications: number }
+  limits: { payments: number; plans: number; notifications: number }
 }): () => Promise<RunSummary> {
   return async function runJobs() {
     const startedAt = d.now().getTime()
-    const summary: RunSummary = { payments: 0, notifications: 0, errors: 0 }
+    const summary: RunSummary = { payments: 0, plans: 0, notifications: 0, errors: 0 }
 
-    async function list(kind: "payments" | "notifications"): Promise<string[]> {
+    const repos = { payments: d.payments, plans: d.planGenerations, notifications: d.notifications }
+
+    async function list(kind: "payments" | "plans" | "notifications"): Promise<string[]> {
       try {
-        return await d[kind].listDue(d.now(), d.limits[kind])
+        return await repos[kind].listDue(d.now(), d.limits[kind])
       } catch (err) {
         summary.errors++
         d.log.error(`job.${kind}.list_failed`, { message: safeErrorMessage(err) })
@@ -43,6 +50,16 @@ export function createRunJobs(d: {
       } catch (err) {
         summary.errors++
         d.log.error("job.payment.error", { paymentId, message: safeErrorMessage(err) })
+      }
+    }
+
+    for (const generationId of await list("plans")) {
+      summary.plans++
+      try {
+        await d.generatePlan(generationId)
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.plan.error", { generationId, message: safeErrorMessage(err) })
       }
     }
 

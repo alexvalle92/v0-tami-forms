@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from "vitest"
-import { verifyPassword } from "@/lib/access/password-hash"
+import { hashPassword, verifyPassword } from "@/lib/access/password-hash"
 import { deriveTempPassword } from "@/lib/access/temp-password"
-import type { Channel, NotificationRepo, PaymentRepo } from "@/lib/db/repos/types"
+import type { Channel, NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
 import type { Logger } from "@/lib/log"
+import { parsePlanAnswers } from "@/lib/meal-plan/answers"
+import type { GeneratorResult } from "@/lib/meal-plan/generator"
+import type { GeneratedPlan } from "@/lib/meal-plan/plan"
+import { computeTargets } from "@/lib/meal-plan/targets"
 import { createDispatchNotification, type DispatchNotification } from "@/lib/services/dispatch-notification"
+import { createGeneratePlan, type GeneratePlan } from "@/lib/services/generate-plan"
 import { createSyncPayment, type SyncPayment } from "@/lib/services/sync-payment"
 import { createFakeAsaas } from "../../fakes/fake-asaas"
 import { createMemoryRepos } from "../../fakes/memory-repos"
@@ -13,13 +18,66 @@ const CHANNELS: Channel[] = ["email", "whatsapp"]
 const PATIENTS = [
   { name: "Ana Souza", cpf: "52998224725", email: "ana@example.com", phone: "11999990000" },
   { name: "Bia Lima", cpf: "11144477735", email: "bia@example.com", phone: "11888880000" },
+  { name: "Carla Dias", cpf: "39053344705", email: "carla@example.com", phone: "11777770000" },
+  { name: "Dani Reis", cpf: "86288366757", email: "dani@example.com", phone: "11666660000" },
 ]
-const LIMITS = { payments: 20, notifications: 50 }
+const LIMITS = { payments: 20, plans: 3, notifications: 50 }
 const ACCESS_SECRET = "segredo-de-teste-com-mais-de-32-caracteres"
+
+// Respostas válidas do quiz: as gerações do teste passam pelo cálculo de metas e pela validação reais.
+const ANSWERS: Record<string, unknown> = {
+  faixa_etaria: "25-34 anos",
+  sexo_biologico: "Feminino",
+  tipo_fisico: "Mais cheinha",
+  peso_comportamento: "Ganho peso com facilidade",
+  breakfast_foods: ["Pão francês", "Café com leite"],
+  almoco: "Arroz, feijão e frango",
+  lanche_tarde: "Fruta",
+  jantar: "Sopa",
+  sobremesa: "Chocolate",
+  rotina_dia: "Trabalho sentada",
+  sono: "6 horas",
+  agua: "1 litro",
+  habitos: "Belisco à noite",
+  altura_cm: "165",
+  peso_kg: "80",
+  imc: "29,4",
+  meta_peso_30d: "75",
+}
+
+const TARGET_CALORIES = (() => {
+  const parsed = parsePlanAnswers(ANSWERS)
+  if (!parsed.ok) throw new Error("respostas de teste inválidas")
+  return computeTargets(parsed.value).calories
+})()
+
+/** Plano válido para a meta: 4 refeições que somam a meta. */
+function validPlan(): GeneratedPlan {
+  const each = TARGET_CALORIES / 4
+  return {
+    meals: ["Café da manhã", "Almoço", "Lanche", "Jantar"].map((name, i) => ({
+      name,
+      time: `0${7 + i}:00`,
+      foods: "Ovos — 100 g\nCafé sem açúcar — 200 ml",
+      calories: each,
+    })),
+    calories: TARGET_CALORIES,
+    observations: "Beba água.",
+  }
+}
+
+const generated = (): GeneratorResult => ({
+  plan: validPlan(),
+  model: "claude-opus-5-5",
+  inputTokens: 2000,
+  outputTokens: 5000,
+})
 
 type Overrides = {
   payments?: (r: ReturnType<typeof createMemoryRepos>) => PaymentRepo
   notifications?: (r: ReturnType<typeof createMemoryRepos>) => NotificationRepo
+  planGenerations?: (r: ReturnType<typeof createMemoryRepos>) => PlanGenerationRepo
+  wrapGenerate?: (real: GeneratePlan) => GeneratePlan
   wrapSync?: (real: SyncPayment) => SyncPayment
   wrapDispatch?: (real: DispatchNotification) => DispatchNotification
   now?: () => Date
@@ -37,7 +95,7 @@ async function setup(patientCount = 1, o: Overrides = {}) {
     const created = await repos.submissions.create({
       submissionId: `sub-${i}`,
       patient: PATIENTS[i],
-      answers: {},
+      answers: ANSWERS,
       amount: "39.90",
       todaySP: "2026-10-07",
     })
@@ -65,17 +123,58 @@ async function setup(patientCount = 1, o: Overrides = {}) {
     access: { tempPassword: (patientId) => deriveTempPassword(ACCESS_SECRET, patientId), verifyPassword },
     appUrl: "https://plana.example.com/",
   })
+  const generator = { generate: vi.fn(async (_i: { system: string; user: string }) => generated()) }
+  const generatePlan = createGeneratePlan({
+    planGenerations: repos.planGenerations,
+    generator,
+    hashPassword,
+    tempPassword: (patientId) => deriveTempPassword(ACCESS_SECRET, patientId),
+    alertAdmin,
+    log,
+    now,
+    config: { channels: CHANNELS },
+  })
   const runJobs = createRunJobs({
     payments: o.payments ? o.payments(repos) : repos.payments,
+    planGenerations: o.planGenerations ? o.planGenerations(repos) : repos.planGenerations,
     notifications: o.notifications ? o.notifications(repos) : repos.notifications,
     syncPayment: o.wrapSync ? o.wrapSync(syncPayment) : syncPayment,
+    generatePlan: o.wrapGenerate ? o.wrapGenerate(generatePlan) : generatePlan,
     dispatchNotification: o.wrapDispatch ? o.wrapDispatch(dispatchNotification) : dispatchNotification,
     log,
     now,
     paymentDeadlineMs: 30_000,
     limits: LIMITS,
   })
-  return { repos, asaas, log, email, whatsapp, paymentIds, runJobs }
+  /** Marca a cobrança como paga pelo webhook (cria a geração `pending`); devolve o id da geração. */
+  async function payAndQueueGeneration(paymentId: string, n: number): Promise<string> {
+    await repos.payments.markSynced(paymentId, {
+      asaasId: `pay_${n}`,
+      asaasCustomerId: `cus_${n}`,
+      status: "PENDING",
+      paymentUrl: `https://asaas.test/i/${n}`,
+      invoiceNumber: `INV-${n}`,
+      billingType: "UNDEFINED",
+      dueDate: "2026-10-09",
+    })
+    const event = await repos.webhooks.applyPaymentEvent(
+      {
+        eventId: `evt-${n}`,
+        event: "PAYMENT_RECEIVED",
+        group: "paid",
+        asaasPaymentId: `pay_${n}`,
+        externalReference: paymentId,
+        status: "RECEIVED",
+        billingType: "PIX",
+        invoiceNumber: `INV-${n}`,
+        paymentDate: "2026-10-09",
+      },
+      now(),
+    )
+    if (event.outcome !== "processed" || !event.pendingGeneration) throw new Error("geração não criada")
+    return event.pendingGeneration.id
+  }
+  return { repos, asaas, log, email, whatsapp, paymentIds, runJobs, generator, payAndQueueGeneration }
 }
 
 function loggedText(log: Logger): string {
@@ -92,7 +191,7 @@ describe("createRunJobs", () => {
 
     const summary = await s.runJobs()
 
-    expect(summary).toEqual({ payments: 1, notifications: 2, errors: 0 })
+    expect(summary).toEqual({ payments: 1, plans: 0, notifications: 2, errors: 0 })
     const payment = s.repos.state.payments.get(s.paymentIds[0])!
     expect(payment.paymentUrl).toBeTruthy()
     expect(payment.nextSyncAt).toBeNull()
@@ -105,7 +204,7 @@ describe("createRunJobs", () => {
   it("uma segunda rodada não tem mais nada a fazer", async () => {
     const s = await setup()
     await s.runJobs()
-    expect(await s.runJobs()).toEqual({ payments: 0, notifications: 0, errors: 0 })
+    expect(await s.runJobs()).toEqual({ payments: 0, plans: 0, notifications: 0, errors: 0 })
   })
 
   it("syncPayment que lança na 1ª de 2 cobranças: errors 1 e a 2ª é processada", async () => {
@@ -120,7 +219,7 @@ describe("createRunJobs", () => {
 
     const summary = await s.runJobs()
 
-    expect(summary).toEqual({ payments: 2, notifications: 2, errors: 1 })
+    expect(summary).toEqual({ payments: 2, plans: 0, notifications: 2, errors: 1 })
     expect(s.repos.state.payments.get(second)!.paymentUrl).toBeTruthy()
     expect(s.repos.state.payments.get(first)!.paymentUrl).toBeNull()
     expect(s.log.error).toHaveBeenCalledWith("job.payment.error", { paymentId: first, message: "boom" })
@@ -137,7 +236,7 @@ describe("createRunJobs", () => {
 
     const summary = await s.runJobs()
 
-    expect(summary).toEqual({ payments: 1, notifications: 2, errors: 1 })
+    expect(summary).toEqual({ payments: 1, plans: 0, notifications: 2, errors: 1 })
     expect([...s.repos.state.notifications.values()].map((n) => n.status).sort()).toEqual(["pending", "sent"])
   })
 
@@ -164,7 +263,7 @@ describe("createRunJobs", () => {
 
     const summary = await s.runJobs()
 
-    expect(summary).toEqual({ payments: 0, notifications: 2, errors: 1 })
+    expect(summary).toEqual({ payments: 0, plans: 0, notifications: 2, errors: 1 })
     expect(s.log.error).toHaveBeenCalledWith("job.payments.list_failed", { message: "db down" })
   })
 
@@ -192,7 +291,7 @@ describe("createRunJobs", () => {
     expect(paymentListDue).toHaveBeenCalledWith(now, 20)
     expect(notificationListDue).toHaveBeenCalledWith(now, 50)
     expect(order).toEqual(["sync:p1:30000", "sync:p2:30000", "dispatch:n1"])
-    expect(summary).toEqual({ payments: 2, notifications: 1, errors: 0 })
+    expect(summary).toEqual({ payments: 2, plans: 0, notifications: 1, errors: 0 })
   })
 
   it("loga uma linha job.round.done (info) por rodada, com o resumo e a duração", async () => {
@@ -234,7 +333,7 @@ describe("createRunJobs", () => {
 
     const summary = await s.runJobs()
 
-    expect(summary).toEqual({ payments: 1, notifications: 2, errors: 3 })
+    expect(summary).toEqual({ payments: 1, plans: 0, notifications: 2, errors: 3 })
     const text = loggedText(s.log)
     expect(text).toContain("job.payment.error")
     expect(text).toContain("job.notification.error")
@@ -262,11 +361,120 @@ describe("createRunJobs", () => {
 
     const summary = await s.runJobs()
 
-    expect(summary).toEqual({ payments: 0, notifications: 0, errors: 2 })
+    expect(summary).toEqual({ payments: 0, plans: 0, notifications: 0, errors: 2 })
     const text = loggedText(s.log)
     expect(text).not.toContain("ana@example.com")
     expect(text).not.toContain("11999990000")
     expect(text).toContain("job.payments.list_failed")
     expect(text).toContain("job.notifications.list_failed")
+  })
+
+  it("a rodada processa cobranças, depois gerações, depois notificações", async () => {
+    const order: string[] = []
+    const s = await setup(2, {
+      wrapSync: (real) => async (id, opts) => {
+        order.push("sync")
+        return real(id, opts)
+      },
+      wrapGenerate: (real) => async (id) => {
+        order.push("generate")
+        return real(id)
+      },
+      wrapDispatch: (real) => async (id) => {
+        order.push("dispatch")
+        return real(id)
+      },
+    })
+    // A 1ª cobrança ainda precisa do link; a 2ª já foi paga e tem a geração do plano pendente.
+    const generationId = await s.payAndQueueGeneration(s.paymentIds[1], 2)
+
+    const summary = await s.runJobs()
+
+    // 2 notificações payment_link (etapa 1) + 2 plan_ready (criadas na etapa 2), todas na mesma rodada.
+    expect(summary).toEqual({ payments: 1, plans: 1, notifications: 4, errors: 0 })
+    expect(order).toEqual(["sync", "generate", "dispatch", "dispatch", "dispatch", "dispatch"])
+    expect(s.repos.state.planGenerations.get(generationId)!.status).toBe("done")
+    const notifications = [...s.repos.state.notifications.values()]
+    expect(notifications.map((n) => [n.kind, n.status]).sort()).toEqual([
+      ["payment_link", "sent"],
+      ["payment_link", "sent"],
+      ["plan_ready", "sent"],
+      ["plan_ready", "sent"],
+    ])
+  })
+
+  it("no máximo `limits.plans` gerações por rodada", async () => {
+    const s = await setup(4)
+    for (const [i, paymentId] of s.paymentIds.entries()) await s.payAndQueueGeneration(paymentId, i + 1)
+
+    const first = await s.runJobs()
+
+    expect(first.plans).toBe(3)
+    expect(s.generator.generate).toHaveBeenCalledTimes(3)
+    const statuses = () => [...s.repos.state.planGenerations.values()].map((g) => g.status).sort()
+    expect(statuses()).toEqual(["done", "done", "done", "pending"])
+
+    const second = await s.runJobs()
+
+    expect(second.plans).toBe(1)
+    expect(statuses()).toEqual(["done", "done", "done", "done"])
+  })
+
+  it("exceção em uma geração conta em errors e não interrompe as demais", async () => {
+    const s = await setup(2, {
+      wrapGenerate: (real) => async (id) => {
+        if (id === first) throw new Error("boom")
+        return real(id)
+      },
+    })
+    await s.payAndQueueGeneration(s.paymentIds[0], 1)
+    await s.payAndQueueGeneration(s.paymentIds[1], 2)
+    const first = (await s.repos.planGenerations.listDue(new Date(Date.now() + 1000), 10))[0]
+    const second = [...s.repos.state.planGenerations.keys()].find((id) => id !== first)!
+
+    const summary = await s.runJobs()
+
+    // plan_ready só da geração que concluiu (2 canais), enviadas na mesma rodada.
+    expect(summary).toEqual({ payments: 0, plans: 2, notifications: 2, errors: 1 })
+    expect(s.repos.state.planGenerations.get(first)!.status).toBe("pending")
+    expect(s.repos.state.planGenerations.get(second)!.status).toBe("done")
+    expect(s.log.error).toHaveBeenCalledWith("job.plan.error", { generationId: first, message: "boom" })
+  })
+
+  it("falha ao listar gerações conta em errors e a rodada segue para as notificações", async () => {
+    const s = await setup(1, {
+      planGenerations: (r) => ({
+        ...r.planGenerations,
+        listDue: async () => {
+          throw new Error("db down")
+        },
+      }),
+    })
+
+    const summary = await s.runJobs()
+
+    expect(summary).toEqual({ payments: 1, plans: 0, notifications: 2, errors: 1 })
+    expect(s.log.error).toHaveBeenCalledWith("job.plans.list_failed", { message: "db down" })
+  })
+
+  it("lista as gerações com o limite configurado e o resumo do log inclui plans", async () => {
+    const now = new Date("2026-10-07T15:00:00Z")
+    const planListDue = vi.fn(async (_n: Date, _l: number) => ["g1", "g2"])
+    const order: string[] = []
+    const s = await setup(0, {
+      now: () => now,
+      planGenerations: (r) => ({ ...r.planGenerations, listDue: planListDue }),
+      wrapGenerate: () => async (id) => {
+        order.push(`generate:${id}`)
+        return { status: "busy" }
+      },
+    })
+
+    const summary = await s.runJobs()
+
+    expect(planListDue).toHaveBeenCalledWith(now, 3)
+    expect(order).toEqual(["generate:g1", "generate:g2"])
+    expect(summary).toEqual({ payments: 0, plans: 2, notifications: 0, errors: 0 })
+    expect(s.log.info).toHaveBeenCalledWith("job.round.done", { ...summary, durationMs: 0 })
   })
 })
