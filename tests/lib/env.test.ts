@@ -16,6 +16,9 @@ const valid: Record<string, string | undefined> = {
   EVOLUTION_INSTANCE: "instancia",
   ADMIN_ALERT_EMAIL: "admin@example.com",
   JOBS_TOKEN: "x".repeat(32),
+  ASAAS_WEBHOOK_TOKEN: "w".repeat(32),
+  ANTHROPIC_API_KEY: "sk-ant-test",
+  ACCESS_PASSWORD_SECRET: "p".repeat(32),
 }
 
 describe("parseEnv", () => {
@@ -49,5 +52,23 @@ describe("parseEnv", () => {
 
   it("rejeita PAYMENT_AMOUNT com vírgula", () => {
     expect(() => parseEnv({ ...valid, PAYMENT_AMOUNT: "39,90" })).toThrow(/PAYMENT_AMOUNT/)
+  })
+
+  it("aplica os defaults das variáveis novas", () => {
+    const env = parseEnv(valid)
+    expect(env.ANTHROPIC_MODEL).toBe("claude-opus-5-5")
+    expect(env.PLANA_APP_URL).toBe("https://plana.nutritamilivalle.com.br/")
+  })
+
+  it.each(["ASAAS_WEBHOOK_TOKEN", "ACCESS_PASSWORD_SECRET"])("%s com menos de 32 caracteres é inválida", (name) => {
+    expect(() => parseEnv({ ...valid, [name]: "x".repeat(31) })).toThrow(name)
+  })
+
+  it("ANTHROPIC_API_KEY ausente é inválida", () => {
+    expect(() => parseEnv({ ...valid, ANTHROPIC_API_KEY: undefined })).toThrow("ANTHROPIC_API_KEY")
+  })
+
+  it("PLANA_APP_URL precisa ser URL", () => {
+    expect(() => parseEnv({ ...valid, PLANA_APP_URL: "nao-e-url" })).toThrow("PLANA_APP_URL")
   })
 })

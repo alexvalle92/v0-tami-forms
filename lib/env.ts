@@ -30,6 +30,11 @@ const envSchema = z.object({
   JOBS_ENABLED: booleanFlag,
   NOTIFY_EMAIL_ENABLED: booleanFlag,
   NOTIFY_WHATSAPP_ENABLED: booleanFlag,
+  ASAAS_WEBHOOK_TOKEN: z.string().min(32),
+  ANTHROPIC_API_KEY: required,
+  ANTHROPIC_MODEL: z.string().min(1).default("claude-opus-5-5"),
+  ACCESS_PASSWORD_SECRET: z.string().min(32),
+  PLANA_APP_URL: z.string().url().default("https://plana.nutritamilivalle.com.br/"),
 })
 
 export type Env = z.infer<typeof envSchema>
