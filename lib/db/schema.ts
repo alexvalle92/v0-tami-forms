@@ -10,6 +10,7 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  text,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
@@ -36,6 +37,10 @@ export const patients = mysqlTable(
     email: varchar("email", { length: 254 }).notNull(),
     phone: varchar("phone", { length: 13 }).notNull(),
     asaasCustomerId: varchar("asaas_customer_id", { length: 64 }),
+    // Hash scrypt da senha de acesso (formato da seção 8 do spec); nulo até a primeira geração.
+    passwordHash: varchar("password_hash", { length: 255 }),
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
+    passwordSetAt: dateTime("password_set_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -61,6 +66,10 @@ export const payments = mysqlTable(
     nextSyncAt: dateTime("next_sync_at"),
     lockedUntil: dateTime("locked_until"),
     lastError: json("last_error"),
+    // Preenchido uma única vez, no primeiro evento de pagamento do Asaas.
+    paidAt: dateTime("paid_at"),
+    paymentDate: date("payment_date", { mode: "string" }),
+    lastEvent: varchar("last_event", { length: 64 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -121,5 +130,74 @@ export const notifications = mysqlTable(
       t.kind,
     ),
     index("notifications_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
+  ],
+)
+
+// Ledger de idempotência do webhook do Asaas: o corpo do evento NÃO é gravado
+// (traz o token e o final do cartão). A linha nunca muda, por isso sem updated_at.
+export const asaasWebhookEvents = mysqlTable("asaas_webhook_events", {
+  id: varchar("id", { length: 128 }).primaryKey(),
+  event: varchar("event", { length: 64 }).notNull(),
+  asaasPaymentId: varchar("asaas_payment_id", { length: 64 }),
+  paymentId: char("payment_id", { length: 36 }).references(() => payments.id),
+  outcome: mysqlEnum("outcome", ["processed", "ignored"]).notNull(),
+  createdAt: createdAt(),
+})
+
+// Plano alimentar pronto, no formato que o PlanA lê. Só recebe plano concluído.
+export const mealPlans = mysqlTable(
+  "meal_plans",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    patientId: char("patient_id", { length: 36 })
+      .notNull()
+      .references(() => patients.id),
+    // Nulo em planos criados à mão pelo admin do PlanA.
+    paymentId: char("payment_id", { length: 36 }).references(() => payments.id),
+    quizResponseId: char("quiz_response_id", { length: 36 }).references(() => quizResponses.id),
+    title: varchar("title", { length: 200 }).notNull(),
+    description: text("description"),
+    startDate: date("start_date", { mode: "string" }).notNull(),
+    endDate: date("end_date", { mode: "string" }),
+    dueDateNewMealPlan: date("due_date_new_meal_plan", { mode: "string" }),
+    paymentUrlNewMealPlan: varchar("payment_url_new_meal_plan", { length: 500 }),
+    status: varchar("status", { length: 32 }).notNull().default("active"),
+    planData: json("plan_data").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("meal_plans_payment_id_unique").on(t.paymentId),
+    index("meal_plans_patient_id_status_idx").on(t.patientId, t.status),
+  ],
+)
+
+// Fila de trabalho da geração do plano por IA: uma geração por cobrança paga.
+export const planGenerations = mysqlTable(
+  "plan_generations",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    paymentId: char("payment_id", { length: 36 })
+      .notNull()
+      .references(() => payments.id),
+    patientId: char("patient_id", { length: 36 })
+      .notNull()
+      .references(() => patients.id),
+    quizResponseId: char("quiz_response_id", { length: 36 })
+      .notNull()
+      .references(() => quizResponses.id),
+    status: mysqlEnum("status", ["pending", "done", "failed"]).notNull(),
+    mealPlanId: char("meal_plan_id", { length: 36 }).references(() => mealPlans.id),
+    attempts: int("attempts").notNull().default(0),
+    nextAttemptAt: dateTime("next_attempt_at"),
+    lockedUntil: dateTime("locked_until"),
+    lastError: json("last_error"),
+    generation: json("generation"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("plan_generations_payment_id_unique").on(t.paymentId),
+    index("plan_generations_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
   ],
 )

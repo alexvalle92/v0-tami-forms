@@ -27,7 +27,15 @@ describe.skipIf(!url)("repositórios MySQL", () => {
     const connection = await pool.getConnection()
     try {
       await connection.query("SET FOREIGN_KEY_CHECKS=0")
-      for (const table of ["notifications", "quiz_responses", "payments", "patients"]) {
+      for (const table of [
+        "notifications",
+        "plan_generations",
+        "meal_plans",
+        "asaas_webhook_events",
+        "quiz_responses",
+        "payments",
+        "patients",
+      ]) {
         await connection.query(`TRUNCATE TABLE ${table}`)
       }
     } finally {
@@ -135,21 +143,24 @@ describe.skipIf(!url)("repositórios MySQL", () => {
       expect(await repos.payments.listDue(new Date(x.getTime() - 1), 100)).toEqual([])
     })
 
-    it("runMigrations é idempotente: só as 4 tabelas + a de controle do drizzle", async () => {
+    it("runMigrations é idempotente: só as 7 tabelas + a de controle do drizzle", async () => {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name",
       )
       expect(rows.map((r) => r.name)).toEqual([
         "__drizzle_migrations",
+        "asaas_webhook_events",
+        "meal_plans",
         "notifications",
         "patients",
         "payments",
+        "plan_generations",
         "quiz_responses",
       ])
       const [migrations] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT COUNT(*) AS n FROM __drizzle_migrations",
       )
-      expect(Number(migrations[0].n)).toBe(1)
+      expect(Number(migrations[0].n)).toBe(2)
     })
   })
 })

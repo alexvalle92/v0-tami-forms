@@ -8,6 +8,13 @@
       "when": 1791401181262,
       "tag": "0000_secret_giant_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1791752544116,
+      "tag": "0001_glamorous_purifiers",
+      "breakpoints": true
     }
   ]
 }
