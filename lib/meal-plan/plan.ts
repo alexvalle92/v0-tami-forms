@@ -2,7 +2,7 @@
 // O plano é conteúdo de saúde que vai direto ao paciente: `validatePlan` é a rede de segurança
 // (piso calórico, quantidade em toda linha de alimento) e roda em código, nunca na IA.
 
-import { z } from "zod"
+import { z } from "zod/v4"
 import type { PlanData } from "@/lib/db/repos/types"
 import type { Targets } from "./targets"
 
