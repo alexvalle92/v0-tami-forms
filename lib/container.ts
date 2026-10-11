@@ -1,25 +1,30 @@
 import { sql } from "drizzle-orm"
 import { createAsaasClient, type AsaasClient } from "@/lib/asaas/client"
+import { hashPassword, verifyPassword } from "@/lib/access/password-hash"
+import { deriveTempPassword } from "@/lib/access/temp-password"
 import { getDb } from "@/lib/db/client"
 import { createMysqlRepos } from "@/lib/db/repos/mysql"
-import type { Channel, Repos } from "@/lib/db/repos/types"
+import type { Channel, PaymentEventInput, Repos } from "@/lib/db/repos/types"
 import { getEnv, type Env } from "@/lib/env"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
 import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
 import { createExclusiveRunner } from "@/lib/jobs/scheduler"
 import { createLogger, type Logger } from "@/lib/log"
+import { createAnthropicGenerator } from "@/lib/meal-plan/anthropic-generator"
 import { createSmtpEmailSender, type EmailSender } from "@/lib/notify/email"
 import { createEvolutionWhatsAppSender, type WhatsAppSender } from "@/lib/notify/whatsapp"
-import { createAlertAdmin } from "@/lib/services/alert-admin"
+import { createAlertAdmin, createNoticeAdmin, type NoticeAdmin } from "@/lib/services/alert-admin"
 import { createDispatchForQuizResponse } from "@/lib/services/dispatch-for-quiz-response"
 import { createDispatchNotification, type DispatchNotification } from "@/lib/services/dispatch-notification"
+import { createGeneratePlan, createRunPlanGeneration } from "@/lib/services/generate-plan"
+import { createHandleAsaasEvent, type HandledEvent } from "@/lib/services/handle-asaas-event"
 import { createSubmitQuiz, type SubmitQuiz } from "@/lib/services/submit-quiz"
 import { createSyncPayment, type SyncPayment } from "@/lib/services/sync-payment"
 
 const SUBMIT_REQUEST_BUDGET_MS = 20_000
 const JOB_PAYMENT_DEADLINE_MS = 30_000
-const JOB_LIMITS = { payments: 20, notifications: 50 }
+const JOB_LIMITS = { payments: 20, plans: 3, notifications: 50 }
 const SUBMIT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }
 
 export type Container = {
@@ -34,6 +39,12 @@ export type Container = {
   syncPayment: SyncPayment
   dispatchNotification: DispatchNotification
   dispatchForQuizResponse: (quizResponseId: string) => Promise<void>
+  /** Aplica um evento do webhook do Asaas (usado por `POST /api/webhooks/asaas`). */
+  handleAsaasEvent: (e: PaymentEventInput) => Promise<HandledEvent>
+  /** Gera o plano e despacha as notificações do envio; nunca lança. */
+  runPlanGeneration: (generationId: string) => Promise<void>
+  /** Aviso ao admin de estorno/chargeback ou de pagamento sem envio do quiz; nunca lança. */
+  noticeAdmin: NoticeAdmin
   /** Rodada exclusiva do job: o agendador e `POST /api/jobs/run` usam este mesmo runner. */
   runner: () => Promise<"ran" | "skipped">
   retryFailed: (t: RetryTarget) => Promise<{ reopened: number }>
@@ -57,7 +68,7 @@ function buildContainer(): Container {
   const log = createLogger()
   const db = getDb()
   const repos = createMysqlRepos(db)
-  const { payments, notifications, submissions } = repos
+  const { payments, notifications, submissions, webhooks, planGenerations } = repos
   const now = () => new Date()
   const channels = enabledChannels(env)
 
@@ -75,6 +86,10 @@ function buildContainer(): Container {
     instance: env.EVOLUTION_INSTANCE,
   })
   const alertAdmin = createAlertAdmin({ email, to: env.ADMIN_ALERT_EMAIL, log })
+  const noticeAdmin = createNoticeAdmin({ email, to: env.ADMIN_ALERT_EMAIL, log })
+  // O cliente do SDK da Anthropic só é criado na primeira geração: montar o container não toca a rede.
+  const generator = createAnthropicGenerator({ apiKey: env.ANTHROPIC_API_KEY, model: env.ANTHROPIC_MODEL })
+  const tempPassword = (patientId: string) => deriveTempPassword(env.ACCESS_PASSWORD_SECRET, patientId)
 
   const syncPayment = createSyncPayment({
     payments,
@@ -93,6 +108,8 @@ function buildContainer(): Container {
     log,
     now,
     sleep,
+    access: { tempPassword, verifyPassword },
+    appUrl: env.PLANA_APP_URL,
   })
   const submitQuiz = createSubmitQuiz({
     submissions,
@@ -104,11 +121,25 @@ function buildContainer(): Container {
     config: { amount: env.PAYMENT_AMOUNT, channels, requestBudgetMs: SUBMIT_REQUEST_BUDGET_MS },
   })
   const dispatchForQuizResponse = createDispatchForQuizResponse({ notifications, dispatchNotification, log })
+  const generatePlan = createGeneratePlan({
+    planGenerations,
+    generator,
+    hashPassword,
+    tempPassword,
+    alertAdmin,
+    log,
+    now,
+    config: { channels },
+  })
+  const runPlanGeneration = createRunPlanGeneration({ generatePlan, dispatchForQuizResponse, log })
+  const handleAsaasEvent = createHandleAsaasEvent({ webhooks, log, now })
 
   const runJobs = createRunJobs({
     payments,
+    planGenerations,
     notifications,
     syncPayment,
+    generatePlan,
     dispatchNotification,
     log,
     now,
@@ -129,8 +160,11 @@ function buildContainer(): Container {
     syncPayment,
     dispatchNotification,
     dispatchForQuizResponse,
+    handleAsaasEvent,
+    runPlanGeneration,
+    noticeAdmin,
     runner,
-    retryFailed: createRetryFailed({ payments, notifications }),
+    retryFailed: createRetryFailed({ payments, notifications, planGenerations }),
     rateLimiter: createRateLimiter(SUBMIT_RATE_LIMIT),
     ping: async () => {
       await db.execute(sql`SELECT 1`)

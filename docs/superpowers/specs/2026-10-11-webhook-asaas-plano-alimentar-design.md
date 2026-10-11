@@ -281,8 +281,8 @@ Peso em kg e altura em cm. Os pisos, o déficit de 770 kcal e o fator 1,2 ficam 
 - **Mensagem do usuário:** os 17 parâmetros, no mesmo formato do n8n, seguidos de um bloco "Metas calculadas" com TMB, GET, meta calórica e faixa de proteína, e a instrução de usar esses valores sem recalcular.
 - **Saída estruturada:** o schema é montado com `zodOutputFormat` (`output_config.format`) e a resposta é lida e validada pelo próprio adaptador (`create` do SDK; `JSON.parse` e `safeParse` do texto após o último bloco `fallback`). O schema pede `meals[] { name, time, foods, calories (número) }`, `calories` (número) e `observations`.
 - **Parâmetros:** modelo de `ANTHROPIC_MODEL`; raciocínio adaptativo (padrão do modelo); `output_config.effort = "high"`; `max_tokens = 16000`; tempo limite de 120 s; uma repetição automática do SDK.
-- **Fallback:** `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`). Se o modelo recusar o pedido por filtro de segurança, a própria API refaz em outro modelo. O parâmetro exige o endpoint beta do SDK; se o helper de saída estruturada desse endpoint não o aceitar, a saída estruturada tem prioridade e o fallback fica de fora.
-- **Resposta sem plano** (`stop_reason` igual a `refusal` ou `max_tokens`, ou `parsed_output` nulo) → erro temporário.
+- **Fallback:** `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`). Se o modelo recusar o pedido por filtro de segurança, a própria API refaz em outro modelo. O parâmetro exige o endpoint beta do SDK: o adaptador chama `client.beta.messages.create` com `output_config.format` e `fallbacks: "default"` juntos, e lê o plano no texto que vem depois do último bloco `fallback` (o que veio antes é do modelo que recusou), validando-o com o schema.
+- **Resposta sem plano** (`stop_reason` igual a `refusal` ou `max_tokens`, ou texto que não é JSON do schema) → erro temporário.
 
 **Classificação de erros** (o adaptador converte os erros do SDK em um erro de domínio com `transient`):
 

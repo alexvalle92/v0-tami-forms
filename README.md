@@ -14,6 +14,16 @@ O que acontece quando a pessoa envia o formulário:
 
 E-mail e WhatsApp com o link são enviados automaticamente, assim que a cobrança existe. Se um envio falhar, o job tenta de novo.
 
+O que acontece depois do pagamento:
+
+1. O Asaas avisa o app pelo webhook (seção "Webhook do Asaas"). O app registra o pagamento no banco.
+2. O app calcula as metas de calorias e proteína e pede à IA (Anthropic) o plano alimentar a partir das respostas do quiz. Nome, CPF, e-mail e telefone nunca vão para a IA.
+3. O plano é gravado e passa a ser o plano ativo da pessoa. Se ela já tinha um plano ativo, o antigo passa para `completed`.
+4. Quem ainda não tem senha do PlanA recebe uma senha temporária. Quem já tem continua com a que tem.
+5. O app envia os dados de acesso por e-mail e WhatsApp. Se a IA ou um envio falhar, o job repete sozinho.
+
+Tudo isso leva poucos minutos e não depende de ninguém. Os dados do plano ficam no MySQL; quem lê é o PlanA (seção "Integração com o PlanA").
+
 ## 2. Requisitos
 
 - Node 24.
@@ -68,8 +78,18 @@ Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e l
 | `JOBS_ENABLED` | não | `true` (padrão) liga o job de fundo; `false` desliga |
 | `NOTIFY_EMAIL_ENABLED` | não | `true` (padrão) envia e-mail; `false` desliga o canal |
 | `NOTIFY_WHATSAPP_ENABLED` | não | `true` (padrão) envia WhatsApp; `false` desliga o canal |
+| `ASAAS_WEBHOOK_TOKEN` | sim | Segredo de pelo menos 32 caracteres, aleatório. É o mesmo valor cadastrado no painel do Asaas (seção "Webhook do Asaas"). **Não** use a chave de API do Asaas aqui |
+| `ANTHROPIC_API_KEY` | sim | Chave da API da Anthropic, usada para gerar o plano alimentar |
+| `ANTHROPIC_MODEL` | não | Modelo da IA. Padrão `claude-opus-5-5`. Para usar o padrão, **remova** a variável: `ANTHROPIC_MODEL=` em branco é inválido |
+| `ACCESS_PASSWORD_SECRET` | sim | Segredo de pelo menos 32 caracteres, aleatório. Dele sai a senha temporária de cada paciente. **Não troque depois** (veja abaixo) |
+| `PLANA_APP_URL` | não | Endereço do PlanA que vai nas mensagens. Padrão `https://plana.nutritamilivalle.com.br/` |
 
 Para gerar um `JOBS_TOKEN`: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+
+Use o mesmo comando para gerar `ASAAS_WEBHOOK_TOKEN` e `ACCESS_PASSWORD_SECRET`, um valor diferente para cada.
+
+- **`ACCESS_PASSWORD_SECRET` não deve ser trocado depois que o app entrou em uso.** A senha temporária de cada paciente é calculada a partir dele. Se mudar, as senhas temporárias que ainda não foram trocadas deixam de funcionar, e a mensagem de "plano novo" passa a ser enviada no lugar da de primeiro acesso.
+- **`ASAAS_WEBHOOK_TOKEN` não pode ser a chave de API do Asaas** (`ASAAS_API_KEY`). O Asaas não aceita, e o token trafega em cada chamada do webhook.
 
 ## 5. Deploy no Easypanel (a partir do GitHub, sem Docker)
 
@@ -86,6 +106,37 @@ Para gerar um `JOBS_TOKEN`: `node -e "console.log(require('crypto').randomBytes(
 
 O app aplica as migrations do banco **a cada inicialização**. Se a configuração estiver inválida ou o banco inacessível, o processo encerra e o log diz o motivo.
 
+## Webhook do Asaas
+
+É por ele que o Asaas avisa o app de que a cobrança foi paga. Sem o webhook cadastrado, o plano não é gerado.
+
+**URL:** `https://SEU-DOMINIO/api/webhooks/asaas` (troque `SEU-DOMINIO` pelo endereço do app).
+
+**Como cadastrar** (confira no painel do Asaas do ambiente certo: sandbox para testes, produção só depois da seção "Integração com o PlanA"). Os nomes abaixo vêm da documentação do Asaas (<https://docs.asaas.com/docs/criar-novo-webhook-pela-aplicacao-web>); o painel pode mostrar os rótulos um pouco diferentes:
+
+1. No painel, abra `Menu do usuário > Integrações > Webhooks` e clique em **Criar Webhook**.
+2. Preencha **Nome** (qualquer um, por exemplo `tami-forms`), **URL** (a de cima) e **E-mail** (quem deve receber os avisos de falha do Asaas).
+3. Em **Auth Token**, cole o valor de `ASAAS_WEBHOOK_TOKEN`. O Asaas exige de 32 a 255 caracteres, sem espaços, e não aceita uma chave de API. Se preferir, use o botão **Gerar token** do Asaas e copie o valor gerado para o `ASAAS_WEBHOOK_TOKEN` do app. O token precisa ser **igual** nos dois lados; se for diferente, o app responde 401 e nada acontece.
+4. Deixe o webhook ativado (**Enabled**). **Send Type** (tipo de envio): qualquer um serve, o app não depende da ordem dos eventos.
+5. Marque os eventos de cobrança (`PAYMENT_*`) abaixo e salve.
+
+**Eventos a marcar:**
+
+| Grupo | Eventos | O que o app faz |
+|---|---|---|
+| `paid` (pago) | `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED` | Registra o pagamento e inicia a geração do plano |
+| `reversal` (reversão) | `PAYMENT_REFUNDED`, `PAYMENT_PARTIALLY_REFUNDED`, `PAYMENT_REFUND_IN_PROGRESS`, `PAYMENT_CHARGEBACK_REQUESTED`, `PAYMENT_CHARGEBACK_DISPUTE`, `PAYMENT_AWAITING_CHARGEBACK_REVERSAL`, `PAYMENT_RECEIVED_IN_CASH_UNDONE` | Atualiza o status da cobrança e avisa `ADMIN_ALERT_EMAIL`. O plano e o acesso não mudam |
+| `pre_payment` (antes de pagar) | `PAYMENT_OVERDUE`, `PAYMENT_DELETED`, `PAYMENT_RESTORED` | Atualiza o status, só se a cobrança ainda não foi paga |
+
+Outros eventos, se marcados, são aceitos e ignorados. Cartão de crédito: o Asaas manda `PAYMENT_CONFIRMED` na hora e `PAYMENT_RECEIVED` cerca de 32 dias depois; o plano é gerado uma única vez, no primeiro.
+
+**Se a fila for pausada.** Depois de 15 falhas seguidas de entrega, o Asaas interrompe a fila desse webhook e manda e-mail avisando. Os eventos continuam sendo gerados e ficam guardados por **14 dias** (depois disso são apagados). Para recuperar:
+
+1. Veja nos **Logs de Webhooks** do Asaas por que as entregas falharam e corrija (app fora do ar, token diferente, URL errada).
+2. Em `Menu do usuário > Integrações > Webhooks`, reative a fila da configuração interrompida. Os eventos guardados são reenviados. O app trata reenvios com segurança: o mesmo evento nunca gera dois planos nem duas mensagens.
+
+O app responde `200` mesmo para corpo ilegível, justamente para não pausar a fila à toa. Só responde `401` (token errado ou ausente) e `500` (falha do banco, quando pede reenvio).
+
 ## 6. Operação
 
 ### O job de fundo
@@ -93,9 +144,10 @@ O app aplica as migrations do banco **a cada inicialização**. Se a configuraç
 A cada 2 minutos o app executa uma rodada que:
 
 - termina as cobranças que o Asaas não conseguiu criar antes (até 20 por rodada);
-- envia os e-mails e WhatsApps pendentes (até 50 por rodada).
+- gera os planos alimentares que ficaram pendentes (até 3 por rodada). Normalmente o plano sai logo depois do pagamento; esta etapa é a rede de segurança para quando a geração falhou ou o app reiniciou no meio;
+- envia os e-mails e WhatsApps pendentes (até 50 por rodada). Os da etapa anterior já saem na mesma rodada.
 
-Quando uma tentativa falha, a espera cresce: 2, 4, 8, 16 e 32 minutos; depois, 60 minutos entre tentativas. O limite é de **8 tentativas** por cobrança e **5** por mensagem. Esgotado o limite, o item vira falha definitiva e um e-mail é enviado para `ADMIN_ALERT_EMAIL`.
+Quando uma tentativa falha, a espera cresce: 2, 4, 8, 16 e 32 minutos; depois, 60 minutos entre tentativas. O limite é de **8 tentativas** por cobrança, **5** por geração de plano (esperas de 2, 4, 8 e 16 minutos) e **5** por mensagem. Esgotado o limite, o item vira falha definitiva e um e-mail é enviado para `ADMIN_ALERT_EMAIL`.
 
 Erros que não adiantam repetir (por exemplo, o Asaas recusar os dados) viram falha definitiva logo na primeira vez.
 
@@ -109,9 +161,12 @@ FROM payments WHERE status = 'ASAAS_FAILED';
 
 SELECT id, channel, kind, attempts, last_error, created_at, updated_at
 FROM notifications WHERE status = 'failed';
+
+SELECT id, attempts, last_error, created_at
+FROM plan_generations WHERE status = 'failed';
 ```
 
-Atenção: `last_error` pode conter o texto da resposta do Asaas. Não cole esse conteúdo em chats, issues ou prints.
+Atenção: `last_error` pode conter o texto da resposta do Asaas. Não cole esse conteúdo em chats, issues ou prints. O `last_error` das gerações de plano traz só a etapa e a mensagem do erro, nunca as respostas do quiz nem o conteúdo do plano.
 
 ### Rodar o job na mão e reabrir falhas
 
@@ -124,7 +179,7 @@ curl -X POST https://SEU-DOMINIO/api/jobs/run \
   -H "Authorization: Bearer SEU_JOBS_TOKEN"
 ```
 
-Reabrir uma falha. O corpo tem 3 formas:
+Reabrir uma falha. O corpo tem 4 formas:
 
 ```bash
 # uma cobrança
@@ -133,28 +188,67 @@ curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Content-Type: application/json" \
   -d '{"paymentId":"ID_DA_COBRANCA"}'
 
+# uma geração de plano (o id vem da consulta de plan_generations)
+curl -X POST https://SEU-DOMINIO/api/jobs/retry \
+  -H "Authorization: Bearer SEU_JOBS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"planGenerationId":"ID_DA_GERACAO"}'
+
 # uma mensagem
 curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Authorization: Bearer SEU_JOBS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"notificationId":"ID_DA_MENSAGEM"}'
 
-# todas as falhas de uma vez
+# todas as falhas de uma vez (cobranças, gerações de plano e mensagens)
 curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Authorization: Bearer SEU_JOBS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"allFailed":true}'
 ```
 
-A resposta traz `reopened`, o número de itens reabertos. Token errado ou ausente responde 401.
+A resposta traz `reopened`, o número de itens reabertos. Token errado ou ausente responde 401. Reabrir uma geração de plano zera as tentativas dela.
 
 ### O que fazer depois de um alerta
 
 1. Leia o `last_error` do item (consultas acima). Ele diz a etapa e o erro.
-2. Corrija a causa: chave do Asaas, dado do paciente, SMTP, Evolution API.
-3. Chame `/api/jobs/retry` com o `id` do item (ou `allFailed`).
+2. Corrija a causa: chave do Asaas, chave da Anthropic, dado do paciente, SMTP, Evolution API.
+3. Chame `/api/jobs/retry` com o `id` do item, cobrança, mensagem ou geração de plano (ou `allFailed`, que reabre os três tipos).
 
 Depois do retry, o app dispara uma rodada logo em seguida. Se já houver uma rodada em andamento, o reprocessamento espera a próxima: até 2 minutos. Com `JOBS_ENABLED=false`, espera até a próxima chamada manual de `/api/jobs/run`.
+
+## Integração com o PlanA
+
+O app grava o plano e a senha no MySQL; o PlanA (repositório `dieta-app`) é quem mostra o plano para a pessoa. O PlanA **não** é alterado por este projeto. Para quem pagou conseguir entrar e ver o plano, a refatoração dele precisa cobrir:
+
+| Item | Hoje no PlanA | O que passa a valer |
+|---|---|---|
+| Banco | PostgreSQL (Supabase) | Este MySQL: tabelas `patients` e `meal_plans` |
+| Senha | SHA-512 em base64, coluna `patients.password` | scrypt no formato abaixo, coluna `patients.password_hash` |
+| Troca de senha | Grava SHA-512 | Grava scrypt e põe `must_change_password = false` |
+| Primeiro acesso | Não força a troca | Opcional: forçar a troca quando `must_change_password = true` |
+| Login por CPF | Compara o valor digitado | `patients.cpf` tem só dígitos (11) |
+| Login por e-mail | E-mail único | Aqui o e-mail não é único; a identidade é o CPF |
+| Planos | Status `active`, `completed`, `cancelled`; só `active` abre | Igual. O app marca `completed` no plano substituído |
+| Ids | UUID nativo | `CHAR(36)` |
+
+**Formato do hash** em `patients.password_hash`:
+
+```
+scrypt$16384$8$1$<salt>$<hash>
+```
+
+- `16384`, `8` e `1` são `N`, `r` e `p` do scrypt.
+- `<salt>` (16 bytes) e `<hash>` (32 bytes) são **base64 padrão, com padding `=`**. O separador é `$`.
+- A verificação deve comparar em tempo constante e ler `N`, `r` e `p` do próprio valor gravado.
+
+**Campos que o PlanA usa:**
+
+- `patients.must_change_password`: o app grava `true` ao criar a senha temporária. O PlanA deve zerar quando a pessoa trocar a senha. O app não depende desse campo para escolher a mensagem: ele compara a senha gravada com a temporária.
+- `meal_plans.status`: `active`, `completed` ou `cancelled`. O app cria o plano novo como `active` e passa os outros planos `active` da mesma pessoa para `completed`. Quem só tem plano `cancelled` ou `completed` não vê plano.
+- `meal_plans.plan_data` (JSON): `meals[]` (`name`, `time`, `foods` com uma linha por alimento, `calories` em texto), `calories` (número) e `observations`.
+
+**Dependência para produção:** o webhook de **produção** só deve ser cadastrado no Asaas depois que o PlanA estiver lendo este MySQL e validando o novo hash. Até lá, tudo é testado no sandbox. Se o webhook de produção for cadastrado antes, as pessoas pagam e recebem uma senha que o PlanA ainda não sabe validar.
 
 ## 7. Segurança
 
@@ -189,10 +283,17 @@ Faça num deploy de teste no Easypanel, com `ASAAS_ENV=sandbox` e a chave do san
 - [ ] **Desfecho 3:** pare o MySQL e envie o quiz. Aparece o erro com "Tentar novamente". Suba o banco, clique em "Tentar novamente" e confira que nada ficou duplicado.
 - [ ] **E-mail e WhatsApp:** os dois chegam, com o link correto, nos desfechos 1 e 2.
 - [ ] **Alerta de falha e retry:** confira que o e-mail de alerta do desfecho 2 chegou, que o `last_error` explica a causa e que o `/api/jobs/retry` reabriu o item (`reopened: 1`).
+- [ ] **Webhook e pagamento de teste:** cadastre o webhook no sandbox (seção "Webhook do Asaas") e pague uma cobrança de teste. Confira: o evento chegou (log `webhook.asaas.received`), a cobrança ficou com o status pago e `paid_at` preenchido, existe uma linha `done` em `plan_generations`, o plano `active` em `meal_plans`, o `password_hash` do paciente preenchido, e o e-mail e o WhatsApp de primeiro acesso chegaram com a senha temporária.
+- [ ] **Mesmo evento duas vezes:** reenvie o mesmo evento (por exemplo, pausando e reativando a fila do Asaas, ou repetindo a chamada com `curl` e o mesmo `id` de evento). O log mostra `webhook.asaas.duplicate` e não nasce segundo plano nem segunda mensagem.
+- [ ] **Token errado:** chame o webhook com um token errado (`curl -i -X POST https://SEU-DOMINIO/api/webhooks/asaas -H "asaas-access-token: errado" -d '{}'`). A resposta é 401 e nada muda no banco.
+- [ ] **Estorno:** estorne a cobrança de teste no sandbox. O status da cobrança muda, o e-mail `[tami-forms] Pagamento revertido` chega em `ADMIN_ALERT_EMAIL`, e o plano e a senha continuam como estavam.
+- [ ] **Falha da IA e retry:** com uma `ANTHROPIC_API_KEY` inválida, pague outra cobrança de teste. A chave recusada (401) é falha definitiva na hora: `plan_generations` fica `failed`, o alerta chega (`kind = meal_plan`) e nenhuma mensagem de acesso é enviada. Corrija a chave, reinicie o app e reabra com `/api/jobs/retry` (`planGenerationId`). O plano é gerado e as mensagens saem.
+- [ ] **Plano com a nutricionista:** mostre o plano gerado para a nutricionista e confira a meta de calorias, a faixa de proteína e as linhas de alimentos (cada linha com quantidade). Ela também deve confirmar a fórmula e os pisos (seção 10).
 - [ ] **Evolution API:** confirme que o formato usado funciona na sua instância. O app faz `POST /message/sendText/{instância}` com o corpo `{ number, text }`, que é o formato da v2. Se a sua versão for outra, o WhatsApp falhará nesse teste.
-- [ ] Só então suba o deploy de produção com `ASAAS_ENV=production`, a chave **nova** de produção e um **banco novo e vazio** (nunca o banco usado no sandbox). Se precisar reaproveitar o banco do teste, apague antes o conteúdo das tabelas `notifications`, `quiz_responses`, `payments` e `patients`, nessa ordem.
+- [ ] Só então suba o deploy de produção com `ASAAS_ENV=production`, a chave **nova** de produção e um **banco novo e vazio** (nunca o banco usado no sandbox). Se precisar reaproveitar o banco do teste, apague antes o conteúdo das tabelas `asaas_webhook_events`, `notifications`, `plan_generations`, `meal_plans`, `quiz_responses`, `payments` e `patients`, nessa ordem.
 
 ## 10. Notas
 
 - O CPF ainda é pedido no formulário. Existe uma alternativa, deixar a pessoa informar o CPF na página de pagamento do Asaas (Checkout), descrita como experimento futuro na seção 12 do documento de design. Antes de decidir, meça o abandono na etapa do CPF.
+- A fórmula das metas (Harris-Benedict original, 1919) e os pisos de calorias (1.200 feminino e 1.500 masculino) em `lib/meal-plan/targets.ts` ainda precisam ser confirmados pela nutricionista. Trocar é mudar constantes naquele arquivo.
 - Documentos de design e plano de implementação: `docs/superpowers/specs` e `docs/superpowers/plans`.
