@@ -5,24 +5,32 @@ import type {
   NewSubmission,
   NotificationRepo,
   NotificationView,
+  PaymentEventInput,
+  PaymentEventResult,
   PaymentRepo,
   PaymentView,
+  PlanData,
   Repos,
   SubmissionRef,
   SubmissionRepo,
+  WebhookRepo,
 } from "@/lib/db/repos/types"
 
 // Fake em memória dos repositórios, com o relógio real. Um Map por tabela.
-// As operações que precisam ser atômicas (create) não têm `await` no meio: o JavaScript
-// só alterna entre chamadas concorrentes em um `await`, então o efeito é o do UNIQUE do MySQL.
+// As operações que precisam ser atômicas (create, applyPaymentEvent) não têm `await` no meio:
+// o JavaScript só alterna entre chamadas concorrentes em um `await`, então o efeito é o do
+// UNIQUE e da transação do MySQL.
 
-type PatientRow = {
+export type PatientRow = {
   id: string
   name: string
   cpf: string
   email: string
   phone: string
   asaasCustomerId: string | null
+  passwordHash: string | null
+  mustChangePassword: boolean
+  passwordSetAt: Date | null
 }
 
 export type PaymentRow = {
@@ -40,6 +48,10 @@ export type PaymentRow = {
   nextSyncAt: Date | null
   lockedUntil: Date | null
   lastError: LastError | null
+  paidAt: Date | null
+  /** YYYY-MM-DD */
+  paymentDate: string | null
+  lastEvent: string | null
 }
 
 type QuizResponseRow = {
@@ -67,13 +79,57 @@ export type NotificationRow = {
   sentAt: Date | null
 }
 
+/** Ledger de idempotência do webhook (o corpo do evento não é guardado). */
+export type WebhookEventRow = {
+  id: string
+  event: string
+  asaasPaymentId: string | null
+  paymentId: string | null
+  outcome: "processed" | "ignored"
+}
+
+export type PlanGenerationRow = {
+  id: string
+  paymentId: string
+  patientId: string
+  quizResponseId: string
+  status: "pending" | "done" | "failed"
+  mealPlanId: string | null
+  attempts: number
+  nextAttemptAt: Date | null
+  lockedUntil: Date | null
+  lastError: LastError | null
+  generation: Record<string, unknown> | null
+}
+
+export type MealPlanRow = {
+  id: string
+  patientId: string
+  paymentId: string | null
+  quizResponseId: string | null
+  title: string
+  description: string | null
+  startDate: string
+  endDate: string | null
+  dueDateNewMealPlan: string | null
+  paymentUrlNewMealPlan: string | null
+  status: string
+  planData: PlanData
+}
+
+type Processed = Extract<PaymentEventResult, { outcome: "processed" }>
+
 const isLocked = (row: { lockedUntil: Date | null }, now: Date) =>
   row.lockedUntil !== null && row.lockedUntil.getTime() > now.getTime()
 
 /** Visão somente leitura das linhas guardadas, só para testes (inclui `lastError`, `status` etc.). */
 export type MemoryState = {
+  patients: ReadonlyMap<string, Readonly<PatientRow>>
   payments: ReadonlyMap<string, Readonly<PaymentRow>>
   notifications: ReadonlyMap<string, Readonly<NotificationRow>>
+  webhookEvents: ReadonlyMap<string, Readonly<WebhookEventRow>>
+  planGenerations: ReadonlyMap<string, Readonly<PlanGenerationRow>>
+  mealPlans: ReadonlyMap<string, Readonly<MealPlanRow>>
 }
 
 export function createMemoryRepos(): Repos & { state: MemoryState } {
@@ -81,6 +137,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
   const payments = new Map<string, PaymentRow>()
   const quizResponses = new Map<string, QuizResponseRow>()
   const notifications = new Map<string, NotificationRow>()
+  const webhookEvents = new Map<string, WebhookEventRow>()
+  const planGenerations = new Map<string, PlanGenerationRow>()
+  const mealPlans = new Map<string, MealPlanRow>()
 
   const patientByCpf = (cpf: string) => [...patients.values()].find((p) => p.cpf === cpf)
   const quizResponseBySubmission = (submissionId: string) =>
@@ -103,7 +162,14 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
         patient.email = s.patient.email
         patient.phone = s.patient.phone
       } else {
-        patient = { id: randomUUID(), asaasCustomerId: null, ...s.patient }
+        patient = {
+          id: randomUUID(),
+          asaasCustomerId: null,
+          passwordHash: null,
+          mustChangePassword: false,
+          passwordSetAt: null,
+          ...s.patient,
+        }
         patients.set(patient.id, patient)
       }
       const patientId = patient.id
@@ -137,6 +203,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
           nextSyncAt: now,
           lockedUntil: null,
           lastError: null,
+          paidAt: null,
+          paymentDate: null,
+          lastEvent: null,
         }
         payments.set(payment.id, payment)
       }
@@ -167,7 +236,15 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
         asaasId: p.asaasId,
         paymentUrl: p.paymentUrl,
         syncAttempts: p.syncAttempts,
-        patient: { ...patient },
+        paidAt: p.paidAt,
+        patient: {
+          id: patient.id,
+          name: patient.name,
+          cpf: patient.cpf,
+          email: patient.email,
+          phone: patient.phone,
+          asaasCustomerId: patient.asaasCustomerId,
+        },
       }
       return view
     },
@@ -397,10 +474,110 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
     },
   }
 
+  const webhooks: WebhookRepo = {
+    // Sem `await`: tudo acontece de forma atômica, como a transação do MySQL.
+    async applyPaymentEvent(e: PaymentEventInput, now: Date): Promise<PaymentEventResult> {
+      // 1. Idempotência pelo id do evento.
+      if (webhookEvents.has(e.eventId)) return { outcome: "duplicate" }
+      const record = (outcome: WebhookEventRow["outcome"], paymentId: string | null) => {
+        webhookEvents.set(e.eventId, {
+          id: e.eventId,
+          event: e.event,
+          asaasPaymentId: e.asaasPaymentId,
+          paymentId,
+          outcome,
+        })
+      }
+
+      // 2. Evento fora das regras.
+      if (e.group === "other") {
+        record("ignored", null)
+        return { outcome: "ignored", reason: "event_not_handled" }
+      }
+
+      // 3. Cobrança pelo externalReference.
+      const p = e.externalReference === null ? undefined : payments.get(e.externalReference)
+      if (!p) {
+        record("ignored", null)
+        return { outcome: "ignored", reason: "unknown_payment" }
+      }
+
+      // 4. asaas_id: divergente é ignorado; nulo é preenchido, se nenhuma outra cobrança o usa.
+      const asaasIdTaken =
+        p.asaasId === null &&
+        e.asaasPaymentId !== null &&
+        [...payments.values()].some((o) => o.asaasId === e.asaasPaymentId)
+      if ((p.asaasId !== null && p.asaasId !== e.asaasPaymentId) || asaasIdTaken) {
+        record("ignored", null)
+        return { outcome: "ignored", reason: "asaas_id_mismatch" }
+      }
+
+      // 7. Antes de pagar: não mexe em cobrança já paga.
+      if (e.group === "pre_payment" && p.paidAt !== null) {
+        record("ignored", p.id)
+        return { outcome: "ignored", reason: "already_paid" }
+      }
+
+      if (p.asaasId === null) p.asaasId = e.asaasPaymentId
+      p.lastEvent = e.event
+      let pendingGeneration: Processed["pendingGeneration"] = null
+      let missingQuizResponse = false
+
+      if (e.group === "paid") {
+        // 5. Pago.
+        p.status = e.status ?? (e.event === "PAYMENT_CONFIRMED" ? "CONFIRMED" : "RECEIVED")
+        if (p.paidAt === null) p.paidAt = now
+        p.paymentDate = e.paymentDate ?? p.paymentDate
+        p.billingType = e.billingType ?? p.billingType
+        p.invoiceNumber = e.invoiceNumber ?? p.invoiceNumber
+
+        let generation = [...planGenerations.values()].find((g) => g.paymentId === p.id)
+        if (!generation) {
+          // Envio mais recente da cobrança (Map preserva a ordem de inserção).
+          const latest = [...quizResponses.values()].filter((q) => q.paymentId === p.id).pop()
+          if (latest) {
+            generation = {
+              id: randomUUID(),
+              paymentId: p.id,
+              patientId: p.patientId,
+              quizResponseId: latest.id,
+              status: "pending",
+              mealPlanId: null,
+              attempts: 0,
+              nextAttemptAt: now,
+              lockedUntil: null,
+              lastError: null,
+              generation: null,
+            }
+            planGenerations.set(generation.id, generation)
+          } else {
+            missingQuizResponse = true
+          }
+        }
+        if (generation?.status === "pending") {
+          pendingGeneration = { id: generation.id, quizResponseId: generation.quizResponseId }
+        }
+      } else {
+        // 6. Reversão e 7. antes de pagar: só o status (sem status no evento, mantém o atual).
+        p.status = e.status ?? p.status
+      }
+
+      record("processed", p.id)
+      return {
+        outcome: "processed",
+        paymentId: p.id,
+        patientName: patients.get(p.patientId)!.name,
+        pendingGeneration,
+        missingQuizResponse,
+      }
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
     notifications: notificationsRepo,
-    state: { payments, notifications },
+    webhooks,
+    state: { patients, payments, notifications, webhookEvents, planGenerations, mealPlans },
   }
 }

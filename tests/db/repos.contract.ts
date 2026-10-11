@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
-import type { NewSubmission, Repos, SubmissionRef } from "@/lib/db/repos/types"
+import type {
+  NewSubmission,
+  PaymentEventGroup,
+  PaymentEventInput,
+  PaymentEventResult,
+  Repos,
+  SubmissionRef,
+} from "@/lib/db/repos/types"
 
 // Contrato compartilhado: roda contra o fake em memória e contra o MySQL real.
 // Usa só as interfaces públicas e dados únicos por teste (o banco real pode ser compartilhado).
@@ -73,6 +80,52 @@ const syncError = (step: string) => ({
   attempt: 1,
   at: new Date().toISOString(),
 })
+
+/** Envio novo com a cobrança já criada no Asaas (`PENDING`, reaproveitável até 14/10). */
+async function syncedPayment(repos: Repos, over: SubOverrides = {}) {
+  const sub = newSub(over)
+  const ref = expectRef(await repos.submissions.create(sub))
+  const data = synced("PENDING", "2026-10-14")
+  await repos.payments.markSynced(ref.paymentId, data)
+  return { ref, asaasId: data.asaasId, sub }
+}
+
+const EVENT_OF: Record<PaymentEventGroup, { event: string; status: string }> = {
+  paid: { event: "PAYMENT_RECEIVED", status: "RECEIVED" },
+  reversal: { event: "PAYMENT_REFUNDED", status: "REFUNDED" },
+  pre_payment: { event: "PAYMENT_OVERDUE", status: "OVERDUE" },
+  other: { event: "PAYMENT_CREATED", status: "PENDING" },
+}
+
+/** Evento do grupo pedido, com `eventId` aleatório. */
+function ev(group: PaymentEventGroup, over: Partial<PaymentEventInput> = {}): PaymentEventInput {
+  return {
+    eventId: `evt_${randomUUID()}`,
+    group,
+    ...EVENT_OF[group],
+    asaasPaymentId: null,
+    externalReference: null,
+    billingType: null,
+    invoiceNumber: null,
+    paymentDate: null,
+    ...over,
+  }
+}
+
+/** Campos do evento que apontam para a cobrança. */
+const on = (p: { ref: SubmissionRef; asaasId: string | null }) => ({
+  externalReference: p.ref.paymentId,
+  asaasPaymentId: p.asaasId,
+})
+
+type Processed = Extract<PaymentEventResult, { outcome: "processed" }>
+
+function expectProcessed(r: PaymentEventResult): Processed {
+  if (r.outcome !== "processed") throw new Error(`esperava processed, veio ${JSON.stringify(r)}`)
+  return r
+}
+
+const at = (iso: string) => new Date(iso)
 
 export function defineRepoContract(name: string, setup: () => Promise<Repos>): void {
   describe(`contrato dos repositórios: ${name}`, () => {
@@ -506,6 +559,265 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         await notifications.markSent(a)
         await notifications.markSent(b)
       }
+    })
+
+    it("13. evento pago: cobrança paga e geração pendente do envio", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const now = at("2026-10-11T12:00:00.000Z")
+
+      const r = expectProcessed(
+        await repos.webhooks.applyPaymentEvent(
+          ev("paid", { ...on(p), billingType: "PIX", invoiceNumber: "777", paymentDate: "2026-10-11" }),
+          now,
+        ),
+      )
+
+      expect(r.paymentId).toBe(p.ref.paymentId)
+      expect(r.patientName).toBe(p.sub.patient.name)
+      expect(r.missingQuizResponse).toBe(false)
+      expect(r.pendingGeneration).not.toBeNull()
+      expect(r.pendingGeneration!.id).toBeTruthy()
+      expect(r.pendingGeneration!.quizResponseId).toBe(p.ref.quizResponseId)
+      const view = (await repos.payments.get(p.ref.paymentId))!
+      expect(view.status).toBe("RECEIVED")
+      expect(view.paidAt).toEqual(now)
+      expect(view.asaasId).toBe(p.asaasId)
+    })
+
+    it("14. o mesmo evento duas vezes: o segundo é duplicate e nada muda", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const e = ev("paid", on(p))
+      expectProcessed(await repos.webhooks.applyPaymentEvent(e, at("2026-10-11T12:00:00.000Z")))
+      const before = await repos.payments.get(p.ref.paymentId)
+
+      // Mesmo `eventId` com outro conteúdo: a chave de idempotência é só o id.
+      const again = await repos.webhooks.applyPaymentEvent(
+        { ...e, event: "PAYMENT_REFUNDED", group: "reversal", status: "REFUNDED" },
+        at("2026-10-12T12:00:00.000Z"),
+      )
+
+      expect(again).toEqual({ outcome: "duplicate" })
+      expect(await repos.payments.get(p.ref.paymentId)).toEqual(before)
+    })
+
+    it("15. CONFIRMED e depois RECEIVED: uma geração só; paidAt não muda; status vira RECEIVED", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const t1 = at("2026-10-11T12:00:00.000Z")
+      const t2 = at("2026-11-12T12:00:00.000Z")
+
+      const first = expectProcessed(
+        await repos.webhooks.applyPaymentEvent(
+          ev("paid", { ...on(p), event: "PAYMENT_CONFIRMED", status: "CONFIRMED" }),
+          t1,
+        ),
+      )
+      expect((await repos.payments.get(p.ref.paymentId))!.status).toBe("CONFIRMED")
+      const second = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", on(p)), t2))
+
+      expect(first.pendingGeneration).not.toBeNull()
+      expect(second.pendingGeneration).toEqual(first.pendingGeneration)
+      const view = (await repos.payments.get(p.ref.paymentId))!
+      expect(view.status).toBe("RECEIVED")
+      expect(view.paidAt).toEqual(t1)
+    })
+
+    it("16. cobrança desconhecida, externalReference nulo e asaas_id divergente são ignorados", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const before = await repos.payments.get(p.ref.paymentId)
+      const now = new Date()
+      const apply = (over: Partial<PaymentEventInput>) =>
+        repos.webhooks.applyPaymentEvent(ev("paid", { ...on(p), ...over }), now)
+      const unknown = { outcome: "ignored", reason: "unknown_payment" }
+      const mismatch = { outcome: "ignored", reason: "asaas_id_mismatch" }
+
+      expect(await apply({ externalReference: UNKNOWN_ID })).toEqual(unknown)
+      expect(await apply({ externalReference: null })).toEqual(unknown)
+      expect(await apply({ externalReference: "nao-e-um-id-nosso" })).toEqual(unknown)
+      expect(await apply({ asaasPaymentId: `pay_${randomUUID()}` })).toEqual(mismatch)
+      expect(await repos.payments.get(p.ref.paymentId)).toEqual(before)
+
+      // Cobrança sem asaas_id, mas o id do evento já é de outra cobrança nossa.
+      const orphan = expectRef(await repos.submissions.create(newSub()))
+      expect(
+        await repos.webhooks.applyPaymentEvent(
+          ev("paid", { externalReference: orphan.paymentId, asaasPaymentId: p.asaasId }),
+          now,
+        ),
+      ).toEqual(mismatch)
+      const orphanView = (await repos.payments.get(orphan.paymentId))!
+      expect(orphanView.asaasId).toBeNull()
+      expect(orphanView.status).toBe("PENDING_ASAAS")
+      expect(orphanView.paidAt).toBeNull()
+    })
+
+    it("17. cobrança ainda sem asaas_id: o evento pago é aceito e grava o asaas_id", async () => {
+      const repos = await setup()
+      const ref = expectRef(await repos.submissions.create(newSub()))
+      const asaasId = `pay_${randomUUID()}`
+
+      const r = expectProcessed(
+        await repos.webhooks.applyPaymentEvent(
+          ev("paid", { externalReference: ref.paymentId, asaasPaymentId: asaasId }),
+          new Date(),
+        ),
+      )
+
+      expect(r.pendingGeneration!.quizResponseId).toBe(ref.quizResponseId)
+      const view = (await repos.payments.get(ref.paymentId))!
+      expect(view.asaasId).toBe(asaasId)
+      expect(view.status).toBe("RECEIVED")
+      expect(view.paidAt).not.toBeNull()
+    })
+
+    it("18. OVERDUE antes de pagar muda o status e a cobrança deixa de ser reaproveitada", async () => {
+      const repos = await setup()
+      const cpf = randomCpf()
+      const p = await syncedPayment(repos, { patient: { cpf } })
+
+      const r = expectProcessed(
+        await repos.webhooks.applyPaymentEvent(ev("pre_payment", on(p)), new Date()),
+      )
+
+      expect(r.pendingGeneration).toBeNull()
+      expect(r.missingQuizResponse).toBe(false)
+      const view = (await repos.payments.get(p.ref.paymentId))!
+      expect(view.status).toBe("OVERDUE")
+      expect(view.paidAt).toBeNull()
+      const next = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+      expect(next.paymentId).not.toBe(p.ref.paymentId)
+    })
+
+    it("19. OVERDUE depois de pago é ignorado (already_paid) e o status fica", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", on(p)), new Date()))
+      const before = await repos.payments.get(p.ref.paymentId)
+
+      expect(await repos.webhooks.applyPaymentEvent(ev("pre_payment", on(p)), new Date())).toEqual({
+        outcome: "ignored",
+        reason: "already_paid",
+      })
+      expect(
+        await repos.webhooks.applyPaymentEvent(
+          ev("pre_payment", { ...on(p), event: "PAYMENT_DELETED", status: "DELETED" }),
+          new Date(),
+        ),
+      ).toEqual({ outcome: "ignored", reason: "already_paid" })
+      expect(await repos.payments.get(p.ref.paymentId)).toEqual(before)
+      expect((await repos.payments.get(p.ref.paymentId))!.status).toBe("RECEIVED")
+    })
+
+    it("20. reversão muda o status e não cria nem altera geração", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const paidAt = at("2026-10-11T12:00:00.000Z")
+      const paid = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", on(p)), paidAt))
+
+      const r = expectProcessed(
+        await repos.webhooks.applyPaymentEvent(ev("reversal", on(p)), at("2026-10-20T12:00:00.000Z")),
+      )
+
+      expect(r.pendingGeneration).toBeNull()
+      expect(r.missingQuizResponse).toBe(false)
+      expect(r.patientName).toBe(p.sub.patient.name)
+      const view = (await repos.payments.get(p.ref.paymentId))!
+      expect(view.status).toBe("REFUNDED")
+      expect(view.paidAt).toEqual(paidAt)
+      // A geração segue a mesma, ainda pendente e com o mesmo envio.
+      const later = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", on(p)), new Date()))
+      expect(later.pendingGeneration).toEqual(paid.pendingGeneration)
+
+      // Reversão de uma cobrança ainda não paga não cria geração nem marca paidAt.
+      const q = await syncedPayment(repos)
+      const rq = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("reversal", on(q)), new Date()))
+      expect(rq.pendingGeneration).toBeNull()
+      expect((await repos.payments.get(q.ref.paymentId))!).toMatchObject({
+        status: "REFUNDED",
+        paidAt: null,
+      })
+    })
+
+    it("21. grupo other é ignorado (event_not_handled)", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const before = await repos.payments.get(p.ref.paymentId)
+      const e = ev("other", on(p))
+
+      expect(await repos.webhooks.applyPaymentEvent(e, new Date())).toEqual({
+        outcome: "ignored",
+        reason: "event_not_handled",
+      })
+      expect(await repos.payments.get(p.ref.paymentId)).toEqual(before)
+      // O evento ficou gravado: reenviá-lo é duplicata.
+      expect(await repos.webhooks.applyPaymentEvent(e, new Date())).toEqual({ outcome: "duplicate" })
+    })
+
+    it("22. dois envios na mesma cobrança: a geração usa o envio mais recente", async () => {
+      const repos = await setup()
+      const cpf = randomCpf()
+      const p = await syncedPayment(repos, { patient: { cpf } })
+      await sleep(5) // created_at em milissegundos: garante a ordem também no MySQL
+      const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+      expect(second.paymentId).toBe(p.ref.paymentId)
+
+      const r = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", on(p)), new Date()))
+
+      expect(r.pendingGeneration!.quizResponseId).toBe(second.quizResponseId)
+    })
+
+    it("23. concorrência: dois eventos pagos diferentes ao mesmo tempo → a mesma geração", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const now = at("2026-10-11T12:00:00.000Z")
+
+      const results = await Promise.all([
+        repos.webhooks.applyPaymentEvent(
+          ev("paid", { ...on(p), event: "PAYMENT_CONFIRMED", status: "CONFIRMED" }),
+          now,
+        ),
+        repos.webhooks.applyPaymentEvent(ev("paid", on(p)), now),
+      ])
+
+      const [a, b] = results.map(expectProcessed)
+      expect(a.pendingGeneration).not.toBeNull()
+      expect(b.pendingGeneration!.id).toBe(a.pendingGeneration!.id)
+      expect((await repos.payments.get(p.ref.paymentId))!.paidAt).toEqual(now)
+    })
+
+    it("24. concorrência: o mesmo evento duas vezes ao mesmo tempo → um processed e um duplicate", async () => {
+      const repos = await setup()
+      const p = await syncedPayment(repos)
+      const e = ev("paid", on(p))
+
+      const results = await Promise.all([
+        repos.webhooks.applyPaymentEvent(e, new Date()),
+        repos.webhooks.applyPaymentEvent(e, new Date()),
+      ])
+
+      expect(results.filter((r) => r.outcome === "duplicate")).toHaveLength(1)
+      expect(results.filter((r) => r.outcome === "processed")).toHaveLength(1)
+    })
+
+    it("25. evento sem status: pago vira CONFIRMED/RECEIVED; demais grupos mantêm o status", async () => {
+      const repos = await setup()
+      const apply = (e: PaymentEventInput) => repos.webhooks.applyPaymentEvent(e, new Date())
+      const statusOf = async (id: string) => (await repos.payments.get(id))!.status
+
+      const a = await syncedPayment(repos)
+      expectProcessed(await apply(ev("paid", { ...on(a), event: "PAYMENT_CONFIRMED", status: null })))
+      expect(await statusOf(a.ref.paymentId)).toBe("CONFIRMED")
+      expectProcessed(await apply(ev("paid", { ...on(a), status: null })))
+      expect(await statusOf(a.ref.paymentId)).toBe("RECEIVED")
+      expectProcessed(await apply(ev("reversal", { ...on(a), status: null })))
+      expect(await statusOf(a.ref.paymentId)).toBe("RECEIVED")
+
+      const b = await syncedPayment(repos)
+      expectProcessed(await apply(ev("pre_payment", { ...on(b), status: null })))
+      expect(await statusOf(b.ref.paymentId)).toBe("PENDING")
     })
   })
 }

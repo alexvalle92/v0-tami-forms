@@ -1,17 +1,27 @@
 import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm"
 import type { Db } from "@/lib/db/client"
-import { notifications, patients, payments, quizResponses } from "@/lib/db/schema"
+import {
+  asaasWebhookEvents,
+  notifications,
+  patients,
+  payments,
+  planGenerations,
+  quizResponses,
+} from "@/lib/db/schema"
 import type {
   Channel,
   NewSubmission,
   NotificationRepo,
   NotificationView,
+  PaymentEventInput,
+  PaymentEventResult,
   PaymentRepo,
   PaymentView,
   Repos,
   SubmissionRef,
   SubmissionRepo,
+  WebhookRepo,
 } from "./types"
 
 // Repositórios MySQL (Drizzle). Relógio único: o da aplicação. Cada operação calcula
@@ -22,7 +32,8 @@ const MYSQL_DEADLOCK = 1213
 const MYSQL_LOCK_WAIT_TIMEOUT = 1205
 const MYSQL_DUPLICATE_ENTRY = 1062
 const SUBMISSION_UNIQUE_KEY = "quiz_responses_submission_id_unique"
-const CREATE_MAX_ATTEMPTS = 3
+/** Tentativas de uma transação que caiu em deadlock ou lock wait timeout. */
+const TX_MAX_ATTEMPTS = 3
 
 type MysqlErrorLike = { errno: number; sqlMessage?: string; message?: string }
 
@@ -170,7 +181,7 @@ export function createMysqlRepos(db: Db): Repos {
         } catch (error) {
           // A transação já fez rollback; "duplicate" é devolvido aqui, fora dela.
           if (isDuplicateSubmission(error)) return "duplicate"
-          if (isRetryable(error) && attempt < CREATE_MAX_ATTEMPTS) continue
+          if (isRetryable(error) && attempt < TX_MAX_ATTEMPTS) continue
           throw error
         }
       }
@@ -197,6 +208,7 @@ export function createMysqlRepos(db: Db): Repos {
           asaasId: payments.asaasId,
           paymentUrl: payments.paymentUrl,
           syncAttempts: payments.syncAttempts,
+          paidAt: payments.paidAt,
           patient: {
             id: patients.id,
             name: patients.name,
@@ -472,5 +484,182 @@ export function createMysqlRepos(db: Db): Repos {
     },
   }
 
-  return { submissions, payments: paymentsRepo, notifications: notificationsRepo }
+  // Ordem dos locks, sempre a mesma: linha nova do evento -> cobrança (FOR UPDATE) -> linha
+  // nova da geração. A geração nunca é lida com lock aqui; quem travar a geração em uma
+  // transação não deve travar a cobrança depois dela.
+  async function applyEventOnce(e: PaymentEventInput, now: Date): Promise<PaymentEventResult> {
+    return db.transaction(async (tx) => {
+      // 1. Idempotência: 0 linhas afetadas = o evento já existe (ou está sendo gravado por uma
+      // transação concorrente, que o INSERT espera terminar). A linha entra como `ignored`
+      // sem cobrança; o desfecho final é gravado no fim desta mesma transação.
+      const inserted = await tx.insert(asaasWebhookEvents).ignore().values({
+        id: e.eventId,
+        event: e.event,
+        asaasPaymentId: e.asaasPaymentId,
+        paymentId: null,
+        outcome: "ignored",
+        createdAt: now,
+      })
+      if (affected(inserted) === 0) return { outcome: "duplicate" }
+
+      // `asaas_webhook_events` não tem updated_at: a linha só muda dentro desta transação.
+      const recordOutcome = async (outcome: "processed" | "ignored", paymentId: string) => {
+        await tx
+          .update(asaasWebhookEvents)
+          .set({ outcome, paymentId })
+          .where(eq(asaasWebhookEvents.id, e.eventId))
+      }
+
+      // 2. Evento fora das regras.
+      if (e.group === "other") return { outcome: "ignored", reason: "event_not_handled" }
+
+      // 3. Cobrança pelo externalReference, travada: serializa eventos da mesma cobrança.
+      if (e.externalReference === null) return { outcome: "ignored", reason: "unknown_payment" }
+      const [p] = await tx
+        .select({
+          id: payments.id,
+          patientId: payments.patientId,
+          status: payments.status,
+          asaasId: payments.asaasId,
+          billingType: payments.billingType,
+          invoiceNumber: payments.invoiceNumber,
+          paidAt: payments.paidAt,
+          paymentDate: payments.paymentDate,
+        })
+        .from(payments)
+        .where(eq(payments.id, e.externalReference))
+        .for("update")
+      if (!p) return { outcome: "ignored", reason: "unknown_payment" }
+
+      // 4. asaas_id divergente é ignorado; nulo é preenchido, se nenhuma outra cobrança o usa
+      // (gravá-lo quebraria a chave única com 1062, e o Asaas reenviaria o evento sem fim).
+      if (p.asaasId !== null && p.asaasId !== e.asaasPaymentId) {
+        return { outcome: "ignored", reason: "asaas_id_mismatch" }
+      }
+      const fillAsaasId = p.asaasId === null ? e.asaasPaymentId : null
+      if (fillAsaasId !== null) {
+        const [other] = await tx
+          .select({ id: payments.id })
+          .from(payments)
+          .where(eq(payments.asaasId, fillAsaasId))
+          .limit(1)
+        if (other) return { outcome: "ignored", reason: "asaas_id_mismatch" }
+      }
+
+      // 7. Antes de pagar: não mexe em cobrança já paga.
+      if (e.group === "pre_payment" && p.paidAt !== null) {
+        await recordOutcome("ignored", p.id)
+        return { outcome: "ignored", reason: "already_paid" }
+      }
+
+      const common = {
+        lastEvent: e.event,
+        updatedAt: now,
+        ...(fillAsaasId !== null ? { asaasId: fillAsaasId } : {}),
+      }
+      if (e.group === "paid") {
+        // 5. Pago. Campo ausente no evento mantém o valor atual.
+        await tx
+          .update(payments)
+          .set({
+            ...common,
+            status: e.status ?? (e.event === "PAYMENT_CONFIRMED" ? "CONFIRMED" : "RECEIVED"),
+            paidAt: p.paidAt ?? now,
+            paymentDate: e.paymentDate ?? p.paymentDate,
+            billingType: e.billingType ?? p.billingType,
+            invoiceNumber: e.invoiceNumber ?? p.invoiceNumber,
+          })
+          .where(eq(payments.id, p.id))
+      } else {
+        // 6. Reversão e 7. antes de pagar: só o status (sem status no evento, mantém o atual).
+        await tx
+          .update(payments)
+          .set({ ...common, status: e.status ?? p.status })
+          .where(eq(payments.id, p.id))
+      }
+
+      let pendingGeneration: { id: string; quizResponseId: string } | null = null
+      let missingQuizResponse = false
+      if (e.group === "paid") {
+        // Leitura sem lock: a geração só é criada com a cobrança travada, e o lock acima já
+        // foi obtido, então esta leitura vê a de um evento anterior. Um lock aqui (gap lock
+        // na chave única) poderia dar deadlock entre inserts de cobranças vizinhas.
+        const [existing] = await tx
+          .select({
+            id: planGenerations.id,
+            quizResponseId: planGenerations.quizResponseId,
+            status: planGenerations.status,
+          })
+          .from(planGenerations)
+          .where(eq(planGenerations.paymentId, p.id))
+          .limit(1)
+
+        if (existing) {
+          if (existing.status === "pending") {
+            pendingGeneration = { id: existing.id, quizResponseId: existing.quizResponseId }
+          }
+        } else {
+          // Envio mais recente ligado à cobrança.
+          const [latest] = await tx
+            .select({ id: quizResponses.id })
+            .from(quizResponses)
+            .where(eq(quizResponses.paymentId, p.id))
+            .orderBy(desc(quizResponses.createdAt), desc(quizResponses.id))
+            .limit(1)
+
+          if (latest) {
+            const generationId = randomUUID()
+            // UNIQUE (payment_id): garantia final de uma geração por cobrança.
+            const created = await tx.insert(planGenerations).ignore().values({
+              id: generationId,
+              paymentId: p.id,
+              patientId: p.patientId,
+              quizResponseId: latest.id,
+              status: "pending",
+              attempts: 0,
+              nextAttemptAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            // Com a cobrança travada não deveria acontecer; falhar (500) é melhor que seguir
+            // sem geração, e o reenvio do Asaas encontra a linha existente.
+            if (affected(created) !== 1) throw new Error("plan_generations: linha não gravada")
+            pendingGeneration = { id: generationId, quizResponseId: latest.id }
+          } else {
+            missingQuizResponse = true
+          }
+        }
+      }
+
+      const [patient] = await tx
+        .select({ name: patients.name })
+        .from(patients)
+        .where(eq(patients.id, p.patientId))
+        .limit(1)
+      await recordOutcome("processed", p.id)
+      return {
+        outcome: "processed",
+        paymentId: p.id,
+        patientName: patient.name,
+        pendingGeneration,
+        missingQuizResponse,
+      }
+    })
+  }
+
+  const webhooks: WebhookRepo = {
+    async applyPaymentEvent(e, now) {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await applyEventOnce(e, now)
+        } catch (error) {
+          // A transação já fez rollback (inclusive a linha do evento): repetir é seguro.
+          if (isRetryable(error) && attempt < TX_MAX_ATTEMPTS) continue
+          throw error
+        }
+      }
+    },
+  }
+
+  return { submissions, payments: paymentsRepo, notifications: notificationsRepo, webhooks }
 }

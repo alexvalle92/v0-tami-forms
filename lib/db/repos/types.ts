@@ -43,6 +43,8 @@ export type PaymentView = {
   asaasId: string | null
   paymentUrl: string | null
   syncAttempts: number
+  /** Primeiro evento de pagamento do Asaas; nulo enquanto não paga. */
+  paidAt: Date | null
   patient: {
     id: string
     name: string
@@ -128,12 +130,6 @@ export interface NotificationRepo {
   reopenAllFailed(): Promise<number>
 }
 
-export type Repos = {
-  submissions: SubmissionRepo
-  payments: PaymentRepo
-  notifications: NotificationRepo
-}
-
 /** Grupo do evento do Asaas, que decide a regra aplicada à cobrança. */
 export type PaymentEventGroup = "paid" | "reversal" | "pre_payment" | "other"
 
@@ -149,6 +145,43 @@ export type PaymentEventInput = {
   invoiceNumber: string | null
   /** YYYY-MM-DD */
   paymentDate: string | null
+}
+
+export type PaymentEventResult =
+  | { outcome: "duplicate" }
+  | {
+      outcome: "ignored"
+      reason: "unknown_payment" | "asaas_id_mismatch" | "already_paid" | "event_not_handled"
+    }
+  | {
+      outcome: "processed"
+      paymentId: string
+      patientName: string
+      /**
+       * Geração da cobrança, se existe e ainda está `pending`. Só em evento do grupo `paid`;
+       * nos grupos `reversal` e `pre_payment` é sempre null.
+       */
+      pendingGeneration: { id: string; quizResponseId: string } | null
+      /** Evento pago de uma cobrança sem envio do quiz ligado: nenhuma geração foi criada. */
+      missingQuizResponse: boolean
+    }
+
+export interface WebhookRepo {
+  /**
+   * Uma transação: grava o evento (idempotente pelo `eventId`) e aplica a regra do grupo (§5).
+   * Status ausente no evento: no grupo `paid` vira `CONFIRMED` (em `PAYMENT_CONFIRMED`) ou
+   * `RECEIVED`; nos demais grupos o status atual da cobrança é mantido.
+   * `asaas_id` nulo na cobrança é preenchido com o do evento, salvo se outra cobrança já o
+   * usa (aí o evento é ignorado como `asaas_id_mismatch`).
+   */
+  applyPaymentEvent(e: PaymentEventInput, now: Date): Promise<PaymentEventResult>
+}
+
+export type Repos = {
+  submissions: SubmissionRepo
+  payments: PaymentRepo
+  notifications: NotificationRepo
+  webhooks: WebhookRepo
 }
 
 /** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */
