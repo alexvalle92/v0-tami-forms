@@ -133,3 +133,20 @@ export type Repos = {
   payments: PaymentRepo
   notifications: NotificationRepo
 }
+
+/** Grupo do evento do Asaas, que decide a regra aplicada à cobrança. */
+export type PaymentEventGroup = "paid" | "reversal" | "pre_payment" | "other"
+
+/** Evento de cobrança do Asaas, já lido e classificado (só os campos usados). */
+export type PaymentEventInput = {
+  eventId: string
+  event: string
+  group: PaymentEventGroup
+  asaasPaymentId: string | null
+  externalReference: string | null
+  status: string | null
+  billingType: string | null
+  invoiceNumber: string | null
+  /** YYYY-MM-DD */
+  paymentDate: string | null
+}
