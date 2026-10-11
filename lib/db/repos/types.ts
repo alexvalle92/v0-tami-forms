@@ -150,3 +150,10 @@ export type PaymentEventInput = {
   /** YYYY-MM-DD */
   paymentDate: string | null
 }
+
+/** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */
+export type PlanData = {
+  meals: { name: string; time: string; foods: string; calories: string }[]
+  calories: number
+  observations: string
+}
