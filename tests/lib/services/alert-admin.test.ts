@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Logger } from "@/lib/log"
 import type { EmailSender } from "@/lib/notify/email"
-import { createAlertAdmin } from "@/lib/services/alert-admin"
+import { createAlertAdmin, createNoticeAdmin } from "@/lib/services/alert-admin"
 import { toLastError } from "@/lib/services/last-error"
 import { HttpError } from "@/lib/http/retry"
 
@@ -56,6 +56,57 @@ describe("createAlertAdmin", () => {
     const alert = createAlertAdmin({ email, to: "admin@example.com", log })
 
     await expect(alert({ kind: "notification", id: "n-1", patientName: "Ana", error })).resolves.toBeUndefined()
+    expect(log.error).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("createNoticeAdmin", () => {
+  const base = {
+    paymentId: "pay-1",
+    patientName: "Ana <Souza>",
+    event: "PAYMENT_REFUNDED",
+    asaasPaymentId: "pay_123",
+  }
+
+  it("reversão: assunto, destinatário e conteúdo combinados (nome escapado no html)", async () => {
+    const send = vi.fn(async () => {})
+    const notice = createNoticeAdmin({ email: { send }, to: "admin@example.com", log: silentLog() })
+
+    await notice({ kind: "payment_reversal", ...base })
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const m = send.mock.calls[0] as unknown as [{ to: string; subject: string; html: string; text: string }]
+    expect(m[0].to).toBe("admin@example.com")
+    expect(m[0].subject).toBe("[tami-forms] Pagamento revertido: pay-1")
+    for (const part of ["payment_reversal", "PAYMENT_REFUNDED", "pay_123", "pay-1", "Ana <Souza>"]) {
+      expect(m[0].text).toContain(part)
+    }
+    expect(m[0].html).toContain("Ana &lt;Souza&gt;")
+    expect(m[0].html).not.toContain("<Souza>")
+  })
+
+  it("pagamento sem quiz: assunto próprio e traço quando não há id no Asaas", async () => {
+    const send = vi.fn(async () => {})
+    const notice = createNoticeAdmin({ email: { send }, to: "admin@example.com", log: silentLog() })
+
+    await notice({ kind: "payment_without_quiz", ...base, event: "PAYMENT_RECEIVED", asaasPaymentId: null })
+
+    const m = send.mock.calls[0] as unknown as [{ subject: string; text: string }]
+    expect(m[0].subject).toBe("[tami-forms] Pagamento sem envio do quiz: pay-1")
+    expect(m[0].text).toContain("Tipo: payment_without_quiz")
+    expect(m[0].text).toContain("Cobrança no Asaas: -")
+  })
+
+  it("resolve sem lançar e chama log.error quando o envio falha", async () => {
+    const log = silentLog()
+    const email: EmailSender = {
+      send: async () => {
+        throw new Error("smtp down")
+      },
+    }
+    const notice = createNoticeAdmin({ email, to: "admin@example.com", log })
+
+    await expect(notice({ kind: "payment_reversal", ...base })).resolves.toBeUndefined()
     expect(log.error).toHaveBeenCalledTimes(1)
   })
 })
