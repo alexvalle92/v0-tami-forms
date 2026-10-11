@@ -1,5 +1,6 @@
 export const MAX_PAYMENT_ATTEMPTS = 8
 export const MAX_NOTIFICATION_ATTEMPTS = 5
+export const MAX_PLAN_ATTEMPTS = 5
 
 const MINUTE_MS = 60_000
 const MAX_BACKOFF_MS = 60 * MINUTE_MS

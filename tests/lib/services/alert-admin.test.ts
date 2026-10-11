@@ -35,6 +35,17 @@ describe("createAlertAdmin", () => {
     expect(m[0].html).not.toContain("secret")
   })
 
+  it("alerta meal_plan sai com o assunto da geração", async () => {
+    const send = vi.fn(async () => {})
+    const alert = createAlertAdmin({ email: { send }, to: "admin@example.com", log: silentLog() })
+
+    await alert({ kind: "meal_plan", id: "gen-1", patientName: "Ana", error })
+
+    const m = send.mock.calls[0] as unknown as [{ subject: string; text: string }]
+    expect(m[0].subject).toBe("[tami-forms] Falha definitiva: meal_plan gen-1")
+    expect(m[0].text).toContain("Tipo: meal_plan")
+  })
+
   it("resolve sem lançar e chama log.error quando o envio falha", async () => {
     const log = silentLog()
     const email: EmailSender = {
