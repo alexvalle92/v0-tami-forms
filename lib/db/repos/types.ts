@@ -87,17 +87,22 @@ export interface PaymentRepo {
   reopenAllFailed(): Promise<number>
 }
 
+export type NotificationKind = "payment_link" | "plan_ready"
+
 export type NotificationView = {
   id: string
   quizResponseId: string
   paymentId: string
   channel: Channel
-  kind: "payment_link"
+  kind: NotificationKind
   recipient: string
   status: "pending" | "sent" | "failed"
   partsSent: number
   attempts: number
+  patientId: string
   patientName: string
+  /** `password_hash` atual do paciente, lido na hora (decide o texto do `plan_ready`, §9). */
+  patientPasswordHash: string | null
   paymentUrl: string | null
 }
 
@@ -177,11 +182,75 @@ export interface WebhookRepo {
   applyPaymentEvent(e: PaymentEventInput, now: Date): Promise<PaymentEventResult>
 }
 
+export type PlanGenerationView = {
+  id: string
+  paymentId: string
+  quizResponseId: string
+  status: "pending" | "done" | "failed"
+  attempts: number
+  answers: Record<string, unknown>
+  patient: { id: string; name: string; hasPassword: boolean }
+}
+
+export type MealPlanView = {
+  id: string
+  patientId: string
+  paymentId: string | null
+  title: string
+  startDate: string
+  endDate: string | null
+  status: string
+  planData: PlanData
+}
+
+export interface PlanGenerationRepo {
+  get(id: string): Promise<PlanGenerationView | null>
+  /** Reserva a geração por `ttlMs`. `false` se já reservada (e não expirada) ou inexistente. */
+  tryLock(id: string, ttlMs: number): Promise<boolean>
+  unlock(id: string): Promise<void>
+  /**
+   * Uma transação (§6, passo 8). Lança, sem gravar nada, se a geração não está `pending`.
+   * `passwordHash` só é gravado se o paciente ainda não tem credencial.
+   */
+  complete(
+    id: string,
+    d: {
+      title: string
+      startDate: string
+      endDate: string
+      planData: PlanData
+      generation: Record<string, unknown>
+      passwordHash: string | null
+      channels: Channel[]
+    },
+  ): Promise<{ mealPlanId: string }>
+  /**
+   * Com `failed`, o status vira `failed`; senão segue `pending` em `nextAttemptAt`. Limpa o lock.
+   * Só age em `pending`: uma geração já `done` nunca volta a falhar.
+   */
+  markFailure(
+    id: string,
+    d: { attempts: number; nextAttemptAt: Date | null; failed: boolean; error: LastError },
+  ): Promise<void>
+  /** `pending` com `next_attempt_at <= now` e não reservadas, por `next_attempt_at` crescente. */
+  listDue(now: Date, limit: number): Promise<string[]>
+  /** Só age em `failed`: volta a `pending`, `attempts` 0, `next_attempt_at` = agora. */
+  reopen(id: string): Promise<boolean>
+  reopenAllFailed(): Promise<number>
+}
+
+export interface MealPlanRepo {
+  /** Planos do paciente, do mais antigo ao mais novo. */
+  listByPatient(patientId: string): Promise<MealPlanView[]>
+}
+
 export type Repos = {
   submissions: SubmissionRepo
   payments: PaymentRepo
   notifications: NotificationRepo
   webhooks: WebhookRepo
+  planGenerations: PlanGenerationRepo
+  mealPlans: MealPlanRepo
 }
 
 /** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */

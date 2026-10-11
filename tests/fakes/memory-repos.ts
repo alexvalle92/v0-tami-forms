@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto"
 import type {
   Channel,
   LastError,
+  MealPlanRepo,
+  MealPlanView,
   NewSubmission,
+  NotificationKind,
   NotificationRepo,
   NotificationView,
   PaymentEventInput,
@@ -10,6 +13,8 @@ import type {
   PaymentRepo,
   PaymentView,
   PlanData,
+  PlanGenerationRepo,
+  PlanGenerationView,
   Repos,
   SubmissionRef,
   SubmissionRepo,
@@ -17,7 +22,7 @@ import type {
 } from "@/lib/db/repos/types"
 
 // Fake em memória dos repositórios, com o relógio real. Um Map por tabela.
-// As operações que precisam ser atômicas (create, applyPaymentEvent) não têm `await` no meio:
+// As operações que precisam ser atômicas (create, applyPaymentEvent, complete) não têm `await` no meio:
 // o JavaScript só alterna entre chamadas concorrentes em um `await`, então o efeito é o do
 // UNIQUE e da transação do MySQL.
 
@@ -68,7 +73,7 @@ export type NotificationRow = {
   quizResponseId: string
   paymentId: string
   channel: Channel
-  kind: "payment_link"
+  kind: NotificationKind
   recipient: string
   status: "pending" | "sent" | "failed"
   partsSent: number
@@ -344,6 +349,36 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
     n.lockedUntil = null
   }
 
+  /** Linha `pending` nova; como o INSERT IGNORE na UNIQUE (quiz_response_id, channel, kind). */
+  function enqueueNotification(
+    q: { id: string; paymentId: string },
+    patient: PatientRow,
+    channel: Channel,
+    kind: NotificationKind,
+    now: Date,
+  ) {
+    const exists = [...notifications.values()].some(
+      (n) => n.quizResponseId === q.id && n.channel === channel && n.kind === kind,
+    )
+    if (exists) return
+    const row: NotificationRow = {
+      id: randomUUID(),
+      quizResponseId: q.id,
+      paymentId: q.paymentId,
+      channel,
+      kind,
+      recipient: channel === "email" ? patient.email : `55${patient.phone}`,
+      status: "pending",
+      partsSent: 0,
+      attempts: 0,
+      nextAttemptAt: now,
+      lockedUntil: null,
+      lastError: null,
+      sentAt: null,
+    }
+    notifications.set(row.id, row)
+  }
+
   const notificationsRepo: NotificationRepo = {
     async enqueuePaymentLink(filter, channels) {
       const targets = [...quizResponses.values()].filter((q) =>
@@ -354,26 +389,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
         if (!q.paymentId) continue
         const patient = patients.get(q.patientId)!
         for (const channel of channels) {
-          const exists = [...notifications.values()].some(
-            (n) => n.quizResponseId === q.id && n.channel === channel && n.kind === "payment_link",
-          )
-          if (exists) continue
-          const row: NotificationRow = {
-            id: randomUUID(),
-            quizResponseId: q.id,
-            paymentId: q.paymentId,
-            channel,
-            kind: "payment_link",
-            recipient: channel === "email" ? patient.email : `55${patient.phone}`,
-            status: "pending",
-            partsSent: 0,
-            attempts: 0,
-            nextAttemptAt: now,
-            lockedUntil: null,
-            lastError: null,
-            sentAt: null,
-          }
-          notifications.set(row.id, row)
+          enqueueNotification({ id: q.id, paymentId: q.paymentId }, patient, channel, "payment_link", now)
         }
       }
     },
@@ -388,6 +404,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
       const n = notifications.get(id)
       if (!n) return null
       const q = quizResponses.get(n.quizResponseId)!
+      const patient = patients.get(q.patientId)!
       const view: NotificationView = {
         id: n.id,
         quizResponseId: n.quizResponseId,
@@ -398,7 +415,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
         status: n.status,
         partsSent: n.partsSent,
         attempts: n.attempts,
-        patientName: patients.get(q.patientId)!.name,
+        patientId: patient.id,
+        patientName: patient.name,
+        patientPasswordHash: patient.passwordHash,
         paymentUrl: payments.get(n.paymentId)?.paymentUrl ?? null,
       }
       return view
@@ -573,11 +592,175 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
     },
   }
 
+  function reopenGeneration(g: PlanGenerationRow) {
+    g.status = "pending"
+    g.attempts = 0
+    g.nextAttemptAt = new Date()
+    g.lastError = null
+    g.lockedUntil = null
+  }
+
+  const planGenerationsRepo: PlanGenerationRepo = {
+    async get(id) {
+      const g = planGenerations.get(id)
+      if (!g) return null
+      const patient = patients.get(g.patientId)!
+      const view: PlanGenerationView = {
+        id: g.id,
+        paymentId: g.paymentId,
+        quizResponseId: g.quizResponseId,
+        status: g.status,
+        attempts: g.attempts,
+        answers: structuredClone(quizResponses.get(g.quizResponseId)!.answers),
+        patient: { id: patient.id, name: patient.name, hasPassword: patient.passwordHash !== null },
+      }
+      return view
+    },
+
+    async tryLock(id, ttlMs) {
+      const g = planGenerations.get(id)
+      const now = new Date()
+      if (!g || isLocked(g, now)) return false
+      g.lockedUntil = new Date(now.getTime() + ttlMs)
+      return true
+    },
+
+    async unlock(id) {
+      const g = planGenerations.get(id)
+      if (g) g.lockedUntil = null
+    },
+
+    // Sem `await`: tudo acontece de forma atômica, como a transação do MySQL.
+    async complete(id, d) {
+      const g = planGenerations.get(id)
+      if (!g) throw new Error("plan_generations: geração não encontrada")
+      if (g.status !== "pending") throw new Error("plan_generations: geração não está pending")
+      // UNIQUE (meal_plans.payment_id): o MySQL lançaria 1062 antes de gravar qualquer coisa.
+      if ([...mealPlans.values()].some((m) => m.paymentId === g.paymentId)) {
+        throw new Error("meal_plans: já existe plano para a cobrança")
+      }
+      const now = new Date()
+      const patient = patients.get(g.patientId)!
+
+      // 1. Plano novo, ativo.
+      const plan: MealPlanRow = {
+        id: randomUUID(),
+        patientId: g.patientId,
+        paymentId: g.paymentId,
+        quizResponseId: g.quizResponseId,
+        title: d.title,
+        description: null,
+        startDate: d.startDate,
+        endDate: d.endDate,
+        dueDateNewMealPlan: null,
+        paymentUrlNewMealPlan: null,
+        status: "active",
+        planData: structuredClone(d.planData),
+      }
+      mealPlans.set(plan.id, plan)
+
+      // 2. Os outros planos ativos do paciente passam a `completed`.
+      for (const m of mealPlans.values()) {
+        if (m.patientId === g.patientId && m.status === "active" && m.id !== plan.id) {
+          m.status = "completed"
+        }
+      }
+
+      // 3. Credencial, só se o paciente ainda não tem.
+      if (d.passwordHash !== null && patient.passwordHash === null) {
+        patient.passwordHash = d.passwordHash
+        patient.mustChangePassword = true
+        patient.passwordSetAt = now
+      }
+
+      // 4. Notificações `plan_ready` do envio, uma por canal.
+      for (const channel of d.channels) {
+        enqueueNotification({ id: g.quizResponseId, paymentId: g.paymentId }, patient, channel, "plan_ready", now)
+      }
+
+      // 5. Geração concluída; lock solto.
+      g.status = "done"
+      g.mealPlanId = plan.id
+      g.generation = structuredClone(d.generation)
+      g.nextAttemptAt = null
+      g.lastError = null
+      g.lockedUntil = null
+      return { mealPlanId: plan.id }
+    },
+
+    async markFailure(id, d) {
+      const g = planGenerations.get(id)
+      if (!g || g.status !== "pending") return
+      g.attempts = d.attempts
+      g.lastError = structuredClone(d.error)
+      if (d.failed) {
+        g.status = "failed"
+        g.nextAttemptAt = null
+      } else {
+        g.nextAttemptAt = d.nextAttemptAt
+      }
+      g.lockedUntil = null
+    },
+
+    async listDue(now, limit) {
+      return [...planGenerations.values()]
+        .filter(
+          (g) =>
+            g.status === "pending" &&
+            g.nextAttemptAt !== null &&
+            g.nextAttemptAt.getTime() <= now.getTime() &&
+            !isLocked(g, now),
+        )
+        .sort((a, b) => a.nextAttemptAt!.getTime() - b.nextAttemptAt!.getTime())
+        .slice(0, limit)
+        .map((g) => g.id)
+    },
+
+    async reopen(id) {
+      const g = planGenerations.get(id)
+      if (!g || g.status !== "failed") return false
+      reopenGeneration(g)
+      return true
+    },
+
+    async reopenAllFailed() {
+      let count = 0
+      for (const g of planGenerations.values()) {
+        if (g.status !== "failed") continue
+        reopenGeneration(g)
+        count++
+      }
+      return count
+    },
+  }
+
+  const mealPlansRepo: MealPlanRepo = {
+    // Map preserva a ordem de inserção: do mais antigo ao mais novo.
+    async listByPatient(patientId) {
+      return [...mealPlans.values()]
+        .filter((m) => m.patientId === patientId)
+        .map(
+          (m): MealPlanView => ({
+            id: m.id,
+            patientId: m.patientId,
+            paymentId: m.paymentId,
+            title: m.title,
+            startDate: m.startDate,
+            endDate: m.endDate,
+            status: m.status,
+            planData: structuredClone(m.planData),
+          }),
+        )
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
     notifications: notificationsRepo,
     webhooks,
+    planGenerations: planGenerationsRepo,
+    mealPlans: mealPlansRepo,
     state: { patients, payments, notifications, webhookEvents, planGenerations, mealPlans },
   }
 }

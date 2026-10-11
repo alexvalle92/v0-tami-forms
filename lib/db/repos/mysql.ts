@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto"
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm"
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm"
 import type { Db } from "@/lib/db/client"
 import {
   asaasWebhookEvents,
+  mealPlans,
   notifications,
   patients,
   payments,
@@ -11,13 +12,19 @@ import {
 } from "@/lib/db/schema"
 import type {
   Channel,
+  MealPlanRepo,
+  MealPlanView,
   NewSubmission,
+  NotificationKind,
   NotificationRepo,
   NotificationView,
   PaymentEventInput,
   PaymentEventResult,
   PaymentRepo,
   PaymentView,
+  PlanData,
+  PlanGenerationRepo,
+  PlanGenerationView,
   Repos,
   SubmissionRef,
   SubmissionRepo,
@@ -59,12 +66,33 @@ function isDuplicateSubmission(error: unknown): boolean {
   return (e.sqlMessage ?? e.message ?? "").includes(SUBMISSION_UNIQUE_KEY)
 }
 
+/**
+ * Roda a transação e a repete se caiu em deadlock ou lock wait timeout (o rollback já
+ * aconteceu, então repetir é seguro). Qualquer outro erro sobe na hora.
+ */
+async function withTxRetry<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run()
+    } catch (error) {
+      if (isRetryable(error) && attempt < TX_MAX_ATTEMPTS) continue
+      throw error
+    }
+  }
+}
+
 const affected = (result: unknown): number => (result as [{ affectedRows: number }])[0].affectedRows
 
 const paymentUnlockedAt = (now: Date) =>
   or(isNull(payments.lockedUntil), lt(payments.lockedUntil, now))
 const notificationUnlockedAt = (now: Date) =>
   or(isNull(notifications.lockedUntil), lt(notifications.lockedUntil, now))
+const generationUnlockedAt = (now: Date) =>
+  or(isNull(planGenerations.lockedUntil), lt(planGenerations.lockedUntil, now))
+
+/** Destinatário da notificação: e-mail como está; WhatsApp com o DDI 55. */
+const recipientFor = (channel: Channel, p: { email: string; phone: string }) =>
+  channel === "email" ? p.email : `55${p.phone}`
 
 export function createMysqlRepos(db: Db): Repos {
   async function createOnce(s: NewSubmission): Promise<SubmissionRef> {
@@ -175,15 +203,13 @@ export function createMysqlRepos(db: Db): Repos {
     },
 
     async create(s) {
-      for (let attempt = 1; ; attempt++) {
-        try {
-          return await createOnce(s)
-        } catch (error) {
-          // A transação já fez rollback; "duplicate" é devolvido aqui, fora dela.
-          if (isDuplicateSubmission(error)) return "duplicate"
-          if (isRetryable(error) && attempt < TX_MAX_ATTEMPTS) continue
-          throw error
-        }
+      try {
+        return await withTxRetry(() => createOnce(s))
+      } catch (error) {
+        // A transação já fez rollback; "duplicate" é devolvido aqui, fora dela.
+        // O 1062 não é repetível: sai do withTxRetry na primeira tentativa em que aparece.
+        if (isDuplicateSubmission(error)) return "duplicate"
+        throw error
       }
     },
   }
@@ -352,7 +378,7 @@ export function createMysqlRepos(db: Db): Repos {
           paymentId,
           channel,
           kind: "payment_link",
-          recipient: channel === "email" ? t.email : `55${t.phone}`,
+          recipient: recipientFor(channel, t),
           status: "pending" as const,
           partsSent: 0,
           attempts: 0,
@@ -389,7 +415,9 @@ export function createMysqlRepos(db: Db): Repos {
           status: notifications.status,
           partsSent: notifications.partsSent,
           attempts: notifications.attempts,
+          patientId: patients.id,
           patientName: patients.name,
+          patientPasswordHash: patients.passwordHash,
           paymentUrl: payments.paymentUrl,
         })
         .from(notifications)
@@ -399,7 +427,8 @@ export function createMysqlRepos(db: Db): Repos {
         .where(eq(notifications.id, id))
         .limit(1)
       if (!row) return null
-      const view: NotificationView = { ...row, kind: "payment_link" }
+      // `kind` é VARCHAR no banco; só este repositório grava, sempre com um NotificationKind.
+      const view: NotificationView = { ...row, kind: row.kind as NotificationKind }
       return view
     },
 
@@ -649,17 +678,277 @@ export function createMysqlRepos(db: Db): Repos {
 
   const webhooks: WebhookRepo = {
     async applyPaymentEvent(e, now) {
-      for (let attempt = 1; ; attempt++) {
-        try {
-          return await applyEventOnce(e, now)
-        } catch (error) {
-          // A transação já fez rollback (inclusive a linha do evento): repetir é seguro.
-          if (isRetryable(error) && attempt < TX_MAX_ATTEMPTS) continue
-          throw error
-        }
-      }
+      // Em deadlock a transação já fez rollback (inclusive a linha do evento): repetir é seguro.
+      return withTxRetry(() => applyEventOnce(e, now))
     },
   }
 
-  return { submissions, payments: paymentsRepo, notifications: notificationsRepo, webhooks }
+  // Ordem dos locks em `complete`: paciente (FOR UPDATE) -> geração (FOR UPDATE) -> outros
+  // planos ativos do paciente -> linhas novas (meal_plans, notifications), cujas FKs pedem lock S
+  // na cobrança e no envio da própria geração.
+  // - Começar pelo paciente serializa as conclusões do mesmo paciente: um só plano `active` e
+  //   uma só credencial, mesmo com duas gerações concluídas ao mesmo tempo.
+  // - `submissions.create` usa a mesma ordem (paciente X -> cobrança), sem ciclo.
+  // - `applyPaymentEvent` usa a oposta (cobrança X -> paciente S, pela FK de
+  //   plan_generations.patient_id), mas só pede o paciente ao criar a geração de uma cobrança
+  //   que ainda não tem nenhuma, e essa nunca é a cobrança da geração concluída aqui (que já
+  //   tem geração): as duas esperam uma pela outra, mas não fecham ciclo.
+  // Deadlocks residuais (gap locks nos índices de meal_plans e notifications entre pacientes
+  // vizinhos) são repetidos pelo withTxRetry, como nas outras transações.
+  async function completeOnce(
+    id: string,
+    d: Parameters<PlanGenerationRepo["complete"]>[1],
+  ): Promise<{ mealPlanId: string }> {
+    return db.transaction(async (tx) => {
+      const now = new Date()
+
+      // 0. Paciente da geração (patient_id nunca muda: a leitura sem lock basta para achá-lo).
+      const [target] = await tx
+        .select({ patientId: planGenerations.patientId })
+        .from(planGenerations)
+        .where(eq(planGenerations.id, id))
+        .limit(1)
+      if (!target) throw new Error("plan_generations: geração não encontrada")
+
+      // 1. Trava o paciente: serializa as conclusões do mesmo paciente.
+      const [patient] = await tx
+        .select({ id: patients.id, email: patients.email, phone: patients.phone })
+        .from(patients)
+        .where(eq(patients.id, target.patientId))
+        .for("update")
+
+      // 2. Trava e relê a geração: só uma conclusão passa de `pending` para `done`.
+      const [g] = await tx
+        .select({
+          status: planGenerations.status,
+          paymentId: planGenerations.paymentId,
+          quizResponseId: planGenerations.quizResponseId,
+        })
+        .from(planGenerations)
+        .where(eq(planGenerations.id, id))
+        .for("update")
+      if (!g || g.status !== "pending") {
+        throw new Error("plan_generations: geração não está pending")
+      }
+
+      // 3. Plano novo, ativo. UNIQUE (payment_id): um plano por cobrança.
+      const mealPlanId = randomUUID()
+      await tx.insert(mealPlans).values({
+        id: mealPlanId,
+        patientId: patient.id,
+        paymentId: g.paymentId,
+        quizResponseId: g.quizResponseId,
+        title: d.title,
+        startDate: d.startDate,
+        endDate: d.endDate,
+        status: "active",
+        planData: d.planData,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      // 4. Os outros planos ativos do paciente, inclusive os criados à mão no PlanA, terminam.
+      await tx
+        .update(mealPlans)
+        .set({ status: "completed", updatedAt: now })
+        .where(
+          and(
+            eq(mealPlans.patientId, patient.id),
+            eq(mealPlans.status, "active"),
+            ne(mealPlans.id, mealPlanId),
+          ),
+        )
+
+      // 5. Credencial: a condição no próprio UPDATE garante que só a primeira é gravada.
+      if (d.passwordHash !== null) {
+        await tx
+          .update(patients)
+          .set({
+            passwordHash: d.passwordHash,
+            mustChangePassword: true,
+            passwordSetAt: now,
+            updatedAt: now,
+          })
+          .where(and(eq(patients.id, patient.id), isNull(patients.passwordHash)))
+      }
+
+      // 6. Notificações `plan_ready` do envio. UNIQUE (quiz_response_id, channel, kind):
+      // linhas já existentes são ignoradas.
+      if (d.channels.length > 0) {
+        await tx
+          .insert(notifications)
+          .ignore()
+          .values(
+            d.channels.map((channel) => ({
+              id: randomUUID(),
+              quizResponseId: g.quizResponseId,
+              paymentId: g.paymentId,
+              channel,
+              kind: "plan_ready" satisfies NotificationKind,
+              recipient: recipientFor(channel, patient),
+              status: "pending" as const,
+              partsSent: 0,
+              attempts: 0,
+              nextAttemptAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })),
+          )
+      }
+
+      // 7. Geração concluída; o lock é solto.
+      await tx
+        .update(planGenerations)
+        .set({
+          status: "done",
+          mealPlanId,
+          generation: d.generation,
+          nextAttemptAt: null,
+          lastError: null,
+          lockedUntil: null,
+          updatedAt: now,
+        })
+        .where(eq(planGenerations.id, id))
+
+      return { mealPlanId }
+    })
+  }
+
+  const reopenGenerationSet = (now: Date) => ({
+    status: "pending" as const,
+    attempts: 0,
+    nextAttemptAt: now,
+    lastError: null,
+    lockedUntil: null,
+    updatedAt: now,
+  })
+
+  const planGenerationsRepo: PlanGenerationRepo = {
+    async get(id) {
+      const [row] = await db
+        .select({
+          id: planGenerations.id,
+          paymentId: planGenerations.paymentId,
+          quizResponseId: planGenerations.quizResponseId,
+          status: planGenerations.status,
+          attempts: planGenerations.attempts,
+          answers: quizResponses.answers,
+          patientId: patients.id,
+          patientName: patients.name,
+          passwordHash: patients.passwordHash,
+        })
+        .from(planGenerations)
+        .innerJoin(quizResponses, eq(quizResponses.id, planGenerations.quizResponseId))
+        .innerJoin(patients, eq(patients.id, planGenerations.patientId))
+        .where(eq(planGenerations.id, id))
+        .limit(1)
+      if (!row) return null
+      const view: PlanGenerationView = {
+        id: row.id,
+        paymentId: row.paymentId,
+        quizResponseId: row.quizResponseId,
+        status: row.status,
+        attempts: row.attempts,
+        answers: row.answers as Record<string, unknown>,
+        patient: { id: row.patientId, name: row.patientName, hasPassword: row.passwordHash !== null },
+      }
+      return view
+    },
+
+    async tryLock(id, ttlMs) {
+      const now = new Date()
+      const result = await db
+        .update(planGenerations)
+        .set({ lockedUntil: new Date(now.getTime() + ttlMs), updatedAt: now })
+        .where(and(eq(planGenerations.id, id), generationUnlockedAt(now)))
+      return affected(result) === 1
+    },
+
+    async unlock(id) {
+      await db
+        .update(planGenerations)
+        .set({ lockedUntil: null, updatedAt: new Date() })
+        .where(eq(planGenerations.id, id))
+    },
+
+    async complete(id, d) {
+      return withTxRetry(() => completeOnce(id, d))
+    },
+
+    async markFailure(id, d) {
+      await db
+        .update(planGenerations)
+        .set({
+          attempts: d.attempts,
+          lastError: d.error,
+          ...(d.failed
+            ? { status: "failed" as const, nextAttemptAt: null }
+            : { nextAttemptAt: d.nextAttemptAt }),
+          lockedUntil: null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(planGenerations.id, id), eq(planGenerations.status, "pending")))
+    },
+
+    async listDue(now, limit) {
+      const rows = await db
+        .select({ id: planGenerations.id })
+        .from(planGenerations)
+        .where(
+          and(
+            eq(planGenerations.status, "pending"),
+            lte(planGenerations.nextAttemptAt, now),
+            generationUnlockedAt(now),
+          ),
+        )
+        .orderBy(asc(planGenerations.nextAttemptAt), asc(planGenerations.id))
+        .limit(limit)
+      return rows.map((r) => r.id)
+    },
+
+    async reopen(id) {
+      const result = await db
+        .update(planGenerations)
+        .set(reopenGenerationSet(new Date()))
+        .where(and(eq(planGenerations.id, id), eq(planGenerations.status, "failed")))
+      return affected(result) === 1
+    },
+
+    async reopenAllFailed() {
+      const result = await db
+        .update(planGenerations)
+        .set(reopenGenerationSet(new Date()))
+        .where(eq(planGenerations.status, "failed"))
+      return affected(result)
+    },
+  }
+
+  const mealPlansRepo: MealPlanRepo = {
+    async listByPatient(patientId) {
+      const rows = await db
+        .select({
+          id: mealPlans.id,
+          patientId: mealPlans.patientId,
+          paymentId: mealPlans.paymentId,
+          title: mealPlans.title,
+          startDate: mealPlans.startDate,
+          endDate: mealPlans.endDate,
+          status: mealPlans.status,
+          planData: mealPlans.planData,
+        })
+        .from(mealPlans)
+        .where(eq(mealPlans.patientId, patientId))
+        .orderBy(asc(mealPlans.createdAt), asc(mealPlans.id))
+      return rows.map((r): MealPlanView => ({ ...r, planData: r.planData as PlanData }))
+    },
+  }
+
+  return {
+    submissions,
+    payments: paymentsRepo,
+    notifications: notificationsRepo,
+    webhooks,
+    planGenerations: planGenerationsRepo,
+    mealPlans: mealPlansRepo,
+  }
 }

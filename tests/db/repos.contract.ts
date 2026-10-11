@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import type {
+  Channel,
   NewSubmission,
   PaymentEventGroup,
   PaymentEventInput,
   PaymentEventResult,
+  PlanData,
+  PlanGenerationRepo,
   Repos,
   SubmissionRef,
 } from "@/lib/db/repos/types"
@@ -126,6 +129,47 @@ function expectProcessed(r: PaymentEventResult): Processed {
 }
 
 const at = (iso: string) => new Date(iso)
+
+/** Envio pago: cobrança sincronizada + evento pago → geração `pending`. */
+async function paidGeneration(repos: Repos, over: SubOverrides = {}) {
+  const p = await syncedPayment(repos, over)
+  const r = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", on(p)), new Date()))
+  if (!r.pendingGeneration) throw new Error("esperava uma geração pendente")
+  const patientId = (await repos.payments.get(p.ref.paymentId))!.patientId
+  return { ref: p.ref, sub: p.sub, generationId: r.pendingGeneration.id, patientId }
+}
+
+const PLAN: PlanData = {
+  meals: [
+    {
+      name: "Café da manhã",
+      time: "07:00 - 08:00",
+      foods: "Pão francês — 50 g (1 unidade)\nOvos mexidos — 100 g (2 unidades)",
+      calories: "350",
+    },
+  ],
+  calories: 1800,
+  observations: "Beba água ao longo do dia.\nEvite frituras.",
+}
+
+const HASH_1 = "scrypt$16384$8$1$c2FsdC0xLXNhbHQtMQ==$aGFzaC0xLWhhc2gtMS1oYXNoLTEtaGFzaC0xLWhh"
+const HASH_2 = "scrypt$16384$8$1$c2FsdC0yLXNhbHQtMg==$aGFzaC0yLWhhc2gtMi1oYXNoLTItaGFzaC0yLWhh"
+
+type CompleteInput = Parameters<PlanGenerationRepo["complete"]>[1]
+
+/** Argumento de `complete` com um plano de uma refeição. */
+function done(over: Partial<CompleteInput> = {}): CompleteInput {
+  return {
+    title: "Plano Alimentar 10/2026",
+    startDate: "2026-10-11",
+    endDate: "2026-11-10",
+    planData: PLAN,
+    generation: { model: "claude-opus-5-5", inputTokens: 2000, outputTokens: 5000 },
+    passwordHash: HASH_1,
+    channels: ["email", "whatsapp"] as Channel[],
+    ...over,
+  }
+}
 
 export function defineRepoContract(name: string, setup: () => Promise<Repos>): void {
   describe(`contrato dos repositórios: ${name}`, () => {
@@ -818,6 +862,330 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       const b = await syncedPayment(repos)
       expectProcessed(await apply(ev("pre_payment", { ...on(b), status: null })))
       expect(await statusOf(b.ref.paymentId)).toBe("PENDING")
+    })
+
+    // Gerações, planos e credencial (numeração do brief deslocada em 1: o 25 já existia).
+
+    it("26. get devolve respostas, paciente e estado; id desconhecido → null", async () => {
+      const repos = await setup()
+      const g = await paidGeneration(repos)
+
+      expect(await repos.planGenerations.get(g.generationId)).toEqual({
+        id: g.generationId,
+        paymentId: g.ref.paymentId,
+        quizResponseId: g.ref.quizResponseId,
+        status: "pending",
+        attempts: 0,
+        answers: g.sub.answers,
+        patient: { id: g.patientId, name: g.sub.patient.name, hasPassword: false },
+      })
+      expect(await repos.planGenerations.get(UNKNOWN_ID)).toBeNull()
+    })
+
+    it("27. locks de geração: exclusivo, liberável; lock expirado volta a aparecer em listDue", async () => {
+      const repos = await setup()
+      const { planGenerations } = repos
+      const id = (await paidGeneration(repos)).generationId
+
+      expect(await planGenerations.listDue(new Date(), BIG)).toContain(id)
+      expect(await planGenerations.tryLock(id, 60_000)).toBe(true)
+      expect(await planGenerations.tryLock(id, 60_000)).toBe(false)
+      expect(await planGenerations.listDue(new Date(), BIG)).not.toContain(id)
+      expect(await planGenerations.tryLock(UNKNOWN_ID, 60_000)).toBe(false)
+
+      await planGenerations.unlock(id)
+      expect(await planGenerations.listDue(new Date(), BIG)).toContain(id)
+      expect(await planGenerations.tryLock(id, 50)).toBe(true)
+      expect(await planGenerations.listDue(new Date(), BIG)).not.toContain(id)
+      await sleep(80)
+      expect(await planGenerations.listDue(new Date(), BIG)).toContain(id)
+      expect(await planGenerations.tryLock(id, 60_000)).toBe(true)
+      await expect(planGenerations.unlock(UNKNOWN_ID)).resolves.toBeUndefined()
+    })
+
+    it("28. complete: plano active, geração done, credencial e notificações plan_ready", async () => {
+      const repos = await setup()
+      const g = await paidGeneration(repos)
+      expect(await repos.planGenerations.tryLock(g.generationId, 60_000)).toBe(true)
+
+      const { mealPlanId } = await repos.planGenerations.complete(g.generationId, done())
+
+      expect(await repos.mealPlans.listByPatient(g.patientId)).toEqual([
+        {
+          id: mealPlanId,
+          patientId: g.patientId,
+          paymentId: g.ref.paymentId,
+          title: "Plano Alimentar 10/2026",
+          startDate: "2026-10-11",
+          endDate: "2026-11-10",
+          status: "active",
+          planData: PLAN,
+        },
+      ])
+      const generation = (await repos.planGenerations.get(g.generationId))!
+      expect(generation.status).toBe("done")
+      expect(generation.patient.hasPassword).toBe(true)
+      expect(await repos.planGenerations.listDue(inMinutes(60), BIG)).not.toContain(g.generationId)
+      // O lock foi solto: depois de concluída, a geração pode ser reservada de novo (e nada faz).
+      expect(await repos.planGenerations.tryLock(g.generationId, 60_000)).toBe(true)
+
+      const ids = await repos.notifications.listPendingIdsForQuizResponse(g.ref.quizResponseId)
+      expect(ids).toHaveLength(2)
+      const views = await Promise.all(ids.map((id) => repos.notifications.get(id)))
+      for (const n of views) {
+        expect(n).toMatchObject({
+          quizResponseId: g.ref.quizResponseId,
+          paymentId: g.ref.paymentId,
+          kind: "plan_ready",
+          status: "pending",
+          attempts: 0,
+          partsSent: 0,
+          patientId: g.patientId,
+          patientName: g.sub.patient.name,
+          patientPasswordHash: HASH_1,
+        })
+        expect(n!.recipient).toBe(
+          n!.channel === "email" ? g.sub.patient.email : `55${g.sub.patient.phone}`,
+        )
+      }
+      expect(views.map((n) => n!.channel).sort()).toEqual(["email", "whatsapp"])
+      for (const id of ids) {
+        expect(await repos.notifications.listDue(new Date(), BIG)).toContain(id)
+      }
+    })
+
+    it("29. segunda compra: plano anterior completed, novo active, credencial intacta", async () => {
+      const repos = await setup()
+      const cpf = randomCpf()
+      const first = await paidGeneration(repos, { patient: { cpf } })
+      const { mealPlanId: plan1 } = await repos.planGenerations.complete(first.generationId, done())
+      await sleep(5) // created_at em milissegundos: garante a ordem também no MySQL
+
+      const second = await paidGeneration(repos, { patient: { cpf } })
+      expect(second.patientId).toBe(first.patientId)
+      expect(second.ref.paymentId).not.toBe(first.ref.paymentId)
+      expect((await repos.planGenerations.get(second.generationId))!.patient.hasPassword).toBe(true)
+      const { mealPlanId: plan2 } = await repos.planGenerations.complete(
+        second.generationId,
+        done({ title: "Plano Alimentar 11/2026", startDate: "2026-11-11", endDate: "2026-12-11", passwordHash: HASH_2 }),
+      )
+
+      const plans = await repos.mealPlans.listByPatient(first.patientId)
+      expect(plans.map((p) => [p.id, p.status, p.paymentId])).toEqual([
+        [plan1, "completed", first.ref.paymentId],
+        [plan2, "active", second.ref.paymentId],
+      ])
+      expect(plans[1]).toMatchObject({ title: "Plano Alimentar 11/2026", startDate: "2026-11-11" })
+      const ids = await repos.notifications.listPendingIdsForQuizResponse(second.ref.quizResponseId)
+      expect(ids).toHaveLength(2)
+      for (const id of ids) {
+        expect((await repos.notifications.get(id))!.patientPasswordHash).toBe(HASH_1)
+      }
+    })
+
+    it("30. complete com passwordHash null não cria credencial", async () => {
+      const repos = await setup()
+      const g = await paidGeneration(repos)
+
+      await repos.planGenerations.complete(g.generationId, done({ passwordHash: null }))
+
+      expect((await repos.planGenerations.get(g.generationId))!).toMatchObject({
+        status: "done",
+        patient: { hasPassword: false },
+      })
+      const ids = await repos.notifications.listPendingIdsForQuizResponse(g.ref.quizResponseId)
+      expect(ids).toHaveLength(2)
+      for (const id of ids) {
+        expect((await repos.notifications.get(id))!.patientPasswordHash).toBeNull()
+      }
+    })
+
+    it("31. complete em geração que não está pending lança e não grava nada", async () => {
+      const repos = await setup()
+      const error = syncError("plan.generate")
+
+      // Já concluída: a segunda conclusão lança e não cria outro plano nem muda a credencial.
+      const a = await paidGeneration(repos)
+      const { mealPlanId } = await repos.planGenerations.complete(a.generationId, done())
+      await expect(
+        repos.planGenerations.complete(a.generationId, done({ passwordHash: HASH_2 })),
+      ).rejects.toThrow()
+      expect((await repos.mealPlans.listByPatient(a.patientId)).map((p) => [p.id, p.status])).toEqual([
+        [mealPlanId, "active"],
+      ])
+      expect(await repos.notifications.listPendingIdsForQuizResponse(a.ref.quizResponseId)).toHaveLength(2)
+      expect((await repos.planGenerations.get(a.generationId))!.status).toBe("done")
+
+      // Falha definitiva: lança e não grava plano, credencial nem notificação.
+      const b = await paidGeneration(repos)
+      await repos.planGenerations.markFailure(b.generationId, {
+        attempts: 5,
+        nextAttemptAt: null,
+        failed: true,
+        error,
+      })
+      await expect(repos.planGenerations.complete(b.generationId, done())).rejects.toThrow()
+      expect(await repos.mealPlans.listByPatient(b.patientId)).toEqual([])
+      expect((await repos.planGenerations.get(b.generationId))!).toMatchObject({
+        status: "failed",
+        patient: { hasPassword: false },
+      })
+      expect(await repos.notifications.listPendingIdsForQuizResponse(b.ref.quizResponseId)).toEqual([])
+
+      // Id desconhecido também lança.
+      await expect(repos.planGenerations.complete(UNKNOWN_ID, done())).rejects.toThrow()
+
+      // markFailure numa geração done não a tira de done.
+      await repos.planGenerations.markFailure(a.generationId, {
+        attempts: 1,
+        nextAttemptAt: new Date(),
+        failed: true,
+        error,
+      })
+      expect((await repos.planGenerations.get(a.generationId))!).toMatchObject({ status: "done", attempts: 0 })
+    })
+
+    it("32. duas gerações do mesmo paciente concluídas ao mesmo tempo: um plano active e uma credencial", async () => {
+      const repos = await setup()
+      const cpf = randomCpf()
+      const a = await paidGeneration(repos, { patient: { cpf } })
+      const b = await paidGeneration(repos, { patient: { cpf } })
+      expect(b.patientId).toBe(a.patientId)
+      expect(b.generationId).not.toBe(a.generationId)
+
+      const results = await Promise.all([
+        repos.planGenerations.complete(a.generationId, done({ passwordHash: HASH_1 })),
+        repos.planGenerations.complete(b.generationId, done({ passwordHash: HASH_2 })),
+      ])
+
+      const plans = await repos.mealPlans.listByPatient(a.patientId)
+      expect(plans.map((p) => p.id).sort()).toEqual(results.map((r) => r.mealPlanId).sort())
+      expect(plans.filter((p) => p.status === "active")).toHaveLength(1)
+      expect(plans.filter((p) => p.status === "completed")).toHaveLength(1)
+
+      const ids = [
+        ...(await repos.notifications.listPendingIdsForQuizResponse(a.ref.quizResponseId)),
+        ...(await repos.notifications.listPendingIdsForQuizResponse(b.ref.quizResponseId)),
+      ]
+      expect(ids).toHaveLength(4)
+      const hashes = await Promise.all(
+        ids.map(async (id) => (await repos.notifications.get(id))!.patientPasswordHash),
+      )
+      expect([HASH_1, HASH_2]).toContain(hashes[0])
+      expect(new Set(hashes).size).toBe(1)
+      expect((await repos.planGenerations.get(a.generationId))!.status).toBe("done")
+      expect((await repos.planGenerations.get(b.generationId))!.status).toBe("done")
+    })
+
+    it("33. markFailure agenda nova tentativa; failed sai da fila; reopen e reopenAllFailed devolvem", async () => {
+      const repos = await setup()
+      const { planGenerations } = repos
+      const a = (await paidGeneration(repos)).generationId
+      const b = (await paidGeneration(repos)).generationId
+      const error = syncError("plan.generate")
+
+      // Falha temporária: continua pending, fora da fila até o próximo horário; lock solto.
+      expect(await planGenerations.tryLock(a, 60_000)).toBe(true)
+      await planGenerations.markFailure(a, { attempts: 1, nextAttemptAt: inMinutes(2), failed: false, error })
+      expect((await planGenerations.get(a))!).toMatchObject({ status: "pending", attempts: 1 })
+      expect(await planGenerations.listDue(new Date(), BIG)).not.toContain(a)
+      expect(await planGenerations.listDue(inMinutes(3), BIG)).toContain(a)
+      expect(await planGenerations.reopen(a)).toBe(false) // não está failed
+      expect(await planGenerations.tryLock(a, 60_000)).toBe(true)
+
+      // Falha definitiva: sai da fila e limpa o lock.
+      await planGenerations.markFailure(a, { attempts: 5, nextAttemptAt: null, failed: true, error })
+      expect((await planGenerations.get(a))!).toMatchObject({ status: "failed", attempts: 5 })
+      expect(await planGenerations.listDue(inMinutes(60), BIG)).not.toContain(a)
+      expect(await planGenerations.tryLock(a, 60_000)).toBe(true)
+
+      // Reabertura individual: pending, attempts 0, na fila agora, sem lock.
+      expect(await planGenerations.reopen(a)).toBe(true)
+      expect((await planGenerations.get(a))!).toMatchObject({ status: "pending", attempts: 0 })
+      expect(await planGenerations.listDue(new Date(), BIG)).toContain(a)
+      expect(await planGenerations.reopen(a)).toBe(false)
+      expect(await planGenerations.reopen(UNKNOWN_ID)).toBe(false)
+
+      // Reabertura em massa.
+      await planGenerations.markFailure(a, { attempts: 5, nextAttemptAt: null, failed: true, error })
+      await planGenerations.markFailure(b, { attempts: 5, nextAttemptAt: null, failed: true, error })
+      expect(await planGenerations.tryLock(b, 60_000)).toBe(true)
+      expect(await planGenerations.reopenAllFailed()).toBeGreaterThanOrEqual(2)
+      for (const id of [a, b]) {
+        expect((await planGenerations.get(id))!).toMatchObject({ status: "pending", attempts: 0 })
+        expect(await planGenerations.listDue(new Date(), BIG)).toContain(id)
+      }
+    })
+
+    it("34. listDue de gerações: ordenado por next_attempt_at e respeita o limite", async () => {
+      const repos = await setup()
+      const { planGenerations } = repos
+      const a = (await paidGeneration(repos)).generationId
+      const b = (await paidGeneration(repos)).generationId
+      const error = syncError("plan.generate")
+      const retryAt = (id: string, nextAttemptAt: Date) =>
+        planGenerations.markFailure(id, { attempts: 1, nextAttemptAt, failed: false, error })
+
+      try {
+        // `b` (criada depois) é a mais antiga; a ordem de inserção é oposta à de vencimento.
+        await retryAt(a, new Date(Date.now() - 3_600_000))
+        await retryAt(b, new Date(Date.now() - 365 * 86_400_000))
+        const now = new Date()
+
+        const all = await planGenerations.listDue(now, BIG)
+        expect(all).toContain(a)
+        expect(all).toContain(b)
+        expect(all.indexOf(b)).toBeLessThan(all.indexOf(a))
+        expect(await planGenerations.listDue(now, 1)).toEqual([b])
+        expect((await planGenerations.listDue(now, 2)).length).toBeLessThanOrEqual(2)
+      } finally {
+        for (const id of [a, b]) {
+          await planGenerations.markFailure(id, { attempts: 5, nextAttemptAt: null, failed: true, error })
+        }
+      }
+    })
+
+    it("35. payment_link e plan_ready do mesmo envio coexistem", async () => {
+      const repos = await setup()
+      const g = await paidGeneration(repos)
+      const channels: Channel[] = ["email", "whatsapp"]
+
+      await repos.notifications.enqueuePaymentLink({ quizResponseId: g.ref.quizResponseId }, channels)
+      await repos.planGenerations.complete(g.generationId, done({ channels }))
+      // Enfileirar o link de novo não duplica nada.
+      await repos.notifications.enqueuePaymentLink({ quizResponseId: g.ref.quizResponseId }, channels)
+
+      const ids = await repos.notifications.listPendingIdsForQuizResponse(g.ref.quizResponseId)
+      expect(ids).toHaveLength(4)
+      const views = await Promise.all(ids.map((id) => repos.notifications.get(id)))
+      const kindChannel = views.map((n) => `${n!.kind}:${n!.channel}`).sort()
+      expect(kindChannel).toEqual([
+        "payment_link:email",
+        "payment_link:whatsapp",
+        "plan_ready:email",
+        "plan_ready:whatsapp",
+      ])
+    })
+
+    it("35b. complete só cria plan_ready dos canais pedidos", async () => {
+      const repos = await setup()
+      const g = await paidGeneration(repos)
+
+      await repos.planGenerations.complete(g.generationId, done({ channels: ["whatsapp"] }))
+
+      const ids = await repos.notifications.listPendingIdsForQuizResponse(g.ref.quizResponseId)
+      expect(ids).toHaveLength(1)
+      expect((await repos.notifications.get(ids[0]))!).toMatchObject({
+        kind: "plan_ready",
+        channel: "whatsapp",
+        recipient: `55${g.sub.patient.phone}`,
+      })
+
+      // Sem canais: conclui sem notificação.
+      const h = await paidGeneration(repos)
+      await repos.planGenerations.complete(h.generationId, done({ channels: [] }))
+      expect((await repos.planGenerations.get(h.generationId))!.status).toBe("done")
+      expect(await repos.notifications.listPendingIdsForQuizResponse(h.ref.quizResponseId)).toEqual([])
     })
   })
 }
