@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import type {
   Channel,
   NewSubmission,
+  NotificationView,
   PaymentEventGroup,
   PaymentEventInput,
   PaymentEventResult,
@@ -170,6 +171,30 @@ function done(over: Partial<CompleteInput> = {}): CompleteInput {
     ...over,
   }
 }
+
+// Avisos de vencimento (spec de vencimento e renovação, §6.1).
+const TODAY = "2026-10-12"
+const BOTH: Channel[] = ["email", "whatsapp"]
+
+/** Enfileira os avisos do dia com o relógio real (as linhas entram na fila agora). */
+const expire = (repos: Repos, today = TODAY, channels = BOTH) =>
+  repos.notifications.enqueuePlanExpiring({ today, channels, now: new Date() })
+
+/** Avisos de vencimento do plano: as notificações vencidas da fila cujo `mealPlan` é ele. */
+async function expiringOf(repos: Repos, mealPlanId: string): Promise<NotificationView[]> {
+  const ids = await repos.notifications.listDue(inMinutes(1), BIG)
+  const views = await Promise.all(ids.map((id) => repos.notifications.get(id)))
+  return views.filter((n): n is NotificationView => n !== null && n.mealPlan?.id === mealPlanId)
+}
+
+/** Plano ativo concluído por `complete`, com o `endDate` pedido (paciente novo, salvo `over`). */
+async function planEnding(repos: Repos, endDate: string, over: SubOverrides = {}) {
+  const g = await paidGeneration(repos, over)
+  const { mealPlanId } = await repos.planGenerations.complete(g.generationId, done({ endDate }))
+  return { ...g, mealPlanId }
+}
+
+const kindsOf = (rows: NotificationView[]) => rows.map((n) => `${n.kind}:${n.channel}`).sort()
 
 export function defineRepoContract(name: string, setup: () => Promise<Repos>): void {
   describe(`contrato dos repositórios: ${name}`, () => {
@@ -1187,6 +1212,213 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       await repos.planGenerations.complete(h.generationId, done({ channels: [] }))
       expect((await repos.planGenerations.get(h.generationId))!.status).toBe("done")
       expect(await repos.notifications.listPendingIdsForQuizResponse(h.ref.quizResponseId)).toEqual([])
+    })
+
+    it("36. aviso de vencimento: o estágio segue os dias restantes", async () => {
+      const repos = await setup()
+      const expected: [string, string | null][] = [
+        ["2026-10-17", "plan_expiring_d5"],
+        ["2026-10-15", "plan_expiring_d5"],
+        ["2026-10-14", "plan_expiring_d2"],
+        ["2026-10-13", "plan_expiring_d2"],
+        ["2026-10-12", "plan_expiring_d0"],
+        ["2026-10-18", null],
+        ["2026-10-11", null],
+      ]
+      // Um paciente por plano: concluir uma geração completa o plano ativo anterior do paciente.
+      const plans = []
+      for (const [endDate, kind] of expected) {
+        plans.push({ ...(await planEnding(repos, endDate)), endDate, kind })
+      }
+
+      expect(await expire(repos)).toBe(10)
+
+      for (const plan of plans) {
+        const rows = await expiringOf(repos, plan.mealPlanId)
+        if (plan.kind === null) {
+          expect(rows).toEqual([])
+          continue
+        }
+        expect(rows.map((n) => n.channel).sort()).toEqual(["email", "whatsapp"])
+        for (const n of rows) {
+          expect(n).toMatchObject({
+            kind: plan.kind,
+            status: "pending",
+            quizResponseId: null,
+            paymentId: null,
+            paymentUrl: null,
+            mealPlan: { id: plan.mealPlanId, endDate: plan.endDate },
+            patientId: plan.patientId,
+            patientName: plan.sub.patient.name,
+            attempts: 0,
+            partsSent: 0,
+          })
+          expect(n.recipient).toBe(
+            n.channel === "email" ? plan.sub.patient.email : `55${plan.sub.patient.phone}`,
+          )
+        }
+      }
+    })
+
+    it("37. aviso de vencimento não se repete", async () => {
+      const repos = await setup()
+      const plan = await planEnding(repos, "2026-10-17")
+
+      expect(await expire(repos)).toBe(2)
+      expect(await expire(repos)).toBe(0)
+      expect(kindsOf(await expiringOf(repos, plan.mealPlanId))).toEqual([
+        "plan_expiring_d5:email",
+        "plan_expiring_d5:whatsapp",
+      ])
+
+      // Dois dias depois o plano entra em d2; o d5 não se repete.
+      expect(await expire(repos, "2026-10-15")).toBe(2)
+      expect(kindsOf(await expiringOf(repos, plan.mealPlanId))).toEqual([
+        "plan_expiring_d2:email",
+        "plan_expiring_d2:whatsapp",
+        "plan_expiring_d5:email",
+        "plan_expiring_d5:whatsapp",
+      ])
+    })
+
+    it("38. renovação já paga não recebe aviso", async () => {
+      const repos = await setup()
+      const cpf = randomCpf()
+      const plan = await planEnding(repos, "2026-10-13", { patient: { cpf } })
+      await sleep(5) // created_at em milissegundos: a cobrança de renovação nasce depois do plano
+
+      // Novo envio pago, ainda sem o plano novo (geração pendente).
+      const renewal = await paidGeneration(repos, { patient: { cpf } })
+      expect(renewal.ref.paymentId).not.toBe(plan.ref.paymentId)
+
+      await expire(repos)
+      expect(await expiringOf(repos, plan.mealPlanId)).toEqual([])
+    })
+
+    describe("39. a cobrança de renovação entra no aviso só em d2 e d0, com link", () => {
+      it("PENDING com vencimento futuro em d2: linhas com a cobrança e o link", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const plan = await planEnding(repos, "2026-10-13", { patient: { cpf } })
+        await sleep(5)
+        const renewal = await syncedPayment(repos, { patient: { cpf } }) // PENDING, vence em 14/10
+
+        await expire(repos)
+
+        const rows = await expiringOf(repos, plan.mealPlanId)
+        expect(rows.map((n) => n.channel).sort()).toEqual(["email", "whatsapp"])
+        for (const n of rows) {
+          expect(n).toMatchObject({
+            kind: "plan_expiring_d2",
+            paymentId: renewal.ref.paymentId,
+            paymentUrl: "https://asaas.example/i/1",
+            quizResponseId: null,
+          })
+        }
+      })
+
+      it("cobrança ainda PENDING_ASAAS (sem link): sem cobrança", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const plan = await planEnding(repos, "2026-10-13", { patient: { cpf } })
+        await sleep(5)
+        expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+
+        await expire(repos)
+
+        const rows = await expiringOf(repos, plan.mealPlanId)
+        expect(rows).toHaveLength(2)
+        for (const n of rows) expect(n).toMatchObject({ paymentId: null, paymentUrl: null })
+      })
+
+      it("cobrança PENDING vencida (11/10): sem cobrança", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const plan = await planEnding(repos, "2026-10-13", { patient: { cpf } })
+        await sleep(5)
+        const ref = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        await repos.payments.markSynced(ref.paymentId, synced("PENDING", "2026-10-11"))
+
+        await expire(repos)
+
+        const rows = await expiringOf(repos, plan.mealPlanId)
+        expect(rows).toHaveLength(2)
+        for (const n of rows) expect(n).toMatchObject({ paymentId: null, paymentUrl: null })
+      })
+
+      it("plano em d5 com cobrança válida: sem cobrança", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const plan = await planEnding(repos, "2026-10-16", { patient: { cpf } })
+        await sleep(5)
+        await syncedPayment(repos, { patient: { cpf } })
+
+        await expire(repos)
+
+        const rows = await expiringOf(repos, plan.mealPlanId)
+        expect(rows).toHaveLength(2)
+        for (const n of rows) {
+          expect(n).toMatchObject({ kind: "plan_expiring_d5", paymentId: null, paymentUrl: null })
+        }
+      })
+    })
+
+    it("40. plano que deixou de ser ativo não recebe aviso", async () => {
+      const repos = await setup()
+      const cpf = randomCpf()
+      const first = await planEnding(repos, "2026-10-13", { patient: { cpf } })
+      await sleep(5)
+      const second = await planEnding(repos, "2026-10-12", { patient: { cpf } })
+      expect(
+        (await repos.mealPlans.listByPatient(first.patientId)).map((p) => [p.id, p.status]),
+      ).toEqual([
+        [first.mealPlanId, "completed"],
+        [second.mealPlanId, "active"],
+      ])
+
+      await expire(repos)
+
+      expect(await expiringOf(repos, first.mealPlanId)).toEqual([])
+      expect(kindsOf(await expiringOf(repos, second.mealPlanId))).toEqual([
+        "plan_expiring_d0:email",
+        "plan_expiring_d0:whatsapp",
+      ])
+    })
+
+    it("41. canais e paciente sem telefone", async () => {
+      const repos = await setup()
+
+      // Só o canal pedido.
+      const a = await planEnding(repos, "2026-10-14")
+      expect(await expire(repos, TODAY, ["email"])).toBe(1)
+      const onlyEmail = await expiringOf(repos, a.mealPlanId)
+      expect(kindsOf(onlyEmail)).toEqual(["plan_expiring_d2:email"])
+      expect(onlyEmail[0].recipient).toBe(a.sub.patient.email)
+
+      // Paciente sem telefone (o admin pode cadastrar assim): nenhuma linha de WhatsApp.
+      const cpf = randomCpf()
+      const b = await planEnding(repos, "2026-10-14", { patient: { cpf, phone: "" } })
+      await expire(repos)
+      expect(kindsOf(await expiringOf(repos, b.mealPlanId))).toEqual(["plan_expiring_d2:email"])
+      // O plan_ready do mesmo paciente também sai só por e-mail.
+      const ready = await repos.notifications.listPendingIdsForQuizResponse(b.ref.quizResponseId)
+      expect(ready).toHaveLength(1)
+      expect((await repos.notifications.get(ready[0]))!).toMatchObject({
+        kind: "plan_ready",
+        channel: "email",
+      })
+
+      // O link de pagamento de um envio desse paciente também.
+      const renewalSub = newSub({ patient: { cpf, phone: "" } })
+      const renewal = expectRef(await repos.submissions.create(renewalSub))
+      await repos.notifications.enqueuePaymentLink({ quizResponseId: renewal.quizResponseId }, BOTH)
+      const ids = await repos.notifications.listPendingIdsForQuizResponse(renewal.quizResponseId)
+      expect(ids).toHaveLength(1)
+      expect((await repos.notifications.get(ids[0]))!).toMatchObject({
+        kind: "payment_link",
+        channel: "email",
+        recipient: renewalSub.patient.email,
+      })
     })
   })
 }

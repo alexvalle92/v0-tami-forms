@@ -113,6 +113,8 @@ export const notifications = mysqlTable(
       .references(() => patients.id),
     quizResponseId: char("quiz_response_id", { length: 36 }).references(() => quizResponses.id),
     paymentId: char("payment_id", { length: 36 }).references(() => payments.id),
+    // Só nos avisos de vencimento (plan_expiring_*): um aviso por plano, canal e estágio.
+    mealPlanId: char("meal_plan_id", { length: 36 }).references(() => mealPlans.id),
     channel: mysqlEnum("channel", ["email", "whatsapp"]).notNull(),
     kind: varchar("kind", { length: 32 }).notNull(),
     recipient: varchar("recipient", { length: 254 }).notNull(),
@@ -134,6 +136,7 @@ export const notifications = mysqlTable(
       t.channel,
       t.kind,
     ),
+    uniqueIndex("notifications_plan_channel_kind_unique").on(t.mealPlanId, t.channel, t.kind),
     index("notifications_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
     index("notifications_patient_id_idx").on(t.patientId),
   ],
@@ -165,8 +168,6 @@ export const mealPlans = mysqlTable(
     description: text("description"),
     startDate: date("start_date", { mode: "string" }).notNull(),
     endDate: date("end_date", { mode: "string" }),
-    dueDateNewMealPlan: date("due_date_new_meal_plan", { mode: "string" }),
-    paymentUrlNewMealPlan: varchar("payment_url_new_meal_plan", { length: 500 }),
     status: varchar("status", { length: 32 }).notNull().default("active"),
     planData: json("plan_data").notNull(),
     createdAt: createdAt(),
@@ -175,6 +176,7 @@ export const mealPlans = mysqlTable(
   (t) => [
     uniqueIndex("meal_plans_payment_id_unique").on(t.paymentId),
     index("meal_plans_patient_id_status_idx").on(t.patientId, t.status),
+    index("meal_plans_status_end_date_idx").on(t.status, t.endDate),
   ],
 )
 

@@ -87,13 +87,18 @@ export interface PaymentRepo {
   reopenAllFailed(): Promise<number>
 }
 
-export type NotificationKind = "payment_link" | "plan_ready" | "password_reset"
+export type NotificationKind =
+  | "payment_link" | "plan_ready" | "password_reset"
+  | "plan_expiring_d5" | "plan_expiring_d2" | "plan_expiring_d0"
 
 export type NotificationView = {
   id: string
-  /** Nulo nas mensagens que não nascem de um envio do quiz (`password_reset`). */
+  /** Nulo nas mensagens que não nascem de um envio do quiz (`password_reset`, `plan_expiring_*`). */
   quizResponseId: string | null
-  /** Nulo nas mensagens que não nascem de uma cobrança (`password_reset`). */
+  /**
+   * Nulo nas mensagens que não nascem de uma cobrança (`password_reset`); no `plan_expiring_*`,
+   * a cobrança de renovação com link (só em d2 e d0).
+   */
   paymentId: string | null
   channel: Channel
   kind: NotificationKind
@@ -108,17 +113,22 @@ export type NotificationView = {
   paymentUrl: string | null
   /** Dados da própria mensagem (o link do `password_reset`); `markSent` os apaga. */
   payload: { link?: string } | null
+  /** Plano do aviso de vencimento; nulo nas demais mensagens. */
+  mealPlan: { id: string; endDate: string | null } | null
 }
 
 export interface NotificationRepo {
   /**
    * Para cada `quiz_response` do filtro e cada canal, cria uma linha `pending`
-   * (`next_attempt_at` = agora). Linhas já existentes são ignoradas.
+   * (`next_attempt_at` = agora). Linhas já existentes são ignoradas. Paciente sem telefone
+   * não ganha linha de WhatsApp.
    */
   enqueuePaymentLink(
     filter: { paymentId: string } | { quizResponseId: string },
     channels: Channel[],
   ): Promise<void>
+  /** Enfileira os avisos de vencimento do dia (§6.1). Devolve quantas linhas criou. */
+  enqueuePlanExpiring(d: { today: string; channels: Channel[]; now: Date }): Promise<number>
   listPendingIdsForQuizResponse(quizResponseId: string): Promise<string[]>
   get(id: string): Promise<NotificationView | null>
   tryLock(id: string, ttlMs: number): Promise<boolean>

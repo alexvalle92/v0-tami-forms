@@ -20,6 +20,7 @@ import type {
   SubmissionRepo,
   WebhookRepo,
 } from "@/lib/db/repos/types"
+import { daysLeft, expiryStage, renewalState } from "@/lib/renewal/rules"
 
 // Fake em memória dos repositórios, com o relógio real. Um Map por tabela.
 // As operações que precisam ser atômicas (create, applyPaymentEvent, complete) não têm `await` no meio:
@@ -57,6 +58,8 @@ export type PaymentRow = {
   /** YYYY-MM-DD */
   paymentDate: string | null
   lastEvent: string | null
+  /** Decide a cobrança de renovação de um plano (a criada depois dele, §4). */
+  createdAt: Date
 }
 
 type QuizResponseRow = {
@@ -75,6 +78,8 @@ export type NotificationRow = {
   quizResponseId: string | null
   /** Nulo em `password_reset`. */
   paymentId: string | null
+  /** Só nos avisos de vencimento (`plan_expiring_*`). */
+  mealPlanId: string | null
   payload: { link?: string } | null
   channel: Channel
   kind: NotificationKind
@@ -120,16 +125,19 @@ export type MealPlanRow = {
   description: string | null
   startDate: string
   endDate: string | null
-  dueDateNewMealPlan: string | null
-  paymentUrlNewMealPlan: string | null
   status: string
   planData: PlanData
+  createdAt: Date
 }
 
 type Processed = Extract<PaymentEventResult, { outcome: "processed" }>
 
 const isLocked = (row: { lockedUntil: Date | null }, now: Date) =>
   row.lockedUntil !== null && row.lockedUntil.getTime() > now.getTime()
+
+/** Destinatário, como no repositório MySQL; nulo no WhatsApp de paciente sem telefone. */
+const recipientFor = (channel: Channel, p: { email: string; phone: string }): string | null =>
+  channel === "email" ? p.email : p.phone === "" ? null : `55${p.phone}`
 
 /** Visão somente leitura das linhas guardadas, só para testes (inclui `lastError`, `status` etc.). */
 export type MemoryState = {
@@ -145,6 +153,8 @@ export type MemoryState = {
 export type MemorySeed = {
   /** Mensagem `password_reset` pendente, sem quiz nem cobrança; devolve o id. Sem `link`, o payload fica nulo. */
   passwordReset(d: { patientId: string; channel: Channel; link?: string }): string
+  /** Plano como o admin do PlanA cria: sem cobrança nem envio do quiz, `active` por padrão; devolve o id. */
+  mealPlan(d: { patientId: string; endDate: string | null; status?: string }): string
 }
 
 export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemorySeed } {
@@ -221,6 +231,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
           paidAt: null,
           paymentDate: null,
           lastEvent: null,
+          createdAt: now,
         }
         payments.set(payment.id, payment)
       }
@@ -359,7 +370,10 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     n.lockedUntil = null
   }
 
-  /** Linha `pending` nova; como o INSERT IGNORE na UNIQUE (quiz_response_id, channel, kind). */
+  /**
+   * Linha `pending` nova; como o INSERT IGNORE na UNIQUE (quiz_response_id, channel, kind).
+   * Sem destinatário (WhatsApp de paciente sem telefone), nenhuma linha.
+   */
   function enqueueNotification(
     q: { id: string; paymentId: string },
     patient: PatientRow,
@@ -367,6 +381,8 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     kind: NotificationKind,
     now: Date,
   ) {
+    const recipient = recipientFor(channel, patient)
+    if (recipient === null) return
     const exists = [...notifications.values()].some(
       (n) => n.quizResponseId === q.id && n.channel === channel && n.kind === kind,
     )
@@ -376,10 +392,11 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       patientId: patient.id,
       quizResponseId: q.id,
       paymentId: q.paymentId,
+      mealPlanId: null,
       payload: null,
       channel,
       kind,
-      recipient: channel === "email" ? patient.email : `55${patient.phone}`,
+      recipient,
       status: "pending",
       partsSent: 0,
       attempts: 0,
@@ -406,6 +423,68 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       }
     },
 
+    // Sem `await`: a rodada inteira é atômica, como os INSERT IGNORE do MySQL na chave única.
+    async enqueuePlanExpiring(d) {
+      let created = 0
+      for (const plan of mealPlans.values()) {
+        if (plan.status !== "active") continue
+        const stage = expiryStage(daysLeft(plan.endDate, d.today))
+        if (stage === null || stage === "expired") continue
+
+        // Cobrança de renovação (§4): a mais recente do paciente criada depois do plano.
+        const charge =
+          [...payments.values()]
+            .filter(
+              (p) =>
+                p.patientId === plan.patientId && p.createdAt.getTime() > plan.createdAt.getTime(),
+            )
+            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+            .pop() ?? null
+        const state = renewalState(charge, d.today)
+        if (state.status === "paid") continue
+
+        // A cobrança entra no aviso só em d2 e d0, e só quando já tem link.
+        const paymentId =
+          (stage === "d2" || stage === "d0") &&
+          state.status === "awaiting_payment" &&
+          state.paymentUrl !== null
+            ? state.paymentId
+            : null
+        const kind: NotificationKind = `plan_expiring_${stage}`
+        const patient = patients.get(plan.patientId)!
+        for (const channel of d.channels) {
+          const recipient = recipientFor(channel, patient)
+          if (recipient === null) continue
+          // UNIQUE (meal_plan_id, channel, kind).
+          const exists = [...notifications.values()].some(
+            (n) => n.mealPlanId === plan.id && n.channel === channel && n.kind === kind,
+          )
+          if (exists) continue
+          const row: NotificationRow = {
+            id: randomUUID(),
+            patientId: plan.patientId,
+            quizResponseId: null,
+            paymentId,
+            mealPlanId: plan.id,
+            payload: null,
+            channel,
+            kind,
+            recipient,
+            status: "pending",
+            partsSent: 0,
+            attempts: 0,
+            nextAttemptAt: d.now,
+            lockedUntil: null,
+            lastError: null,
+            sentAt: null,
+          }
+          notifications.set(row.id, row)
+          created++
+        }
+      }
+      return created
+    },
+
     async listPendingIdsForQuizResponse(quizResponseId) {
       return [...notifications.values()]
         .filter((n) => n.quizResponseId === quizResponseId && n.status === "pending")
@@ -416,6 +495,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       const n = notifications.get(id)
       if (!n) return null
       const patient = patients.get(n.patientId)!
+      const plan = n.mealPlanId === null ? undefined : mealPlans.get(n.mealPlanId)
       const view: NotificationView = {
         id: n.id,
         quizResponseId: n.quizResponseId,
@@ -431,6 +511,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         patientPasswordHash: patient.passwordHash,
         paymentUrl: (n.paymentId && payments.get(n.paymentId)?.paymentUrl) || null,
         payload: n.payload ? structuredClone(n.payload) : null,
+        mealPlan: plan ? { id: plan.id, endDate: plan.endDate } : null,
       }
       return view
     },
@@ -665,10 +746,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         description: null,
         startDate: d.startDate,
         endDate: d.endDate,
-        dueDateNewMealPlan: null,
-        paymentUrlNewMealPlan: null,
         status: "active",
         planData: structuredClone(d.planData),
+        createdAt: now,
       }
       mealPlans.set(plan.id, plan)
 
@@ -784,6 +864,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
           patientId,
           quizResponseId: null,
           paymentId: null,
+          mealPlanId: null,
           payload: link ? { link } : null,
           channel,
           kind: "password_reset",
@@ -798,6 +879,25 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         }
         notifications.set(row.id, row)
         return row.id
+      },
+
+      mealPlan({ patientId, endDate, status = "active" }) {
+        if (!patients.has(patientId)) throw new Error(`paciente ${patientId} não existe`)
+        const plan: MealPlanRow = {
+          id: randomUUID(),
+          patientId,
+          paymentId: null,
+          quizResponseId: null,
+          title: "Plano Alimentar",
+          description: null,
+          startDate: "2026-01-01",
+          endDate,
+          status,
+          planData: { meals: [], calories: 0, observations: "" },
+          createdAt: new Date(),
+        }
+        mealPlans.set(plan.id, plan)
+        return plan.id
       },
     },
   }

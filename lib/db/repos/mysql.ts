@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto"
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm"
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm"
 import type { Db } from "@/lib/db/client"
+import { daysLeft, expiryStage, renewalState, WARN_DAYS } from "@/lib/renewal/rules"
+import { addDaysISO } from "@/lib/time"
 import {
   asaasWebhookEvents,
   mealPlans,
@@ -90,9 +92,19 @@ const notificationUnlockedAt = (now: Date) =>
 const generationUnlockedAt = (now: Date) =>
   or(isNull(planGenerations.lockedUntil), lt(planGenerations.lockedUntil, now))
 
-/** Destinatário da notificação: e-mail como está; WhatsApp com o DDI 55. */
-const recipientFor = (channel: Channel, p: { email: string; phone: string }) =>
-  channel === "email" ? p.email : `55${p.phone}`
+/**
+ * Destinatário da notificação: e-mail como está; WhatsApp com o DDI 55. Nulo no WhatsApp de
+ * paciente sem telefone (o admin do PlanA pode cadastrá-lo assim): essa linha não é criada.
+ */
+const recipientFor = (channel: Channel, p: { email: string; phone: string }): string | null =>
+  channel === "email" ? p.email : p.phone === "" ? null : `55${p.phone}`
+
+/** Os canais pedidos que têm destinatário, cada um com o seu. */
+const addressed = (channels: Channel[], p: { email: string; phone: string }) =>
+  channels.flatMap((channel) => {
+    const recipient = recipientFor(channel, p)
+    return recipient === null ? [] : [{ channel, recipient }]
+  })
 
 export function createMysqlRepos(db: Db): Repos {
   async function createOnce(s: NewSubmission): Promise<SubmissionRef> {
@@ -373,14 +385,14 @@ export function createMysqlRepos(db: Db): Repos {
       const rows = targets.flatMap((t) => {
         const paymentId = t.paymentId
         if (paymentId === null) return []
-        return channels.map((channel: Channel) => ({
+        return addressed(channels, t).map(({ channel, recipient }) => ({
           id: randomUUID(),
           patientId: t.patientId,
           quizResponseId: t.quizResponseId,
           paymentId,
           channel,
           kind: "payment_link",
-          recipient: recipientFor(channel, t),
+          recipient,
           status: "pending" as const,
           partsSent: 0,
           attempts: 0,
@@ -392,6 +404,81 @@ export function createMysqlRepos(db: Db): Repos {
       if (rows.length === 0) return
       // UNIQUE (quiz_response_id, channel, kind): linhas já existentes são ignoradas.
       await db.insert(notifications).ignore().values(rows)
+    },
+
+    async enqueuePlanExpiring(d) {
+      // Planos ativos com 0 a 5 dias restantes (índice (status, end_date)), com o paciente.
+      const plans = await db
+        .select({
+          id: mealPlans.id,
+          patientId: mealPlans.patientId,
+          endDate: mealPlans.endDate,
+          createdAt: mealPlans.createdAt,
+          email: patients.email,
+          phone: patients.phone,
+        })
+        .from(mealPlans)
+        .innerJoin(patients, eq(patients.id, mealPlans.patientId))
+        .where(
+          and(
+            eq(mealPlans.status, "active"),
+            gte(mealPlans.endDate, d.today),
+            lte(mealPlans.endDate, addDaysISO(d.today, WARN_DAYS)),
+          ),
+        )
+        .orderBy(asc(mealPlans.endDate), asc(mealPlans.id))
+
+      let created = 0
+      for (const plan of plans) {
+        const stage = expiryStage(daysLeft(plan.endDate, d.today))
+        if (stage === null || stage === "expired") continue
+
+        // Cobrança de renovação (§4): a mais recente do paciente criada depois do plano.
+        const [charge] = await db
+          .select({
+            id: payments.id,
+            status: payments.status,
+            dueDate: payments.dueDate,
+            paymentUrl: payments.paymentUrl,
+            paidAt: payments.paidAt,
+          })
+          .from(payments)
+          .where(and(eq(payments.patientId, plan.patientId), gt(payments.createdAt, plan.createdAt)))
+          .orderBy(desc(payments.createdAt), desc(payments.id))
+          .limit(1)
+        const state = renewalState(charge ?? null, d.today)
+        // Renovação já paga: o plano novo está a caminho, nada de aviso.
+        if (state.status === "paid") continue
+
+        // A cobrança entra no aviso só em d2 e d0, e só quando já tem link.
+        const paymentId =
+          (stage === "d2" || stage === "d0") &&
+          state.status === "awaiting_payment" &&
+          state.paymentUrl !== null
+            ? state.paymentId
+            : null
+        const kind: NotificationKind = `plan_expiring_${stage}`
+        const rows = addressed(d.channels, plan).map(({ channel, recipient }) => ({
+          id: randomUUID(),
+          patientId: plan.patientId,
+          quizResponseId: null,
+          paymentId,
+          mealPlanId: plan.id,
+          channel,
+          kind,
+          recipient,
+          status: "pending" as const,
+          partsSent: 0,
+          attempts: 0,
+          nextAttemptAt: d.now,
+          createdAt: d.now,
+          updatedAt: d.now,
+        }))
+        if (rows.length === 0) continue
+        // UNIQUE (meal_plan_id, channel, kind): o aviso já enfileirado é ignorado.
+        created += affected(await db.insert(notifications).ignore().values(rows))
+      }
+      return created
     },
 
     async listPendingIdsForQuizResponse(quizResponseId) {
@@ -422,15 +509,23 @@ export function createMysqlRepos(db: Db): Repos {
           patientPasswordHash: patients.passwordHash,
           paymentUrl: payments.paymentUrl,
           payload: notifications.payload,
+          mealPlanId: mealPlans.id,
+          mealPlanEndDate: mealPlans.endDate,
         })
         .from(notifications)
         .innerJoin(patients, eq(patients.id, notifications.patientId))
         .leftJoin(payments, eq(payments.id, notifications.paymentId))
+        .leftJoin(mealPlans, eq(mealPlans.id, notifications.mealPlanId))
         .where(eq(notifications.id, id))
         .limit(1)
       if (!row) return null
-      // `kind` é VARCHAR no banco; só este repositório grava, sempre com um NotificationKind.
-      const view: NotificationView = { ...row, kind: row.kind as NotificationKind }
+      const { mealPlanId, mealPlanEndDate, ...rest } = row
+      const view: NotificationView = {
+        ...rest,
+        // `kind` é VARCHAR no banco; só este repositório grava, sempre com um NotificationKind.
+        kind: row.kind as NotificationKind,
+        mealPlan: mealPlanId === null ? null : { id: mealPlanId, endDate: mealPlanEndDate },
+      }
       return view
     },
 
@@ -776,19 +871,20 @@ export function createMysqlRepos(db: Db): Repos {
 
       // 6. Notificações `plan_ready` do envio. UNIQUE (quiz_response_id, channel, kind):
       // linhas já existentes são ignoradas.
-      if (d.channels.length > 0) {
+      const targets = addressed(d.channels, patient)
+      if (targets.length > 0) {
         await tx
           .insert(notifications)
           .ignore()
           .values(
-            d.channels.map((channel) => ({
+            targets.map(({ channel, recipient }) => ({
               id: randomUUID(),
               patientId: patient.id,
               quizResponseId: g.quizResponseId,
               paymentId: g.paymentId,
               channel,
               kind: "plan_ready" satisfies NotificationKind,
-              recipient: recipientFor(channel, patient),
+              recipient,
               status: "pending" as const,
               partsSent: 0,
               attempts: 0,

@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { createDb, type Db } from "@/lib/db/client"
 import { runMigrations } from "@/lib/db/migrate"
 import { createMysqlRepos } from "@/lib/db/repos/mysql"
-import { notifications, patients, payments, quizResponses } from "@/lib/db/schema"
+import { mealPlans, notifications, patients, payments, quizResponses } from "@/lib/db/schema"
 import { defineRepoContract } from "./repos.contract"
 
 // Roda o contrato contra um MySQL 8 real. Sem TEST_DATABASE_URL o arquivo é pulado.
@@ -15,46 +15,48 @@ const url = process.env.TEST_DATABASE_URL
 
 const MIGRATIONS_DIR = path.join(process.cwd(), "lib/db/migrations")
 
+async function dropAllTables(pool: mysql.Pool) {
+  const connection = await pool.getConnection()
+  try {
+    await connection.query("SET FOREIGN_KEY_CHECKS=0")
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()",
+    )
+    for (const row of rows) await connection.query(`DROP TABLE \`${row.name}\``)
+  } finally {
+    await connection.query("SET FOREIGN_KEY_CHECKS=1")
+    connection.release()
+  }
+}
+
+async function applyMigrationFile(pool: mysql.Pool, prefix: string) {
+  const file = readdirSync(MIGRATIONS_DIR).find((f) => f.startsWith(prefix) && f.endsWith(".sql"))
+  if (!file) throw new Error(`migration ${prefix} não encontrada`)
+  const text = readFileSync(path.join(MIGRATIONS_DIR, file), "utf8")
+  for (const statement of text.split("--> statement-breakpoint")) {
+    if (statement.trim()) await pool.query(statement)
+  }
+}
+
 // Aplica à mão (e não pelo migrator) para parar entre a 0001 e a 0002 com dados gravados.
 describe.skipIf(!url)("migration 0002 em banco com mensagens", () => {
   let pool: mysql.Pool
 
-  const dropAllTables = async () => {
-    const connection = await pool.getConnection()
-    try {
-      await connection.query("SET FOREIGN_KEY_CHECKS=0")
-      const [rows] = await connection.query<mysql.RowDataPacket[]>(
-        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()",
-      )
-      for (const row of rows) await connection.query(`DROP TABLE \`${row.name}\``)
-    } finally {
-      await connection.query("SET FOREIGN_KEY_CHECKS=1")
-      connection.release()
-    }
-  }
-
-  const applyMigrationFile = async (prefix: string) => {
-    const file = readdirSync(MIGRATIONS_DIR).find((f) => f.startsWith(prefix) && f.endsWith(".sql"))
-    if (!file) throw new Error(`migration ${prefix} não encontrada`)
-    const text = readFileSync(path.join(MIGRATIONS_DIR, file), "utf8")
-    for (const statement of text.split("--> statement-breakpoint")) {
-      if (statement.trim()) await pool.query(statement)
-    }
-  }
+  const applyMigration = (prefix: string) => applyMigrationFile(pool, prefix)
 
   beforeAll(async () => {
     ;({ pool } = createDb(url!))
-    await dropAllTables()
+    await dropAllTables(pool)
   }, 60_000)
 
   afterAll(async () => {
-    await dropAllTables()
+    await dropAllTables(pool)
     await pool?.end()
   }, 60_000)
 
   it("preenche notifications.patient_id das linhas existentes e afrouxa os vínculos", async () => {
-    await applyMigrationFile("0000_")
-    await applyMigrationFile("0001_")
+    await applyMigration("0000_")
+    await applyMigration("0001_")
 
     const patientId = randomUUID()
     const paymentId = randomUUID()
@@ -73,7 +75,7 @@ describe.skipIf(!url)("migration 0002 em banco com mensagens", () => {
       [notificationId, quizResponseId, paymentId],
     )
 
-    await applyMigrationFile("0002_")
+    await applyMigration("0002_")
 
     const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT patient_id FROM notifications WHERE id = ?", [notificationId])
     expect(rows[0].patient_id).toBe(patientId)
@@ -86,16 +88,75 @@ describe.skipIf(!url)("migration 0002 em banco com mensagens", () => {
   }, 60_000)
 })
 
+// Mesmo molde: para entre a 0002 e a 0003 com um plano que usa as colunas que saem.
+describe.skipIf(!url)("migration 0003 em banco com dados", () => {
+  let pool: mysql.Pool
+
+  const applyMigration = (prefix: string) => applyMigrationFile(pool, prefix)
+
+  beforeAll(async () => {
+    ;({ pool } = createDb(url!))
+    await dropAllTables(pool)
+  }, 60_000)
+
+  afterAll(async () => {
+    await dropAllTables(pool)
+    await pool?.end()
+  }, 60_000)
+
+  it("tira as colunas de renovação do plano e liga a notificação ao plano", async () => {
+    await applyMigration("0000_")
+    await applyMigration("0001_")
+    await applyMigration("0002_")
+
+    const patientId = randomUUID()
+    const mealPlanId = randomUUID()
+    const notificationId = randomUUID()
+    await pool.query("INSERT INTO patients (id, name, cpf, email, phone) VALUES (?, 'Ana', '52998224725', 'ana@example.com', '11987654321')", [patientId])
+    await pool.query(
+      "INSERT INTO meal_plans (id, patient_id, title, start_date, end_date, due_date_new_meal_plan, payment_url_new_meal_plan, status, plan_data) VALUES (?, ?, 'Plano', '2026-09-12', '2026-10-12', '2026-10-14', 'https://asaas.example/i/1', 'active', '{}')",
+      [mealPlanId, patientId],
+    )
+    await pool.query(
+      "INSERT INTO notifications (id, patient_id, channel, kind, recipient, status, next_attempt_at) VALUES (?, ?, 'email', 'password_reset', 'ana@example.com', 'pending', NOW(3))",
+      [notificationId, patientId],
+    )
+
+    await applyMigration("0003_")
+
+    const [planColumns] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'meal_plans' AND column_name IN ('due_date_new_meal_plan', 'payment_url_new_meal_plan')",
+    )
+    expect(planColumns).toEqual([])
+
+    const [columns] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT is_nullable AS nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'notifications' AND column_name = 'meal_plan_id'",
+    )
+    expect(columns.map((c) => c.nullable)).toEqual(["YES"])
+    const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT meal_plan_id FROM notifications WHERE id = ?", [notificationId])
+    expect(rows[0].meal_plan_id).toBeNull()
+
+    const [indexes] = await pool.query<mysql.RowDataPacket[]>(
+      "SELECT DISTINCT index_name AS name FROM information_schema.statistics WHERE table_schema = DATABASE() AND index_name IN ('notifications_plan_channel_kind_unique', 'meal_plans_status_end_date_idx') ORDER BY index_name",
+    )
+    expect(indexes.map((i) => i.name)).toEqual([
+      "meal_plans_status_end_date_idx",
+      "notifications_plan_channel_kind_unique",
+    ])
+  }, 60_000)
+})
+
 describe.skipIf(!url)("repositórios MySQL", () => {
   let db: Db
   let pool: mysql.Pool
 
   beforeAll(async () => {
     ;({ db, pool } = createDb(url!))
-    // Duas vezes: prova que as migrations são idempotentes.
+    // Duas vezes: prova que as migrations são idempotentes. O banco chega vazio (os testes de
+    // migration acima apagam tudo), então a primeira aplica as quatro: daí o prazo maior.
     await runMigrations(db)
     await runMigrations(db)
-  })
+  }, 60_000)
 
   beforeEach(async () => {
     // SET FOREIGN_KEY_CHECKS vale por conexão: o reset inteiro roda em UMA conexão dedicada.
@@ -247,7 +308,61 @@ describe.skipIf(!url)("repositórios MySQL", () => {
       const [migrations] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT COUNT(*) AS n FROM __drizzle_migrations",
       )
-      expect(Number(migrations[0].n)).toBe(3)
+      expect(Number(migrations[0].n)).toBe(4)
+    })
+
+    it("aviso de vencimento: plano do admin e plano sem data de fim", async () => {
+      const repos = createMysqlRepos(db)
+      const today = "2026-10-12"
+      const now = new Date()
+      const patientId = randomUUID()
+      await db.insert(patients).values({
+        id: patientId,
+        name: "Ana Souza",
+        cpf: "52998224725",
+        email: "ana@example.com",
+        phone: "11987654321",
+        createdAt: now,
+        updatedAt: now,
+      })
+      // Como o admin do PlanA cria: sem cobrança nem envio do quiz.
+      const adminPlan = (id: string, endDate: string | null) => ({
+        id,
+        patientId,
+        title: "Plano do admin",
+        startDate: "2026-09-12",
+        endDate,
+        status: "active",
+        planData: { meals: [], calories: 0, observations: "" },
+        createdAt: now,
+        updatedAt: now,
+      })
+      const endsToday = randomUUID()
+      const noEnd = randomUUID()
+      await db.insert(mealPlans).values([adminPlan(endsToday, today), adminPlan(noEnd, null)])
+
+      expect(
+        await repos.notifications.enqueuePlanExpiring({ today, channels: ["email", "whatsapp"], now }),
+      ).toBe(2)
+
+      const rowsOf = (mealPlanId: string) =>
+        db
+          .select({
+            kind: notifications.kind,
+            channel: notifications.channel,
+            recipient: notifications.recipient,
+            paymentId: notifications.paymentId,
+            quizResponseId: notifications.quizResponseId,
+            patientId: notifications.patientId,
+          })
+          .from(notifications)
+          .where(eq(notifications.mealPlanId, mealPlanId))
+          .orderBy(notifications.channel)
+      expect(await rowsOf(endsToday)).toEqual([
+        { kind: "plan_expiring_d0", channel: "email", recipient: "ana@example.com", paymentId: null, quizResponseId: null, patientId },
+        { kind: "plan_expiring_d0", channel: "whatsapp", recipient: "5511987654321", paymentId: null, quizResponseId: null, patientId },
+      ])
+      expect(await rowsOf(noEnd)).toEqual([])
     })
 
     describe("password_reset: mensagem sem quiz nem cobrança", () => {
