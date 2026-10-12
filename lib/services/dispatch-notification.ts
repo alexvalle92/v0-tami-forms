@@ -3,7 +3,13 @@ import { HttpError } from "@/lib/http/retry"
 import { MAX_NOTIFICATION_ATTEMPTS, jobBackoffMs } from "@/lib/jobs/backoff"
 import type { Logger } from "@/lib/log"
 import type { EmailSender } from "@/lib/notify/email"
-import { renderFirstAccess, renderPaymentLink, renderPlanReady, toWhatsAppParts } from "@/lib/notify/templates"
+import {
+  renderFirstAccess,
+  renderPasswordReset,
+  renderPaymentLink,
+  renderPlanReady,
+  toWhatsAppParts,
+} from "@/lib/notify/templates"
 import type { WhatsAppSender } from "@/lib/notify/whatsapp"
 import type { AlertAdmin } from "./alert-admin"
 import { safeErrorMessage, toLastError } from "./last-error"
@@ -15,8 +21,16 @@ export type DispatchNotification = (id: string) => Promise<DispatchResult>
 const LOCK_TTL_MS = 120_000
 const WHATSAPP_PART_GAP_MS = 3000
 
+/** Mensagem que não adianta repetir (ex.: `password_reset` sem link): falha definitiva na primeira tentativa. */
+export class PermanentNotificationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "PermanentNotificationError"
+  }
+}
+
 /**
- * Envia uma notificação enfileirada (e-mail ou WhatsApp; `payment_link` ou `plan_ready`). O WhatsApp é retomável: cada parte enviada
+ * Envia uma notificação enfileirada (e-mail ou WhatsApp; `payment_link`, `plan_ready` ou `password_reset`). O WhatsApp é retomável: cada parte enviada
  * é gravada (`parts_sent`), então uma nova tentativa continua da próxima parte e não reenvia as anteriores.
  * Falhas viram nova tentativa com backoff; a definitiva (erro permanente ou 5ª tentativa) alerta o admin.
  */
@@ -43,7 +57,10 @@ export function createDispatchNotification(d: {
     err: unknown,
   ): Promise<{ result: DispatchResult; lockCleared: boolean }> {
     const attempts = n.attempts + 1
-    const failed = (err instanceof HttpError && !err.transient) || attempts >= MAX_NOTIFICATION_ATTEMPTS
+    const failed =
+      (err instanceof HttpError && !err.transient) ||
+      err instanceof PermanentNotificationError ||
+      attempts >= MAX_NOTIFICATION_ATTEMPTS
     const at = d.now()
     const error = toLastError(step, err, attempts, at)
     // Nunca logar `err.body`, destinatário, nome do paciente nem o texto da mensagem.
@@ -99,6 +116,13 @@ export function createDispatchNotification(d: {
     if (n.kind === "payment_link") {
       if (!n.paymentUrl) throw new Error("payment without url")
       return renderPaymentLink({ name: n.patientName, link: n.paymentUrl })
+    }
+
+    // O link vive no payload da mensagem até ela sair (`markSent` o apaga); sem ele não há o que enviar.
+    if (n.kind === "password_reset") {
+      const link = n.payload?.link
+      if (!link) throw new PermanentNotificationError("password_reset without link")
+      return renderPasswordReset({ name: n.patientName, link })
     }
 
     if (!n.patientPasswordHash) throw new Error("patient without password hash")

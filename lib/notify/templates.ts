@@ -1,6 +1,7 @@
 export const PAYMENT_LINK_TITLE = "✅ Recebemos seu cadastro! Seu plano alimentar está pronto"
 export const FIRST_ACCESS_TITLE = "Primeiro Acesso App PlanA"
 export const PLAN_READY_TITLE = "Seu novo Plano Alimentar está pronto"
+export const PASSWORD_RESET_TITLE = "Redefinição de senha do PlanA"
 
 const escapeHtml = (s: string) =>
   s
@@ -59,6 +60,22 @@ export function renderPlanReady(d: { name: string; appUrl: string }): {
     `Olá ${escapeHtml(d.name)}! 👋 <br>Recebemos seu pagamento e seu <strong>novo Plano Alimentar Personalizado já está disponível</strong>. 🎉 <br><br>` +
     `Acesse com seu CPF e a senha que você já usa: <br>${escapeHtml(d.appUrl)}`
   return { subject: PLAN_READY_TITLE, html, text: htmlToText(html) }
+}
+
+/**
+ * Redefinição de senha do PlanA (§7.3 do spec do PlanA): link de uso único, válido por 1 hora.
+ * O link só existe no payload da mensagem e neste texto: nunca em log nem em erro.
+ */
+export function renderPasswordReset(d: { name: string; link: string }): {
+  subject: string
+  html: string
+  text: string
+} {
+  const html =
+    `Olá ${escapeHtml(d.name)}! 👋 <br>Recebemos um pedido para redefinir a senha do seu acesso ao <strong>PlanA</strong>. <br><br>` +
+    `Para criar uma nova senha, acesse o link abaixo. Ele vale por 1 hora e só pode ser usado uma vez: <br>${escapeHtml(d.link)} <br><br>` +
+    `Se você não fez esse pedido, ignore esta mensagem. Sua senha continua a mesma.`
+  return { subject: PASSWORD_RESET_TITLE, html, text: htmlToText(html) }
 }
 
 /** Porta o antigo `textoFormatado` do fluxo anterior: o html vira partes de texto no formato do WhatsApp. */

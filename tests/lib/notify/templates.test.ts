@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest"
 import {
   FIRST_ACCESS_TITLE,
+  PASSWORD_RESET_TITLE,
   PAYMENT_LINK_TITLE,
   PLAN_READY_TITLE,
   renderFirstAccess,
+  renderPasswordReset,
   renderPaymentLink,
   renderPlanReady,
   toWhatsAppParts,
@@ -146,6 +148,39 @@ describe("toWhatsAppParts", () => {
     expect(parts[0]).toContain("*Plano Alimentar Personalizado já está pronto*")
     expect(parts[1]).toContain("https://asaas/i/1")
     expect(parts[2].endsWith("💚")).toBe(true)
+    for (const p of parts) expect(p).not.toContain("<")
+  })
+})
+
+describe("renderPasswordReset", () => {
+  const LINK = "https://plana.test/cliente/redefinir-senha/abc"
+
+  it("gera o texto de §7.3 do spec do PlanA", () => {
+    const r = renderPasswordReset({ name: "Ana", link: LINK })
+    expect(r.subject).toBe(PASSWORD_RESET_TITLE)
+    expect(PASSWORD_RESET_TITLE).toBe("Redefinição de senha do PlanA")
+    expect(r.html).toBe(
+      "Olá Ana! 👋 <br>Recebemos um pedido para redefinir a senha do seu acesso ao <strong>PlanA</strong>. <br><br>" +
+        "Para criar uma nova senha, acesse o link abaixo. Ele vale por 1 hora e só pode ser usado uma vez: <br>" +
+        `${LINK} <br><br>` +
+        "Se você não fez esse pedido, ignore esta mensagem. Sua senha continua a mesma.",
+    )
+    expect(r.text).not.toMatch(/<\/?(br|strong)>/)
+    expect(r.text).toContain(LINK)
+  })
+
+  it("escapa o nome no html e mantém o nome real no texto", () => {
+    const r = renderPasswordReset({ name: "<b>Ana</b>", link: LINK })
+    expect(r.html).toContain("Olá &lt;b&gt;Ana&lt;/b&gt;!")
+    expect(r.text).toContain("Olá <b>Ana</b>!")
+  })
+
+  it("vira 3 partes de WhatsApp, a primeira com o título em negrito", () => {
+    const r = renderPasswordReset({ name: "Ana", link: LINK })
+    const parts = toWhatsAppParts(PASSWORD_RESET_TITLE, r.html)
+    expect(parts).toHaveLength(3)
+    expect(parts[0].startsWith(`*${PASSWORD_RESET_TITLE}*\n`)).toBe(true)
+    expect(parts[1]).toContain(LINK)
     for (const p of parts) expect(p).not.toContain("<")
   })
 })

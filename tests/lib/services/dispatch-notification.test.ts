@@ -7,9 +7,11 @@ import type { Logger } from "@/lib/log"
 import type { EmailSender } from "@/lib/notify/email"
 import {
   FIRST_ACCESS_TITLE,
+  PASSWORD_RESET_TITLE,
   PAYMENT_LINK_TITLE,
   PLAN_READY_TITLE,
   renderFirstAccess,
+  renderPasswordReset,
   renderPaymentLink,
   renderPlanReady,
   toWhatsAppParts,
@@ -603,6 +605,70 @@ describe("createDispatchNotification", () => {
       })
       expect(loggedText(s.log)).not.toBe("[]")
       expect(everything).not.toContain(plan.tempPassword)
+    })
+  })
+
+  describe("password_reset", () => {
+    const LINK = "https://plana.test/cliente/redefinir-senha/tok_abc123"
+    const message = renderPasswordReset({ name: NAME, link: LINK })
+
+    it("e-mail: envia o texto com o link do payload e apaga o payload", async () => {
+      const s = await setup()
+      const id = s.repos.seed.passwordReset({ patientId: patientIdOf(s), channel: "email", link: LINK })
+
+      expect(await s.dispatch(id)).toBe("sent")
+
+      expect(s.email.send).toHaveBeenCalledTimes(1)
+      expect(s.email.send.mock.calls[0][0]).toMatchObject({
+        to: EMAIL,
+        subject: PASSWORD_RESET_TITLE,
+        html: message.html,
+      })
+      expect(planRow(s, id)).toMatchObject({ status: "sent", payload: null })
+      expect(s.whatsapp.sendText).not.toHaveBeenCalled()
+    })
+
+    it("WhatsApp: as 3 partes, com 3 s entre elas", async () => {
+      const s = await setup()
+      const id = s.repos.seed.passwordReset({ patientId: patientIdOf(s), channel: "whatsapp", link: LINK })
+      const parts = toWhatsAppParts(PASSWORD_RESET_TITLE, message.html)
+
+      expect(await s.dispatch(id)).toBe("sent")
+
+      expect(parts).toHaveLength(3)
+      expect(s.whatsapp.sendText.mock.calls).toEqual(parts.map((p) => [RECIPIENT_WA, p]))
+      expect(s.sleeps).toEqual([3000, 3000])
+      expect(planRow(s, id)).toMatchObject({ status: "sent", partsSent: 3, payload: null })
+    })
+
+    it("sem link no payload: falha definitiva na primeira tentativa, com alerta", async () => {
+      const s = await setup()
+      const id = s.repos.seed.passwordReset({ patientId: patientIdOf(s), channel: "email" })
+
+      expect(await s.dispatch(id)).toBe("failed")
+
+      expect(s.email.send).not.toHaveBeenCalled()
+      expect(planRow(s, id)).toMatchObject({ status: "failed", attempts: 1 })
+      expect(s.alertAdmin).toHaveBeenCalledTimes(1)
+      expect(s.alertAdmin.mock.calls[0][0]).toMatchObject({ kind: "notification", id, patientName: NAME })
+    })
+
+    it("o link nunca aparece em log, last_error nem alerta", async () => {
+      const s = await setup()
+      s.email.send.mockRejectedValueOnce(new HttpError("HTTP 503", { transient: true }))
+      const id = s.repos.seed.passwordReset({ patientId: patientIdOf(s), channel: "email", link: LINK })
+
+      expect(await s.dispatch(id)).toBe("retry_scheduled")
+
+      const everything = JSON.stringify({
+        logs: loggedText(s.log),
+        error: planRow(s, id).lastError,
+        alerts: s.alertAdmin.mock.calls,
+      })
+      expect(loggedText(s.log)).not.toBe("[]")
+      expect(everything).not.toContain("tok_abc123")
+      // A tentativa seguinte ainda precisa do link.
+      expect(planRow(s, id).payload).toEqual({ link: LINK })
     })
   })
 
