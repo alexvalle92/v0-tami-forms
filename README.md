@@ -104,6 +104,8 @@ Use o mesmo comando para gerar `ASAAS_WEBHOOK_TOKEN` e `ACCESS_PASSWORD_SECRET`,
 6. Health check: caminho `/api/health`. Responde 200 quando o banco está acessível e 503 quando não está.
 7. Configure o domínio no proxy do Easypanel.
 
+**Atenção ao atualizar para a renovação de plano:** a migration `0003` remove as colunas `meal_plans.due_date_new_meal_plan` e `meal_plans.payment_url_new_meal_plan`, que o PlanA do primeiro ciclo ainda lê. Entre este deploy e o do PlanA novo, as telas de plano do PlanA antigo respondem com erro. Suba o PlanA logo em seguida e, se ele já estiver em uso, faça os dois deploys num horário de pouco acesso.
+
 O app aplica as migrations do banco **a cada inicialização**. Se a configuração estiver inválida ou o banco inacessível, o processo encerra e o log diz o motivo.
 
 ## Webhook do Asaas
@@ -145,7 +147,8 @@ A cada 2 minutos o app executa uma rodada que:
 
 - termina as cobranças que o Asaas não conseguiu criar antes (até 20 por rodada);
 - gera os planos alimentares que ficaram pendentes (até 3 por rodada). Normalmente o plano sai logo depois do pagamento; esta etapa é a rede de segurança para quando a geração falhou ou o app reiniciou no meio;
-- envia os e-mails e WhatsApps pendentes (até 50 por rodada). Os da etapa anterior já saem na mesma rodada.
+- enfileira os avisos de vencimento do plano (ver "Integração com o PlanA"). Esta etapa só age entre **9h e 20h de São Paulo**: fora desse horário a rodada a ignora e a primeira rodada dentro da janela cria os avisos do dia (nunca duplica);
+- envia os e-mails e WhatsApps pendentes (até 50 por rodada). Os das etapas anteriores, inclusive os avisos de vencimento, já saem na mesma rodada.
 
 Quando uma tentativa falha, a espera cresce: 2, 4, 8, 16 e 32 minutos; depois, 60 minutos entre tentativas. O limite é de **8 tentativas** por cobrança, **5** por geração de plano (esperas de 2, 4, 8 e 16 minutos) e **5** por mensagem. Esgotado o limite, o item vira falha definitiva e um e-mail é enviado para `ADMIN_ALERT_EMAIL`.
 
@@ -233,6 +236,23 @@ O PlanA (repositório `dieta-app`) é quem mostra o plano para a pessoa e onde o
 - **Ordem de deploy:** primeiro este app (aplica as migrations), depois o PlanA. Quando o schema mudar, este app sobe antes.
 - **Schema:** `lib/db/schema.ts` é a fonte. O PlanA mantém uma cópia idêntica; depois de mudar o schema aqui, rode `pnpm db:sync-schema` no PlanA.
 - **Mensagens:** todo e-mail e WhatsApp sai por aqui. O PlanA grava a mensagem de recuperação de senha em `notifications` (`kind = 'password_reset'`) e pede o envio imediato em `POST /api/notifications/dispatch` (seção "Operação"). Se esse pedido falhar, o job de 2 minutos envia.
+
+**Renovação do plano** (`POST /api/renewals`): o PlanA mostra o formulário de renovação ao paciente e, no envio, chama este endpoint para criar a cobrança. Exige `Authorization: Bearer <JOBS_TOKEN>` (o mesmo token do job; não há variável nova) e o mesmo corpo de `/api/submit-quiz`, `{ submissionId, answers }`, com `nome_completo`, `email`, `whatsapp` e `cpf` dentro de `answers` (até 64 KB). Usa a mesma validação e o mesmo serviço do quiz: idempotente por `submissionId`, reaproveita a cobrança pendente do paciente, cria a cobrança no Asaas dentro do pedido (até 20 s) e depois da resposta envia o link por e-mail e WhatsApp. Diferenças em relação ao quiz: não tem limite por IP (quem chama é o PlanA) e aceita `whatsapp` vazio, para o paciente cadastrado pelo admin sem telefone; nesse caso o cliente é criado no Asaas sem telefone e o link vai só por e-mail.
+
+| Resposta | Quando |
+|---|---|
+| `200 { "ok": true, "paymentUrl": "https://..." }` | dados gravados e link de pagamento obtido |
+| `200 { "ok": true, "paymentUrl": null }` | dados gravados, mas o Asaas ainda não respondeu; o job conclui e envia o link |
+| `400 { "ok": false }` | corpo ilegível ou fora do formato |
+| `401 { "ok": false }` | token ausente ou errado |
+| `413 { "ok": false }` | corpo acima de 64 KB |
+| `500 { "ok": false }` | nada foi gravado (falha do banco); pode reenviar com o mesmo `submissionId` |
+
+```bash
+curl -X POST https://SEU-DOMINIO/api/renewals   -H "Authorization: Bearer SEU_JOBS_TOKEN"   -H "Content-Type: application/json"   -d '{"submissionId":"UUID","answers":{"nome_completo":"Ana Souza","email":"ana@example.com","whatsapp":"","cpf":"52998224725"}}'
+```
+
+**Avisos de vencimento do plano:** o job de 2 minutos enfileira em `notifications` (`kind = plan_expiring_d5`, `plan_expiring_d2` e `plan_expiring_d0`), por e-mail e WhatsApp, o aviso dos planos `active` que vencem em 5 dias, em 2 dias e no dia do vencimento, só entre 9h e 20h de São Paulo. Sai um aviso por plano, canal e estágio. Nos avisos de 2 dias e do dia, a mensagem leva o link de pagamento quando a renovação já foi pedida; quando a renovação já está paga, não há aviso. Paciente sem telefone recebe só o e-mail. Depois de vencido não há mensagem; só o alerta na tela do PlanA.
 
 **Formato do hash** em `patients.password_hash` e `admins.password_hash`:
 

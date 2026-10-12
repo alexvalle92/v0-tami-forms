@@ -22,6 +22,7 @@ async function setup(
     notifications?: NotificationRepo
   } = () => ({}),
   nowDate: Date = NOW,
+  phone = "11999990000",
 ) {
   const repos = createMemoryRepos()
   const asaas = createFakeAsaas()
@@ -29,7 +30,7 @@ async function setup(
   const log: Logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const created = await repos.submissions.create({
     submissionId: "sub-1",
-    patient: { name: "Ana Souza", cpf: CPF, email: "ana@example.com", phone: "11999990000" },
+    patient: { name: "Ana Souza", cpf: CPF, email: "ana@example.com", phone },
     answers: {},
     amount: "39.90",
     todaySP: "2026-10-07",
@@ -101,6 +102,25 @@ describe("createSyncPayment", () => {
     ])
     expect(s.alertAdmin).not.toHaveBeenCalled()
     await expectUnlocked(s)
+  })
+
+  it("paciente sem telefone: o cliente criado no Asaas não tem a chave mobilePhone", async () => {
+    const s = await setup(() => ({}), NOW, "")
+
+    const result = await s.sync(s.paymentId, OPTS)
+
+    expect(result.status).toBe("synced")
+    expect(s.asaas.createdCustomers).toHaveLength(1)
+    expect(s.asaas.createdCustomers[0]).not.toHaveProperty("mobilePhone")
+    expect(s.asaas.createdCustomers[0]).toMatchObject({ name: "Ana Souza", cpfCnpj: CPF, email: "ana@example.com" })
+  })
+
+  it("paciente com telefone: o cliente criado no Asaas leva mobilePhone", async () => {
+    const s = await setup()
+
+    await s.sync(s.paymentId, OPTS)
+
+    expect(s.asaas.createdCustomers[0]).toHaveProperty("mobilePhone", "11999990000")
   })
 
   it("passa o deadline para o Asaas", async () => {

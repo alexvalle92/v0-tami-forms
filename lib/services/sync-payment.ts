@@ -111,7 +111,8 @@ export function createSyncPayment(d: {
                 name: patient.name,
                 cpfCnpj: patient.cpf,
                 email: patient.email,
-                mobilePhone: patient.phone,
+                // Paciente sem telefone: o Asaas recebe o cliente sem a chave `mobilePhone`.
+                ...(patient.phone !== "" ? { mobilePhone: patient.phone } : {}),
                 externalReference: patient.id,
               },
               asaasOpts,

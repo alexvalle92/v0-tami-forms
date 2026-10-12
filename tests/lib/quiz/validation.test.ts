@@ -87,6 +87,30 @@ describe("parseSubmitRequest", () => {
     expect(parseSubmitRequest(body).ok).toBe(false)
   })
 
+  it("com allowEmptyPhone, whatsapp vazio é aceito e vira phone vazio", () => {
+    const body = { submissionId, answers: { ...validAnswers, whatsapp: "" } }
+    const result = parseSubmitRequest(body, { allowEmptyPhone: true })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.patient.phone).toBe("")
+  })
+
+  it("sem allowEmptyPhone, whatsapp vazio continua inválido", () => {
+    const body = { submissionId, answers: { ...validAnswers, whatsapp: "" } }
+    expect(parseSubmitRequest(body).ok).toBe(false)
+    expect(parseSubmitRequest(body, {}).ok).toBe(false)
+  })
+
+  it("com allowEmptyPhone, whatsapp preenchido e inválido continua inválido", () => {
+    const body = { submissionId, answers: { ...validAnswers, whatsapp: "123" } }
+    expect(parseSubmitRequest(body, { allowEmptyPhone: true }).ok).toBe(false)
+  })
+
+  it("com allowEmptyPhone, whatsapp válido segue normalizado", () => {
+    const result = parseSubmitRequest({ submissionId, answers: validAnswers }, { allowEmptyPhone: true })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.patient.phone).toBe("44991651250")
+  })
+
   it("limita o nome a 200 caracteres (VARCHAR(200)), depois do trim", () => {
     const ok = { submissionId, answers: { ...validAnswers, nome_completo: `  ${"a".repeat(200)}  ` } }
     const result = parseSubmitRequest(ok)

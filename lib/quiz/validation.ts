@@ -31,24 +31,36 @@ export function normalizePhone(raw: string): string | null {
   return digits.length === 10 || digits.length === 11 ? digits : null
 }
 
-const answersSchema = z
-  .object({
-    nome_completo: z.string().trim().min(1, "nome_completo obrigatório").max(200, "nome_completo muito longo"),
-    email: z.string().trim().toLowerCase().email("email inválido").max(254, "email muito longo"),
-    whatsapp: z.string().refine((v) => normalizePhone(v) !== null, "whatsapp inválido"),
-    cpf: z.string().refine(isValidCpf, "cpf inválido"),
-  })
-  .passthrough()
+/**
+ * Com `allowEmptyPhone`, `whatsapp` igual a `""` é aceito (paciente cadastrado pelo admin sem
+ * telefone); um valor preenchido continua precisando ser um telefone válido.
+ */
+function buildBodySchema(allowEmptyPhone: boolean) {
+  const answersSchema = z
+    .object({
+      nome_completo: z.string().trim().min(1, "nome_completo obrigatório").max(200, "nome_completo muito longo"),
+      email: z.string().trim().toLowerCase().email("email inválido").max(254, "email muito longo"),
+      whatsapp: z
+        .string()
+        .refine((v) => (v === "" ? allowEmptyPhone : normalizePhone(v) !== null), "whatsapp inválido"),
+      cpf: z.string().refine(isValidCpf, "cpf inválido"),
+    })
+    .passthrough()
 
-const bodySchema = z.object({
-  submissionId: z.string().uuid("submissionId deve ser um UUID"),
-  answers: answersSchema,
-})
+  return z.object({
+    submissionId: z.string().uuid("submissionId deve ser um UUID"),
+    answers: answersSchema,
+  })
+}
+
+const defaultBodySchema = buildBodySchema(false)
+const emptyPhoneBodySchema = buildBodySchema(true)
 
 export function parseSubmitRequest(
   body: unknown,
+  opts: { allowEmptyPhone?: boolean } = {},
 ): { ok: true; value: ParsedSubmission } | { ok: false; issues: string[] } {
-  const parsed = bodySchema.safeParse(body)
+  const parsed = (opts.allowEmptyPhone ? emptyPhoneBodySchema : defaultBodySchema).safeParse(body)
   if (!parsed.success) {
     // Só caminho e mensagem: nunca ecoar valores recebidos (dados pessoais).
     return {
@@ -65,7 +77,7 @@ export function parseSubmitRequest(
       patient: {
         name: answers.nome_completo,
         email: answers.email,
-        phone: normalizePhone(answers.whatsapp) as string,
+        phone: answers.whatsapp === "" ? "" : (normalizePhone(answers.whatsapp) as string),
         cpf: answers.cpf.replace(/\D/g, ""),
       },
       // Objeto original completo, sem as transformações de trim/lowercase.

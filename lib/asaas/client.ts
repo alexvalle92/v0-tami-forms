@@ -13,7 +13,8 @@ export type CreateCustomerInput = {
   name: string
   cpfCnpj: string
   email: string
-  mobilePhone: string
+  /** Ausente para paciente sem telefone (cadastrado pelo admin). */
+  mobilePhone?: string
   externalReference: string
 }
 
