@@ -384,6 +384,10 @@ describe("createRunJobs", () => {
         order.push("generate")
         return real(id)
       },
+      reminders: () => async () => {
+        order.push("reminders")
+        return 0
+      },
       wrapDispatch: (real) => async (id) => {
         order.push("dispatch")
         return real(id)
@@ -396,7 +400,7 @@ describe("createRunJobs", () => {
 
     // 2 notificações payment_link (etapa 1) + 2 plan_ready (criadas na etapa 2), todas na mesma rodada.
     expect(summary).toEqual({ payments: 1, plans: 1, reminders: 0, notifications: 4, errors: 0 })
-    expect(order).toEqual(["sync", "generate", "dispatch", "dispatch", "dispatch", "dispatch"])
+    expect(order).toEqual(["sync", "generate", "reminders", "dispatch", "dispatch", "dispatch", "dispatch"])
     expect(s.repos.state.planGenerations.get(generationId)!.status).toBe("done")
     const notifications = [...s.repos.state.notifications.values()]
     expect(notifications.map((n) => [n.kind, n.status]).sort()).toEqual([

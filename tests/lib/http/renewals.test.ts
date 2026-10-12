@@ -82,6 +82,19 @@ describe("POST /api/renewals", () => {
     expect(s.submit).not.toHaveBeenCalled()
   })
 
+  it("sem token com corpo inválido ou grande demais → 401, não 400/413 (a autenticação vem antes do corpo)", async () => {
+    const s = setup()
+    const big = bodyOf({ answers: answers({ pad: "p".repeat(RENEWALS_MAX_BODY_BYTES) }) })
+    for (const body of ["{nao e json", bodyOf({ submissionId: "abc" }), big]) {
+      for (const token of [null, "x".repeat(40)]) {
+        const res = await s.handler(post(body, token))
+        expect(res.status).toBe(401)
+        expect(await res.json()).toEqual({ ok: false })
+      }
+    }
+    expect(s.submit).not.toHaveBeenCalled()
+  })
+
   it("corpo que não é JSON → 400", async () => {
     const s = setup()
     const res = await s.handler(post("{nao e json"))
