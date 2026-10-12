@@ -106,6 +106,14 @@ Use o mesmo comando para gerar `ASAAS_WEBHOOK_TOKEN` e `ACCESS_PASSWORD_SECRET`,
 
 **Atenção ao atualizar para a renovação de plano:** a migration `0003` remove as colunas `meal_plans.due_date_new_meal_plan` e `meal_plans.payment_url_new_meal_plan`, que o PlanA do primeiro ciclo ainda lê. Entre este deploy e o do PlanA novo, as telas de plano do PlanA antigo respondem com erro. Suba o PlanA logo em seguida e, se ele já estiver em uso, faça os dois deploys num horário de pouco acesso.
 
+- **Antes do deploy da `0003`**, confira no banco de produção que as duas colunas nunca foram preenchidas. O resultado esperado é `0`; se vier outro número, pare e investigue antes de subir, porque a migration apaga esses dados:
+
+  ```sql
+  SELECT COUNT(*) FROM meal_plans WHERE due_date_new_meal_plan IS NOT NULL OR payment_url_new_meal_plan IS NOT NULL;
+  ```
+
+- **A `0003` não tem volta simples:** para voltar ao código anterior deste app (ou ao PlanA do primeiro ciclo), é preciso recriar antes as duas colunas em `meal_plans`; sem elas, o código anterior quebra.
+
 O app aplica as migrations do banco **a cada inicialização**. Se a configuração estiver inválida ou o banco inacessível, o processo encerra e o log diz o motivo.
 
 ## Webhook do Asaas
@@ -217,7 +225,10 @@ A resposta traz `reopened`, o número de itens reabertos. Token errado ou ausent
 `POST /api/notifications/dispatch` envia na hora mensagens que já estão em `notifications`. Exige o cabeçalho `Authorization: Bearer <JOBS_TOKEN>` e um corpo com 1 a 10 ids. Responde `202` e envia depois da resposta, uma por vez, com as mesmas regras do job (tentativas, espera crescente e alerta). Id inexistente ou que já não está pendente é ignorado.
 
 ```bash
-curl -X POST https://SEU-DOMINIO/api/notifications/dispatch   -H "Authorization: Bearer SEU_JOBS_TOKEN"   -H "Content-Type: application/json"   -d '{"notificationIds":["ID_DA_MENSAGEM"]}'
+curl -X POST https://SEU-DOMINIO/api/notifications/dispatch \
+  -H "Authorization: Bearer SEU_JOBS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"notificationIds":["ID_DA_MENSAGEM"]}'
 ```
 
 ### O que fazer depois de um alerta
@@ -249,10 +260,21 @@ O PlanA (repositório `dieta-app`) é quem mostra o plano para a pessoa e onde o
 | `500 { "ok": false }` | nada foi gravado (falha do banco); pode reenviar com o mesmo `submissionId` |
 
 ```bash
-curl -X POST https://SEU-DOMINIO/api/renewals   -H "Authorization: Bearer SEU_JOBS_TOKEN"   -H "Content-Type: application/json"   -d '{"submissionId":"UUID","answers":{"nome_completo":"Ana Souza","email":"ana@example.com","whatsapp":"","cpf":"52998224725"}}'
+curl -X POST https://SEU-DOMINIO/api/renewals \
+  -H "Authorization: Bearer SEU_JOBS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submissionId": "UUID",
+    "answers": {
+      "nome_completo": "Ana Souza",
+      "email": "ana@example.com",
+      "whatsapp": "",
+      "cpf": "52998224725"
+    }
+  }'
 ```
 
-**Avisos de vencimento do plano:** o job de 2 minutos enfileira em `notifications` (`kind = plan_expiring_d5`, `plan_expiring_d2` e `plan_expiring_d0`), por e-mail e WhatsApp, o aviso dos planos `active` que vencem em 5 dias, em 2 dias e no dia do vencimento, só entre 9h e 20h de São Paulo. Sai um aviso por plano, canal e estágio. Nos avisos de 2 dias e do dia, a mensagem leva o link de pagamento quando a renovação já foi pedida; quando a renovação já está paga, não há aviso. Paciente sem telefone recebe só o e-mail. Depois de vencido não há mensagem; só o alerta na tela do PlanA.
+**Avisos de vencimento do plano:** o job de 2 minutos enfileira em `notifications` (`kind = plan_expiring_d5`, `plan_expiring_d2` e `plan_expiring_d0`), por e-mail e WhatsApp, o aviso dos planos `active` que vencem em 5 dias, em 2 dias e no dia do vencimento, só entre 9h e 20h de São Paulo. Sai um aviso por plano, canal e estágio. Nos avisos de 2 dias e do dia, a mensagem leva o link de pagamento quando a renovação já foi pedida; quando a renovação já está paga, não há aviso. Paciente sem telefone recebe só o e-mail. Depois de vencido não há mensagem; só o alerta na tela do PlanA. No envio o aviso é conferido de novo: se ele atrasou (novas tentativas, reabertura com `/api/jobs/retry`) e nesse meio-tempo a renovação foi paga, o plano deixou de ser `active` ou já venceu, a mensagem não sai, vira `failed` com `last_error.step = notify.stale` e não gera alerta.
 
 **Formato do hash** em `patients.password_hash` e `admins.password_hash`:
 
