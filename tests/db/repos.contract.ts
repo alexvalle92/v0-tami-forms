@@ -422,6 +422,7 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
           status: "pending",
           attempts: 0,
           partsSent: 0,
+          payload: null,
         })
         expect(n!.recipient).toBe(n!.channel === "email" ? p1.email : `55${p1.phone}`)
       }
@@ -488,7 +489,7 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       expect(await notifications.tryLock(id, 60_000)).toBe(true) // reopenAllFailed limpou a reserva
 
       await notifications.markSent(id)
-      expect((await notifications.get(id))!.status).toBe("sent")
+      expect((await notifications.get(id))!).toMatchObject({ status: "sent", payload: null })
       expect(await notifications.listDue(inMinutes(60), BIG)).not.toContain(id)
       expect(await notifications.listPendingIdsForQuizResponse(ref.quizResponseId)).not.toContain(id)
     })

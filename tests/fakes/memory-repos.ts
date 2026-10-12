@@ -70,8 +70,12 @@ type QuizResponseRow = {
 
 export type NotificationRow = {
   id: string
-  quizResponseId: string
-  paymentId: string
+  patientId: string
+  /** Nulo em `password_reset`. */
+  quizResponseId: string | null
+  /** Nulo em `password_reset`. */
+  paymentId: string | null
+  payload: { link?: string } | null
   channel: Channel
   kind: NotificationKind
   recipient: string
@@ -137,7 +141,13 @@ export type MemoryState = {
   mealPlans: ReadonlyMap<string, Readonly<MealPlanRow>>
 }
 
-export function createMemoryRepos(): Repos & { state: MemoryState } {
+/** Atalhos de teste para estados que nenhuma interface pública do `v0-tami-forms` cria (o PlanA os cria no banco). */
+export type MemorySeed = {
+  /** Mensagem `password_reset` pendente, sem quiz nem cobrança; devolve o id. Sem `link`, o payload fica nulo. */
+  passwordReset(d: { patientId: string; channel: Channel; link?: string }): string
+}
+
+export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemorySeed } {
   const patients = new Map<string, PatientRow>()
   const payments = new Map<string, PaymentRow>()
   const quizResponses = new Map<string, QuizResponseRow>()
@@ -363,8 +373,10 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
     if (exists) return
     const row: NotificationRow = {
       id: randomUUID(),
+      patientId: patient.id,
       quizResponseId: q.id,
       paymentId: q.paymentId,
+      payload: null,
       channel,
       kind,
       recipient: channel === "email" ? patient.email : `55${patient.phone}`,
@@ -403,8 +415,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
     async get(id) {
       const n = notifications.get(id)
       if (!n) return null
-      const q = quizResponses.get(n.quizResponseId)!
-      const patient = patients.get(q.patientId)!
+      const patient = patients.get(n.patientId)!
       const view: NotificationView = {
         id: n.id,
         quizResponseId: n.quizResponseId,
@@ -418,7 +429,8 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
         patientId: patient.id,
         patientName: patient.name,
         patientPasswordHash: patient.passwordHash,
-        paymentUrl: payments.get(n.paymentId)?.paymentUrl ?? null,
+        paymentUrl: (n.paymentId && payments.get(n.paymentId)?.paymentUrl) || null,
+        payload: n.payload ? structuredClone(n.payload) : null,
       }
       return view
     },
@@ -447,6 +459,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
       n.status = "sent"
       n.sentAt = new Date()
       n.lockedUntil = null
+      n.payload = null
     },
 
     async markFailure(id, d) {
@@ -762,5 +775,30 @@ export function createMemoryRepos(): Repos & { state: MemoryState } {
     planGenerations: planGenerationsRepo,
     mealPlans: mealPlansRepo,
     state: { patients, payments, notifications, webhookEvents, planGenerations, mealPlans },
+    seed: {
+      passwordReset({ patientId, channel, link }) {
+        const patient = patients.get(patientId)
+        if (!patient) throw new Error(`paciente ${patientId} não existe`)
+        const row: NotificationRow = {
+          id: randomUUID(),
+          patientId,
+          quizResponseId: null,
+          paymentId: null,
+          payload: link ? { link } : null,
+          channel,
+          kind: "password_reset",
+          recipient: channel === "email" ? patient.email : `55${patient.phone}`,
+          status: "pending",
+          partsSent: 0,
+          attempts: 0,
+          nextAttemptAt: new Date(),
+          lockedUntil: null,
+          lastError: null,
+          sentAt: null,
+        }
+        notifications.set(row.id, row)
+        return row.id
+      },
+    },
   }
 }

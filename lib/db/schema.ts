@@ -1,3 +1,5 @@
+// Fonte única do schema. O PlanA (dieta-app) mantém uma cópia idêntica em lib/db/schema.ts,
+// atualizada com "pnpm db:sync-schema" (que copia este arquivo).
 import { sql } from "drizzle-orm"
 import {
   boolean,
@@ -100,16 +102,17 @@ export const quizResponses = mysqlTable(
   ],
 )
 
+// Fila de mensagens. `quiz_response_id` e `payment_id` são nulos nas mensagens que não nascem de um
+// envio do quiz (ex.: `password_reset`, pedida pelo PlanA); `patient_id` é sempre preenchido.
 export const notifications = mysqlTable(
   "notifications",
   {
     id: char("id", { length: 36 }).primaryKey(),
-    quizResponseId: char("quiz_response_id", { length: 36 })
+    patientId: char("patient_id", { length: 36 })
       .notNull()
-      .references(() => quizResponses.id),
-    paymentId: char("payment_id", { length: 36 })
-      .notNull()
-      .references(() => payments.id),
+      .references(() => patients.id),
+    quizResponseId: char("quiz_response_id", { length: 36 }).references(() => quizResponses.id),
+    paymentId: char("payment_id", { length: 36 }).references(() => payments.id),
     channel: mysqlEnum("channel", ["email", "whatsapp"]).notNull(),
     kind: varchar("kind", { length: 32 }).notNull(),
     recipient: varchar("recipient", { length: 254 }).notNull(),
@@ -119,6 +122,8 @@ export const notifications = mysqlTable(
     nextAttemptAt: dateTime("next_attempt_at").notNull(),
     lockedUntil: dateTime("locked_until"),
     lastError: json("last_error"),
+    // Dados que só a mensagem usa (ex.: o link de redefinição de senha); apagado quando a mensagem sai.
+    payload: json("payload").$type<{ link?: string }>(),
     sentAt: dateTime("sent_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -130,6 +135,7 @@ export const notifications = mysqlTable(
       t.kind,
     ),
     index("notifications_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
+    index("notifications_patient_id_idx").on(t.patientId),
   ],
 )
 
@@ -201,3 +207,107 @@ export const planGenerations = mysqlTable(
     index("plan_generations_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
   ],
 )
+
+// ---------------------------------------------------------------------------
+// Tabelas do PlanA (dieta-app). Criadas aqui para que um único app, este, seja dono de todas as
+// migrations; o PlanA só lê e grava.
+// ---------------------------------------------------------------------------
+
+export const admins = mysqlTable(
+  "admins",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    name: varchar("name", { length: 200 }).notNull(),
+    // Sempre em minúsculas.
+    email: varchar("email", { length: 254 }).notNull(),
+    // Hash scrypt, mesmo formato de `patients.password_hash`.
+    passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+    // O primeiro admin nasce só com nome, e-mail e senha; os demais campos são opcionais.
+    cpf: char("cpf", { length: 11 }),
+    phone: varchar("phone", { length: 13 }),
+    crn: varchar("crn", { length: 32 }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("admins_email_unique").on(t.email)],
+)
+
+export const passwordResetTokens = mysqlTable(
+  "password_reset_tokens",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    patientId: char("patient_id", { length: 36 })
+      .notNull()
+      .references(() => patients.id),
+    // SHA-256 do token em hexadecimal; o token em texto puro nunca é gravado aqui.
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    expiresAt: dateTime("expires_at").notNull(),
+    used: boolean("used").notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("password_reset_tokens_token_hash_unique").on(t.tokenHash),
+    index("password_reset_tokens_patient_id_idx").on(t.patientId),
+  ],
+)
+
+export const recipes = mysqlTable(
+  "recipes",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    title: varchar("title", { length: 200 }).notNull(),
+    description: text("description"),
+    ingredients: json("ingredients").$type<string[]>().notNull(),
+    preparation: text("preparation").notNull(),
+    tips: text("tips"),
+    prepTime: int("prep_time"),
+    servings: int("servings"),
+    calories: int("calories"),
+    category: varchar("category", { length: 100 }),
+    imageUrl: text("image_url"),
+    portionQuantity: decimal("portion_quantity", { precision: 10, scale: 2, mode: "number" }),
+    proteins: decimal("proteins", { precision: 10, scale: 2, mode: "number" }),
+    lipids: decimal("lipids", { precision: 10, scale: 2, mode: "number" }),
+    carbohydrates: decimal("carbohydrates", { precision: 10, scale: 2, mode: "number" }),
+    fiber: decimal("fiber", { precision: 10, scale: 2, mode: "number" }),
+    activeCustomer: boolean("active_customer").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("recipes_category_idx").on(t.category)],
+)
+
+export const mealCategories = mysqlTable(
+  "meal_categories",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    name: varchar("name", { length: 100 }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("meal_categories_name_unique").on(t.name)],
+)
+
+// Configuração do admin: apagar a categoria ou a receita apaga os itens ligados. Única tabela do
+// banco com cascata.
+export const allowedMealItems = mysqlTable("allowed_meal_items", {
+  id: char("id", { length: 36 }).primaryKey(),
+  mealCategoryId: char("meal_category_id", { length: 36 })
+    .notNull()
+    .references(() => mealCategories.id, { onDelete: "cascade" }),
+  // "food" ou "recipe".
+  itemType: varchar("item_type", { length: 16 }).notNull(),
+  foodName: varchar("food_name", { length: 200 }),
+  recipeId: char("recipe_id", { length: 36 }).references(() => recipes.id, { onDelete: "cascade" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+})
+
+// Uma única linha, id "global".
+export const appSettings = mysqlTable("app_settings", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  dietTechnicalDefinition: text("diet_technical_definition").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+})

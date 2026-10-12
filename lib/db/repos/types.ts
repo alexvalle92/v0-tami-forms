@@ -87,12 +87,14 @@ export interface PaymentRepo {
   reopenAllFailed(): Promise<number>
 }
 
-export type NotificationKind = "payment_link" | "plan_ready"
+export type NotificationKind = "payment_link" | "plan_ready" | "password_reset"
 
 export type NotificationView = {
   id: string
-  quizResponseId: string
-  paymentId: string
+  /** Nulo nas mensagens que não nascem de um envio do quiz (`password_reset`). */
+  quizResponseId: string | null
+  /** Nulo nas mensagens que não nascem de uma cobrança (`password_reset`). */
+  paymentId: string | null
   channel: Channel
   kind: NotificationKind
   recipient: string
@@ -104,6 +106,8 @@ export type NotificationView = {
   /** `password_hash` atual do paciente, lido na hora (decide o texto do `plan_ready`, §9). */
   patientPasswordHash: string | null
   paymentUrl: string | null
+  /** Dados da própria mensagem (o link do `password_reset`); `markSent` os apaga. */
+  payload: { link?: string } | null
 }
 
 export interface NotificationRepo {

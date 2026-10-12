@@ -358,6 +358,7 @@ export function createMysqlRepos(db: Db): Repos {
         .select({
           quizResponseId: quizResponses.id,
           paymentId: quizResponses.paymentId,
+          patientId: patients.id,
           email: patients.email,
           phone: patients.phone,
         })
@@ -374,6 +375,7 @@ export function createMysqlRepos(db: Db): Repos {
         if (paymentId === null) return []
         return channels.map((channel: Channel) => ({
           id: randomUUID(),
+          patientId: t.patientId,
           quizResponseId: t.quizResponseId,
           paymentId,
           channel,
@@ -419,11 +421,11 @@ export function createMysqlRepos(db: Db): Repos {
           patientName: patients.name,
           patientPasswordHash: patients.passwordHash,
           paymentUrl: payments.paymentUrl,
+          payload: notifications.payload,
         })
         .from(notifications)
-        .innerJoin(quizResponses, eq(quizResponses.id, notifications.quizResponseId))
-        .innerJoin(patients, eq(patients.id, quizResponses.patientId))
-        .innerJoin(payments, eq(payments.id, notifications.paymentId))
+        .innerJoin(patients, eq(patients.id, notifications.patientId))
+        .leftJoin(payments, eq(payments.id, notifications.paymentId))
         .where(eq(notifications.id, id))
         .limit(1)
       if (!row) return null
@@ -459,7 +461,7 @@ export function createMysqlRepos(db: Db): Repos {
       const now = new Date()
       await db
         .update(notifications)
-        .set({ status: "sent", sentAt: now, lockedUntil: null, updatedAt: now })
+        .set({ status: "sent", sentAt: now, lockedUntil: null, payload: null, updatedAt: now })
         .where(eq(notifications.id, id))
     },
 
@@ -781,6 +783,7 @@ export function createMysqlRepos(db: Db): Repos {
           .values(
             d.channels.map((channel) => ({
               id: randomUUID(),
+              patientId: patient.id,
               quizResponseId: g.quizResponseId,
               paymentId: g.paymentId,
               channel,
