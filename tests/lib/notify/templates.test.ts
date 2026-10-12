@@ -3,11 +3,15 @@ import {
   FIRST_ACCESS_TITLE,
   PASSWORD_RESET_TITLE,
   PAYMENT_LINK_TITLE,
+  PLAN_EXPIRING_TITLES,
   PLAN_READY_TITLE,
+  RENEWAL_PAYMENT_LINK_TITLE,
   renderFirstAccess,
   renderPasswordReset,
   renderPaymentLink,
+  renderPlanExpiring,
   renderPlanReady,
+  renderRenewalPaymentLink,
   toWhatsAppParts,
 } from "@/lib/notify/templates"
 
@@ -182,5 +186,155 @@ describe("renderPasswordReset", () => {
     expect(parts[0].startsWith(`*${PASSWORD_RESET_TITLE}*\n`)).toBe(true)
     expect(parts[1]).toContain(LINK)
     for (const p of parts) expect(p).not.toContain("<")
+  })
+})
+
+describe("renderPlanExpiring", () => {
+  const FORM_LINK = "https://plana.nutritamilivalle.com.br/cliente/planos/abc/renovar"
+  const PAY_LINK = "https://asaas.test/i/abc123"
+  const base = { name: "Ana", endDate: "2026-10-17" }
+
+  it("os títulos de cada estágio", () => {
+    expect(PLAN_EXPIRING_TITLES.d5).toBe("Seu plano alimentar está acabando")
+    expect(PLAN_EXPIRING_TITLES.d2).toBe("Faltam poucos dias para o seu plano vencer")
+    expect(PLAN_EXPIRING_TITLES.d0).toBe("Seu plano alimentar vence hoje")
+  })
+
+  it("d5: html exato, em uma linha, e variante e link são ignorados", () => {
+    const expected =
+      "Olá Ana! 👋 <br>Seu <strong>Plano Alimentar</strong> vence em <strong>17/10/2026</strong>. <br><br>" +
+      "Em breve vamos liberar um formulário rápido de atualização para ajustar seu próximo plano. Avisaremos assim que ele estiver disponível. 💚"
+    const form = renderPlanExpiring({ ...base, stage: "d5", variant: "form", link: FORM_LINK })
+    const payment = renderPlanExpiring({ ...base, stage: "d5", variant: "payment", link: PAY_LINK })
+
+    expect(form.html).toBe(expected)
+    expect(payment.html).toBe(expected)
+    expect(form.subject).toBe(PLAN_EXPIRING_TITLES.d5)
+  })
+
+  it("d2 formulário: html exato, em uma linha", () => {
+    expect(renderPlanExpiring({ ...base, stage: "d2", variant: "form", link: FORM_LINK }).html).toBe(
+      "Olá Ana! 👋 <br>Seu <strong>Plano Alimentar</strong> vence em <strong>17/10/2026</strong>. <br><br>" +
+        "O formulário de atualização já está disponível e leva menos de 3 minutos. Depois de preencher, é só concluir o pagamento para liberar seu novo plano: <br>" +
+        FORM_LINK,
+    )
+  })
+
+  it("d2 pagamento: html exato, em uma linha", () => {
+    expect(renderPlanExpiring({ ...base, stage: "d2", variant: "payment", link: PAY_LINK }).html).toBe(
+      "Olá Ana! 👋 <br>Seu <strong>Plano Alimentar</strong> vence em <strong>17/10/2026</strong>. <br><br>" +
+        "Você já preencheu o formulário de atualização. Para liberar seu novo plano, efetue o pagamento pelo link abaixo: <br>" +
+        PAY_LINK,
+    )
+  })
+
+  it("d0 formulário: html exato, em uma linha", () => {
+    expect(renderPlanExpiring({ ...base, stage: "d0", variant: "form", link: FORM_LINK }).html).toBe(
+      "Olá Ana! 👋 <br>Seu <strong>Plano Alimentar</strong> vence <strong>hoje</strong>. <br><br>" +
+        "Para receber um novo plano atualizado, preencha o formulário de atualização (leva menos de 3 minutos) e conclua o pagamento: <br>" +
+        FORM_LINK,
+    )
+  })
+
+  it("d0 pagamento: html exato, em uma linha", () => {
+    expect(renderPlanExpiring({ ...base, stage: "d0", variant: "payment", link: PAY_LINK }).html).toBe(
+      "Olá Ana! 👋 <br>Seu <strong>Plano Alimentar</strong> vence <strong>hoje</strong>. <br><br>" +
+        "Você já preencheu o formulário de atualização. Para liberar seu novo plano, efetue o pagamento pelo link abaixo: <br>" +
+        PAY_LINK,
+    )
+  })
+
+  it.each([
+    ["d2", "form", "leva menos de 3 minutos", FORM_LINK],
+    ["d2", "payment", "Você já preencheu o formulário de atualização", PAY_LINK],
+    ["d0", "form", "leva menos de 3 minutos", FORM_LINK],
+    ["d0", "payment", "Você já preencheu o formulário de atualização", PAY_LINK],
+  ] as const)("%s, variante %s: leva o link, o texto da variante e o assunto do estágio", (stage, variant, phrase, link) => {
+    const r = renderPlanExpiring({ ...base, stage, variant, link })
+    expect(r.html).toContain(link)
+    expect(r.text).toContain(link)
+    expect(r.html).toContain(phrase)
+    expect(r.subject).toBe(PLAN_EXPIRING_TITLES[stage])
+  })
+
+  it("d2 mostra a data e d0 diz hoje", () => {
+    const d2 = renderPlanExpiring({ ...base, stage: "d2", variant: "form", link: FORM_LINK })
+    const d0 = renderPlanExpiring({ ...base, stage: "d0", variant: "form", link: FORM_LINK })
+    expect(d2.html).toContain("<strong>17/10/2026</strong>")
+    expect(d0.html).toContain("vence <strong>hoje</strong>")
+    expect(d0.html).not.toContain("17/10/2026")
+  })
+
+  it("escapa o link no html e o texto o devolve como veio", () => {
+    const link = "https://asaas.test/i/1?a=1&b=2"
+    const r = renderPlanExpiring({ ...base, stage: "d2", variant: "payment", link })
+    expect(r.html).toContain("https://asaas.test/i/1?a=1&amp;b=2")
+    expect(r.text).toContain(link)
+  })
+
+  it.each([
+    ["d5", "form"],
+    ["d2", "form"],
+    ["d2", "payment"],
+    ["d0", "form"],
+    ["d0", "payment"],
+  ] as const)("%s, variante %s: nome escapado, texto sem tag e 2 partes de WhatsApp", (stage, variant) => {
+    const r = renderPlanExpiring({
+      name: "<b>Ana</b>",
+      endDate: "2026-10-17",
+      stage,
+      variant,
+      link: variant === "form" ? FORM_LINK : PAY_LINK,
+    })
+    expect(r.html).toContain("Olá &lt;b&gt;Ana&lt;/b&gt;!")
+    expect(r.html).not.toContain("<b>")
+    expect(r.text).toContain("Olá <b>Ana</b>!")
+    expect(r.text).not.toMatch(/<\/?(br|strong)>/)
+
+    const parts = toWhatsAppParts(r.subject, r.html)
+    expect(parts).toHaveLength(2)
+    expect(parts[0].startsWith(`*${PLAN_EXPIRING_TITLES[stage]}*\n`)).toBe(true)
+    for (const p of parts) expect(p).not.toMatch(/<\/?(br|strong)>|&lt;|&gt;/)
+  })
+})
+
+describe("renderRenewalPaymentLink", () => {
+  const LINK = "https://asaas.test/i/abc123"
+
+  it("o assunto é o título da renovação", () => {
+    expect(RENEWAL_PAYMENT_LINK_TITLE).toBe("Recebemos sua atualização! Falta só o pagamento")
+    expect(renderRenewalPaymentLink({ name: "Ana", link: LINK }).subject).toBe(RENEWAL_PAYMENT_LINK_TITLE)
+  })
+
+  it("html exato, em uma linha", () => {
+    expect(renderRenewalPaymentLink({ name: "Ana", link: LINK }).html).toBe(
+      "Olá Ana! 👋 <br>Recebemos a atualização dos seus dados. 🎉 <br><br>" +
+        "Para liberar seu <strong>novo Plano Alimentar Personalizado</strong>, efetue o pagamento pelo link abaixo: <br>" +
+        `${LINK} <br><br>` +
+        "Assim que o pagamento for confirmado, seu novo plano aparece no PlanA. É só entrar com seu CPF e a senha que você já usa. 💚",
+    )
+  })
+
+  it("leva o link e a senha que o paciente já usa, sem falar em cadastro nem em informações de acesso", () => {
+    const r = renderRenewalPaymentLink({ name: "Ana", link: LINK })
+    expect(r.html).toContain(LINK)
+    expect(r.html).toContain("a senha que você já usa")
+    for (const channel of [r.html, r.text]) {
+      expect(channel).not.toContain("cadastro")
+      expect(channel).not.toContain("informações de acesso")
+    }
+  })
+
+  it("nome escapado, texto sem tag e 3 partes de WhatsApp", () => {
+    const r = renderRenewalPaymentLink({ name: "<b>Ana</b>", link: LINK })
+    expect(r.html).toContain("Olá &lt;b&gt;Ana&lt;/b&gt;!")
+    expect(r.text).toContain("Olá <b>Ana</b>!")
+    expect(r.text).not.toMatch(/<\/?(br|strong)>/)
+
+    const parts = toWhatsAppParts(r.subject, r.html)
+    expect(parts).toHaveLength(3)
+    expect(parts[0].startsWith(`*${RENEWAL_PAYMENT_LINK_TITLE}*\n`)).toBe(true)
+    expect(parts[1]).toContain(LINK)
+    for (const p of parts) expect(p).not.toMatch(/<\/?(br|strong)>|&lt;|&gt;/)
   })
 })

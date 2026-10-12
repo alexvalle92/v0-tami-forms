@@ -7,9 +7,12 @@ import {
   renderFirstAccess,
   renderPasswordReset,
   renderPaymentLink,
+  renderPlanExpiring,
   renderPlanReady,
+  renderRenewalPaymentLink,
   toWhatsAppParts,
 } from "@/lib/notify/templates"
+import type { ExpiryStage } from "@/lib/renewal/rules"
 import type { WhatsAppSender } from "@/lib/notify/whatsapp"
 import type { AlertAdmin } from "./alert-admin"
 import { safeErrorMessage, toLastError } from "./last-error"
@@ -30,7 +33,8 @@ export class PermanentNotificationError extends Error {
 }
 
 /**
- * Envia uma notificação enfileirada (e-mail ou WhatsApp; `payment_link`, `plan_ready` ou `password_reset`). O WhatsApp é retomável: cada parte enviada
+ * Envia uma notificação enfileirada (e-mail ou WhatsApp; `payment_link`, `plan_ready`, `password_reset` ou
+ * `plan_expiring_d5|d2|d0`). O `payment_link` de quem já tem senha usa o texto da renovação. O WhatsApp é retomável: cada parte enviada
  * é gravada (`parts_sent`), então uma nova tentativa continua da próxima parte e não reenvia as anteriores.
  * Falhas viram nova tentativa com backoff; a definitiva (erro permanente ou 5ª tentativa) alerta o admin.
  */
@@ -115,7 +119,21 @@ export function createDispatchNotification(d: {
   async function renderMessage(n: NotificationView): Promise<{ subject: string; html: string; text: string }> {
     if (n.kind === "payment_link") {
       if (!n.paymentUrl) throw new Error("payment without url")
+      // Quem já tem senha é paciente que renova (ou que refez o quiz): o texto do cadastro novo não serve.
+      if (n.patientPasswordHash) return renderRenewalPaymentLink({ name: n.patientName, link: n.paymentUrl })
       return renderPaymentLink({ name: n.patientName, link: n.paymentUrl })
+    }
+
+    // Aviso de vencimento: o plano dá a data e o link do formulário; a cobrança, quando ligada, troca a variante.
+    if (n.kind === "plan_expiring_d5" || n.kind === "plan_expiring_d2" || n.kind === "plan_expiring_d0") {
+      if (!n.mealPlan || !n.mealPlan.endDate) throw new PermanentNotificationError(`${n.kind} without meal plan`)
+      const stage = n.kind.slice("plan_expiring_".length) as ExpiryStage
+      const endDate = n.mealPlan.endDate
+      if (n.paymentUrl) {
+        return renderPlanExpiring({ stage, name: n.patientName, endDate, variant: "payment", link: n.paymentUrl })
+      }
+      const link = new URL(`cliente/planos/${n.mealPlan.id}/renovar`, d.appUrl).href
+      return renderPlanExpiring({ stage, name: n.patientName, endDate, variant: "form", link })
     }
 
     // O link vive no payload da mensagem até ela sair (`markSent` o apaga); sem ele não há o que enviar.

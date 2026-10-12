@@ -9,11 +9,15 @@ import {
   FIRST_ACCESS_TITLE,
   PASSWORD_RESET_TITLE,
   PAYMENT_LINK_TITLE,
+  PLAN_EXPIRING_TITLES,
   PLAN_READY_TITLE,
+  RENEWAL_PAYMENT_LINK_TITLE,
   renderFirstAccess,
   renderPasswordReset,
   renderPaymentLink,
+  renderPlanExpiring,
   renderPlanReady,
+  renderRenewalPaymentLink,
   toWhatsAppParts,
 } from "@/lib/notify/templates"
 import type { WhatsAppSender } from "@/lib/notify/whatsapp"
@@ -608,8 +612,196 @@ describe("createDispatchNotification", () => {
     })
   })
 
+  describe("plan_expiring", () => {
+    const TODAY = "2026-10-07"
+    const FORM_LINK_BASE = `${APP_URL}cliente/planos/`
+    const RENEWAL_PAY_URL = "https://asaas.test/i/renovacao456"
+    const both: Channel[] = ["email", "whatsapp"]
+
+    /** Avisos enfileirados do plano, um por canal. */
+    async function enqueued(s: Setup, planId: string) {
+      await s.repos.notifications.enqueuePlanExpiring({ today: TODAY, channels: both, now: NOW })
+      return Object.fromEntries(
+        [...s.repos.state.notifications.values()].filter((n) => n.mealPlanId === planId).map((n) => [n.channel, n.id]),
+      ) as Record<Channel, string>
+    }
+
+    /** Plano que vence em 1 dia (estágio d2, com a data padrão) e o aviso enfileirado, um por canal. */
+    async function expiring(s: Setup, endDate = "2026-10-08") {
+      const planId = s.repos.seed.mealPlan({ patientId: patientIdOf(s), endDate })
+      return { planId, ids: await enqueued(s, planId) }
+    }
+
+    it("sem cobrança: envia a variante formulário com o link do PlanA", async () => {
+      const s = await setup()
+      const { planId, ids } = await expiring(s)
+      const link = `${FORM_LINK_BASE}${planId}/renovar`
+
+      expect(await s.dispatch(ids.email)).toBe("sent")
+
+      expect(s.email.send).toHaveBeenCalledTimes(1)
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent).toMatchObject({ to: EMAIL, subject: PLAN_EXPIRING_TITLES.d2 })
+      expect(sent.html).toBe(
+        renderPlanExpiring({ stage: "d2", name: NAME, endDate: "2026-10-08", variant: "form", link }).html,
+      )
+      expect(sent.html).toContain(`https://plana.nutritamilivalle.com.br/cliente/planos/${planId}/renovar`)
+      expect(sent.html).toContain("<strong>08/10/2026</strong>")
+      expect(sent.text).toContain(link)
+      expect(planRow(s, ids.email)).toMatchObject({ status: "sent" })
+      expect(s.alertAdmin).not.toHaveBeenCalled()
+    })
+
+    it("sem cobrança no WhatsApp: as 2 partes, com 3 s entre elas", async () => {
+      const s = await setup()
+      const { planId, ids } = await expiring(s)
+      const link = `${FORM_LINK_BASE}${planId}/renovar`
+      const parts = toWhatsAppParts(
+        PLAN_EXPIRING_TITLES.d2,
+        renderPlanExpiring({ stage: "d2", name: NAME, endDate: "2026-10-08", variant: "form", link }).html,
+      )
+
+      expect(await s.dispatch(ids.whatsapp)).toBe("sent")
+
+      expect(parts).toHaveLength(2)
+      expect(s.whatsapp.sendText.mock.calls).toEqual(parts.map((p) => [RECIPIENT_WA, p]))
+      expect(s.sleeps).toEqual([3000])
+    })
+
+    it("com cobrança: envia a variante pagamento com o link da cobrança", async () => {
+      const s = await setup()
+      const planId = s.repos.seed.mealPlan({ patientId: patientIdOf(s), endDate: "2026-10-08" })
+      // A cobrança de renovação é a criada depois do plano; garante um relógio posterior ao do plano.
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      // Quiz de renovação: a cobrança anterior já venceu, então nasce outra.
+      const renewal = await s.repos.submissions.create({
+        submissionId: "sub-renovacao",
+        patient: { name: NAME, cpf: "52998224725", email: EMAIL, phone: PHONE },
+        answers: {},
+        amount: "39.90",
+        todaySP: "2026-10-10",
+      })
+      if (renewal === "duplicate") throw new Error("unexpected duplicate")
+      expect(renewal.paymentId).not.toBe(s.paymentId)
+      await s.repos.payments.markSynced(renewal.paymentId, {
+        asaasId: "pay_2",
+        asaasCustomerId: "cus_1",
+        status: "PENDING",
+        paymentUrl: RENEWAL_PAY_URL,
+        invoiceNumber: null,
+        billingType: "UNDEFINED",
+        dueDate: "2026-10-12",
+      })
+      const ids = await enqueued(s, planId)
+
+      expect(await s.dispatch(ids.email)).toBe("sent")
+
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.subject).toBe(PLAN_EXPIRING_TITLES.d2)
+      expect(sent.html).toBe(
+        renderPlanExpiring({
+          stage: "d2",
+          name: NAME,
+          endDate: "2026-10-08",
+          variant: "payment",
+          link: RENEWAL_PAY_URL,
+        }).html,
+      )
+      expect(sent.html).toContain(RENEWAL_PAY_URL)
+      expect(sent.html).not.toContain("/renovar")
+    })
+
+    it("sem plano ligado é falha definitiva na primeira tentativa", async () => {
+      const s = await setup({
+        wrap: (repos) => ({
+          ...repos.notifications,
+          get: async (id) => {
+            const view = await repos.notifications.get(id)
+            return view && { ...view, mealPlan: null }
+          },
+        }),
+      })
+      const { ids } = await expiring(s)
+
+      expect(await s.dispatch(ids.email)).toBe("failed")
+
+      expect(s.email.send).not.toHaveBeenCalled()
+      expect(planRow(s, ids.email)).toMatchObject({ status: "failed", attempts: 1 })
+      expect(s.alertAdmin).toHaveBeenCalledTimes(1)
+      expect(s.alertAdmin.mock.calls[0][0]).toMatchObject({ kind: "notification", id: ids.email, patientName: NAME })
+    })
+
+    it("plano sem data de vencimento é falha definitiva na primeira tentativa", async () => {
+      const s = await setup({
+        wrap: (repos) => ({
+          ...repos.notifications,
+          get: async (id) => {
+            const view = await repos.notifications.get(id)
+            return view && { ...view, mealPlan: view.mealPlan && { ...view.mealPlan, endDate: null } }
+          },
+        }),
+      })
+      const { ids } = await expiring(s)
+
+      expect(await s.dispatch(ids.whatsapp)).toBe("failed")
+
+      expect(s.whatsapp.sendText).not.toHaveBeenCalled()
+      expect(planRow(s, ids.whatsapp)).toMatchObject({ status: "failed", attempts: 1 })
+      expect(s.alertAdmin).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      ["2026-10-12", "d5"],
+      ["2026-10-09", "d2"],
+      ["2026-10-07", "d0"],
+    ] as const)("plano que vence em %s: sai o título do estágio %s", async (endDate, stage) => {
+      const s = await setup()
+      const { ids } = await expiring(s, endDate)
+
+      expect(await s.dispatch(ids.email)).toBe("sent")
+
+      expect(s.email.send.mock.calls[0][0].subject).toBe(PLAN_EXPIRING_TITLES[stage])
+    })
+  })
+
+  describe("payment_link de renovação", () => {
+    // Paciente que já tem senha: vira o texto da renovação, no e-mail e no WhatsApp.
+    const withPassword = (repos: ReturnType<typeof createMemoryRepos>): NotificationRepo => ({
+      ...repos.notifications,
+      get: async (id) => {
+        const view = await repos.notifications.get(id)
+        return view && { ...view, patientPasswordHash: "hash-qualquer" }
+      },
+    })
+
+    it("para paciente com senha usa o texto de renovação", async () => {
+      const s = await setup({ wrap: withPassword })
+
+      expect(await s.dispatch(s.ids.email)).toBe("sent")
+      expect(await s.dispatch(s.ids.whatsapp)).toBe("sent")
+
+      const message = renderRenewalPaymentLink({ name: NAME, link: PAY_URL })
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.subject).toBe(RENEWAL_PAYMENT_LINK_TITLE)
+      expect(sent.html).toBe(message.html)
+      expect(sent.html).toContain(PAY_URL)
+      const parts = toWhatsAppParts(RENEWAL_PAYMENT_LINK_TITLE, message.html)
+      expect(s.whatsapp.sendText.mock.calls).toEqual(parts.map((p) => [RECIPIENT_WA, p]))
+    })
+
+    it("para paciente sem senha mantém o texto atual", async () => {
+      const s = await setup()
+
+      expect(await s.dispatch(s.ids.email)).toBe("sent")
+
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.subject).toBe(PAYMENT_LINK_TITLE)
+      expect(sent.html).toBe(renderPaymentLink({ name: NAME, link: PAY_URL }).html)
+    })
+  })
+
   describe("password_reset", () => {
-    const LINK = "https://plana.test/cliente/redefinir-senha/tok_abc123"
+    const LINK ="https://plana.test/cliente/redefinir-senha/tok_abc123"
     const message = renderPasswordReset({ name: NAME, link: LINK })
 
     it("e-mail: envia o texto com o link do payload e apaga o payload", async () => {
