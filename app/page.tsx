@@ -731,7 +731,7 @@ export default function QuizPage() {
                       onClick={() => {
                         const currentSelection = answers.breakfast_foods || []
                         const newSelection = isSelected
-                          ? currentSelection.filter((item) => item !== option.value)
+                          ? currentSelection.filter((item: string) => item !== option.value)
                           : [...currentSelection, option.value]
                         setAnswers({ ...answers, breakfast_foods: newSelection })
                       }}
@@ -841,7 +841,7 @@ export default function QuizPage() {
                       onClick={() => {
                         const currentSelections = answers.lanche_tarde || []
                         const newSelections = isSelected
-                          ? currentSelections.filter((item) => item !== option.value)
+                          ? currentSelections.filter((item: string) => item !== option.value)
                           : [...currentSelections, option.value]
                         setAnswers({ ...answers, lanche_tarde: newSelections })
                       }}
@@ -897,7 +897,7 @@ export default function QuizPage() {
                       onClick={() => {
                         const currentSelections = answers.jantar || []
                         const newSelections = isSelected
-                          ? currentSelections.filter((item) => item !== option)
+                          ? currentSelections.filter((item: string) => item !== option)
                           : [...currentSelections, option]
                         handleMultipleChoice("jantar", newSelections)
                       }}
