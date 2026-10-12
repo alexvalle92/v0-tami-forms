@@ -209,6 +209,14 @@ curl -X POST https://SEU-DOMINIO/api/jobs/retry \
 
 A resposta traz `reopened`, o número de itens reabertos. Token errado ou ausente responde 401. Reabrir uma geração de plano zera as tentativas dela.
 
+### Envio imediato de mensagens (usado pelo PlanA)
+
+`POST /api/notifications/dispatch` envia na hora mensagens que já estão em `notifications`. Exige o cabeçalho `Authorization: Bearer <JOBS_TOKEN>` e um corpo com 1 a 10 ids. Responde `202` e envia depois da resposta, uma por vez, com as mesmas regras do job (tentativas, espera crescente e alerta). Id inexistente ou que já não está pendente é ignorado.
+
+```bash
+curl -X POST https://SEU-DOMINIO/api/notifications/dispatch   -H "Authorization: Bearer SEU_JOBS_TOKEN"   -H "Content-Type: application/json"   -d '{"notificationIds":["ID_DA_MENSAGEM"]}'
+```
+
 ### O que fazer depois de um alerta
 
 1. Leia o `last_error` do item (consultas acima). Ele diz a etapa e o erro.
@@ -219,20 +227,14 @@ Depois do retry, o app dispara uma rodada logo em seguida. Se já houver uma rod
 
 ## Integração com o PlanA
 
-O app grava o plano e a senha no MySQL; o PlanA (repositório `dieta-app`) é quem mostra o plano para a pessoa. O PlanA **não** é alterado por este projeto. Para quem pagou conseguir entrar e ver o plano, a refatoração dele precisa cobrir:
+O PlanA (repositório `dieta-app`) é quem mostra o plano para a pessoa e onde o admin administra os cadastros. Ele usa **este mesmo MySQL**.
 
-| Item | Hoje no PlanA | O que passa a valer |
-|---|---|---|
-| Banco | PostgreSQL (Supabase) | Este MySQL: tabelas `patients` e `meal_plans` |
-| Senha | SHA-512 em base64, coluna `patients.password` | scrypt no formato abaixo, coluna `patients.password_hash` |
-| Troca de senha | Grava SHA-512 | Grava scrypt e põe `must_change_password = false` |
-| Primeiro acesso | Não força a troca | Opcional: forçar a troca quando `must_change_password = true` |
-| Login por CPF | Compara o valor digitado | `patients.cpf` tem só dígitos (11) |
-| Login por e-mail | E-mail único | Aqui o e-mail não é único; a identidade é o CPF |
-| Planos | Status `active`, `completed`, `cancelled`; só `active` abre | Igual. O app marca `completed` no plano substituído |
-| Ids | UUID nativo | `CHAR(36)` |
+- **Este app é dono de todas as tabelas.** As migrations (`lib/db/migrations`) criam também as do PlanA: `admins`, `recipes`, `meal_categories`, `allowed_meal_items`, `app_settings` e `password_reset_tokens`. O PlanA não cria nem altera tabela; no boot ele confere se elas existem e, se faltar alguma, encerra e lista o que falta.
+- **Ordem de deploy:** primeiro este app (aplica as migrations), depois o PlanA. Quando o schema mudar, este app sobe antes.
+- **Schema:** `lib/db/schema.ts` é a fonte. O PlanA mantém uma cópia idêntica; depois de mudar o schema aqui, rode `pnpm db:sync-schema` no PlanA.
+- **Mensagens:** todo e-mail e WhatsApp sai por aqui. O PlanA grava a mensagem de recuperação de senha em `notifications` (`kind = 'password_reset'`) e pede o envio imediato em `POST /api/notifications/dispatch` (seção "Operação"). Se esse pedido falhar, o job de 2 minutos envia.
 
-**Formato do hash** em `patients.password_hash`:
+**Formato do hash** em `patients.password_hash` e `admins.password_hash`:
 
 ```
 scrypt$16384$8$1$<salt>$<hash>
@@ -240,15 +242,16 @@ scrypt$16384$8$1$<salt>$<hash>
 
 - `16384`, `8` e `1` são `N`, `r` e `p` do scrypt.
 - `<salt>` (16 bytes) e `<hash>` (32 bytes) são **base64 padrão, com padding `=`**. O separador é `$`.
-- A verificação deve comparar em tempo constante e ler `N`, `r` e `p` do próprio valor gravado.
+- A verificação compara em tempo constante e lê `N`, `r` e `p` do próprio valor gravado.
 
 **Campos que o PlanA usa:**
 
-- `patients.must_change_password`: o app grava `true` ao criar a senha temporária. O PlanA deve zerar quando a pessoa trocar a senha. O app não depende desse campo para escolher a mensagem: ele compara a senha gravada com a temporária.
-- `meal_plans.status`: `active`, `completed` ou `cancelled`. O app cria o plano novo como `active` e passa os outros planos `active` da mesma pessoa para `completed`. Quem só tem plano `cancelled` ou `completed` não vê plano.
+- `patients.must_change_password`: este app grava `true` ao criar a senha temporária; o PlanA exige a troca e zera o campo. Este app não depende dele para escolher a mensagem: ele compara a senha gravada com a temporária.
+- `meal_plans.status`: `active`, `completed` ou `cancelled`. Este app cria o plano novo como `active` e passa os outros planos `active` da mesma pessoa para `completed`; o PlanA aplica a mesma regra nos planos criados pelo admin. Quem só tem plano `cancelled` ou `completed` não vê plano.
 - `meal_plans.plan_data` (JSON): `meals[]` (`name`, `time`, `foods` com uma linha por alimento, `calories` em texto), `calories` (número) e `observations`.
+- O e-mail do paciente não é único; a identidade é o CPF (`patients.cpf`, 11 dígitos).
 
-**Dependência para produção:** o webhook de **produção** só deve ser cadastrado no Asaas depois que o PlanA estiver lendo este MySQL e validando o novo hash. Até lá, tudo é testado no sandbox. Se o webhook de produção for cadastrado antes, as pessoas pagam e recebem uma senha que o PlanA ainda não sabe validar.
+**Dependência para produção:** o webhook de **produção** só deve ser cadastrado no Asaas depois que o PlanA estiver no ar, lendo este MySQL. Até lá, tudo é testado no sandbox. Se o webhook de produção for cadastrado antes, as pessoas pagam e recebem uma senha que o PlanA ainda não sabe validar.
 
 ## 7. Segurança
 
@@ -290,7 +293,7 @@ Faça num deploy de teste no Easypanel, com `ASAAS_ENV=sandbox` e a chave do san
 - [ ] **Falha da IA e retry:** com uma `ANTHROPIC_API_KEY` inválida, pague outra cobrança de teste. A chave recusada (401) é falha definitiva na hora: `plan_generations` fica `failed`, o alerta chega (`kind = meal_plan`) e nenhuma mensagem de acesso é enviada. Corrija a chave, reinicie o app e reabra com `/api/jobs/retry` (`planGenerationId`). O plano é gerado e as mensagens saem.
 - [ ] **Plano com a nutricionista:** mostre o plano gerado para a nutricionista e confira a meta de calorias, a faixa de proteína e as linhas de alimentos (cada linha com quantidade). Ela também deve confirmar a fórmula e os pisos (seção 10).
 - [ ] **Evolution API:** confirme que o formato usado funciona na sua instância. O app faz `POST /message/sendText/{instância}` com o corpo `{ number, text }`, que é o formato da v2. Se a sua versão for outra, o WhatsApp falhará nesse teste.
-- [ ] Só então suba o deploy de produção com `ASAAS_ENV=production`, a chave **nova** de produção e um **banco novo e vazio** (nunca o banco usado no sandbox). Se precisar reaproveitar o banco do teste, apague antes o conteúdo das tabelas `asaas_webhook_events`, `notifications`, `plan_generations`, `meal_plans`, `quiz_responses`, `payments` e `patients`, nessa ordem.
+- [ ] Só então suba o deploy de produção com `ASAAS_ENV=production`, a chave **nova** de produção e um **banco novo e vazio** (nunca o banco usado no sandbox). Se precisar reaproveitar o banco do teste, apague antes o conteúdo das tabelas `asaas_webhook_events`, `notifications`, `plan_generations`, `meal_plans`, `quiz_responses`, `payments`, `allowed_meal_items`, `meal_categories`, `recipes`, `app_settings`, `password_reset_tokens`, `admins` e `patients`, nessa ordem.
 
 ## 10. Notas
 
