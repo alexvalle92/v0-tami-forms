@@ -7,6 +7,7 @@ import { createMysqlRepos } from "@/lib/db/repos/mysql"
 import type { Channel, PaymentEventInput, Repos } from "@/lib/db/repos/types"
 import { getEnv, type Env } from "@/lib/env"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
+import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
 import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
 import { createExclusiveRunner } from "@/lib/jobs/scheduler"
@@ -134,6 +135,7 @@ function buildContainer(): Container {
   const runPlanGeneration = createRunPlanGeneration({ generatePlan, dispatchForQuizResponse, log })
   const handleAsaasEvent = createHandleAsaasEvent({ webhooks, log, now })
 
+  const enqueueExpiryReminders = createEnqueueExpiryReminders({ notifications, channels, now, log })
   const runJobs = createRunJobs({
     payments,
     planGenerations,
@@ -141,6 +143,7 @@ function buildContainer(): Container {
     syncPayment,
     generatePlan,
     dispatchNotification,
+    enqueueExpiryReminders,
     log,
     now,
     paymentDeadlineMs: JOB_PAYMENT_DEADLINE_MS,
