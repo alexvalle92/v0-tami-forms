@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm"
 import type { Db } from "@/lib/db/client"
-import { daysLeft, expiryStage, renewalState, WARN_DAYS } from "@/lib/renewal/rules"
+import { daysLeft, expiryStage, renewalState, WARN_DAYS, type RenewalCharge } from "@/lib/renewal/rules"
 import { addDaysISO } from "@/lib/time"
 import {
   asaasWebhookEvents,
@@ -107,6 +107,23 @@ const addressed = (channels: Channel[], p: { email: string; phone: string }) =>
   })
 
 export function createMysqlRepos(db: Db): Repos {
+  /** Cobrança de renovação do plano (§4): a mais recente do paciente criada depois dele, ou nula. */
+  async function renewalChargeOf(plan: { patientId: string; createdAt: Date }): Promise<RenewalCharge | null> {
+    const [charge] = await db
+      .select({
+        id: payments.id,
+        status: payments.status,
+        dueDate: payments.dueDate,
+        paymentUrl: payments.paymentUrl,
+        paidAt: payments.paidAt,
+      })
+      .from(payments)
+      .where(and(eq(payments.patientId, plan.patientId), gt(payments.createdAt, plan.createdAt)))
+      .orderBy(desc(payments.createdAt), desc(payments.id))
+      .limit(1)
+    return charge ?? null
+  }
+
   async function createOnce(s: NewSubmission): Promise<SubmissionRef> {
     return db.transaction(async (tx) => {
       const now = new Date()
@@ -433,20 +450,7 @@ export function createMysqlRepos(db: Db): Repos {
         const stage = expiryStage(daysLeft(plan.endDate, d.today))
         if (stage === null || stage === "expired") continue
 
-        // Cobrança de renovação (§4): a mais recente do paciente criada depois do plano.
-        const [charge] = await db
-          .select({
-            id: payments.id,
-            status: payments.status,
-            dueDate: payments.dueDate,
-            paymentUrl: payments.paymentUrl,
-            paidAt: payments.paidAt,
-          })
-          .from(payments)
-          .where(and(eq(payments.patientId, plan.patientId), gt(payments.createdAt, plan.createdAt)))
-          .orderBy(desc(payments.createdAt), desc(payments.id))
-          .limit(1)
-        const state = renewalState(charge ?? null, d.today)
+        const state = renewalState(await renewalChargeOf(plan), d.today)
         // Renovação já paga: o plano novo está a caminho, nada de aviso.
         if (state.status === "paid") continue
 
@@ -511,6 +515,8 @@ export function createMysqlRepos(db: Db): Repos {
           payload: notifications.payload,
           mealPlanId: mealPlans.id,
           mealPlanEndDate: mealPlans.endDate,
+          mealPlanStatus: mealPlans.status,
+          mealPlanCreatedAt: mealPlans.createdAt,
         })
         .from(notifications)
         .innerJoin(patients, eq(patients.id, notifications.patientId))
@@ -519,12 +525,22 @@ export function createMysqlRepos(db: Db): Repos {
         .where(eq(notifications.id, id))
         .limit(1)
       if (!row) return null
-      const { mealPlanId, mealPlanEndDate, ...rest } = row
+      const { mealPlanId, mealPlanEndDate, mealPlanStatus, mealPlanCreatedAt, ...rest } = row
+      const mealPlan =
+        mealPlanId === null || mealPlanStatus === null || mealPlanCreatedAt === null
+          ? null
+          : {
+              id: mealPlanId,
+              endDate: mealPlanEndDate,
+              status: mealPlanStatus,
+              // Lida agora, não na hora de enfileirar: o envio confere se o aviso ainda vale.
+              renewalCharge: await renewalChargeOf({ patientId: rest.patientId, createdAt: mealPlanCreatedAt }),
+            }
       const view: NotificationView = {
         ...rest,
         // `kind` é VARCHAR no banco; só este repositório grava, sempre com um NotificationKind.
         kind: row.kind as NotificationKind,
-        mealPlan: mealPlanId === null ? null : { id: mealPlanId, endDate: mealPlanEndDate },
+        mealPlan,
       }
       return view
     },

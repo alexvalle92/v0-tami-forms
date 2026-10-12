@@ -762,6 +762,157 @@ describe("createDispatchNotification", () => {
 
       expect(s.email.send.mock.calls[0][0].subject).toBe(PLAN_EXPIRING_TITLES[stage])
     })
+
+    describe("aviso que perdeu a validade até o envio (spec §13: nunca pedir pagamento a quem já pagou)", () => {
+      /** Avisos do plano enfileirados no dia `today` (o envio acontece em NOW, 07/10). */
+      async function enqueuedOn(s: Setup, planId: string, today: string) {
+        await s.repos.notifications.enqueuePlanExpiring({ today, channels: both, now: NOW })
+        return Object.fromEntries(
+          [...s.repos.state.notifications.values()].filter((n) => n.mealPlanId === planId).map((n) => [n.channel, n.id]),
+        ) as Record<Channel, string>
+      }
+
+      /** Descartado: nada sai, sai da fila como `failed` com o motivo em `notify.stale`, sem alerta. */
+      function expectDiscarded(s: Setup, id: string, reason: string) {
+        expect(s.email.send).not.toHaveBeenCalled()
+        expect(s.whatsapp.sendText).not.toHaveBeenCalled()
+        expect(s.alertAdmin).not.toHaveBeenCalled()
+        expect(planRow(s, id)).toMatchObject({
+          status: "failed",
+          lockedUntil: null,
+          sentAt: null,
+          lastError: { step: "notify.stale", message: reason, at: NOW.toISOString() },
+        })
+        expect(s.log.error).not.toHaveBeenCalled()
+      }
+
+      /** Quiz de renovação depois do plano, com a cobrança já no Asaas (`pay_2`). */
+      async function renewalCharge(s: Setup) {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        const renewal = await s.repos.submissions.create({
+          submissionId: "sub-renovacao",
+          patient: { name: NAME, cpf: "52998224725", email: EMAIL, phone: PHONE },
+          answers: {},
+          amount: "39.90",
+          todaySP: "2026-10-10",
+        })
+        if (renewal === "duplicate") throw new Error("unexpected duplicate")
+        await s.repos.payments.markSynced(renewal.paymentId, {
+          asaasId: "pay_2",
+          asaasCustomerId: "cus_1",
+          status: "PENDING",
+          paymentUrl: RENEWAL_PAY_URL,
+          invoiceNumber: null,
+          billingType: "UNDEFINED",
+          dueDate: "2026-10-12",
+        })
+        return renewal.paymentId
+      }
+
+      it("renovação paga depois de enfileirar: nada sai e o admin não é alertado", async () => {
+        const s = await setup()
+        const planId = s.repos.seed.mealPlan({ patientId: patientIdOf(s), endDate: "2026-10-08" })
+        const renewalId = await renewalCharge(s)
+        const ids = await enqueuedOn(s, planId, TODAY)
+        // A variante pagamento, com o link da cobrança, foi a enfileirada.
+        expect(planRow(s, ids.email).paymentId).toBe(renewalId)
+
+        await s.repos.webhooks.applyPaymentEvent(
+          {
+            eventId: "evt_renovacao_paga",
+            event: "PAYMENT_RECEIVED",
+            group: "paid",
+            asaasPaymentId: "pay_2",
+            externalReference: renewalId,
+            status: "RECEIVED",
+            billingType: null,
+            invoiceNumber: null,
+            paymentDate: null,
+          },
+          NOW,
+        )
+
+        expect(await s.dispatch(ids.email)).toBe("skipped")
+        expect(await s.dispatch(ids.whatsapp)).toBe("skipped")
+
+        expectDiscarded(s, ids.email, "renewal already paid")
+        expectDiscarded(s, ids.whatsapp, "renewal already paid")
+        expect(s.log.info).toHaveBeenCalledWith("notification.dispatch.stale", {
+          notificationId: ids.email,
+          channel: "email",
+          reason: "renewal already paid",
+        })
+      })
+
+      it("plano que deixou de ser ativo: nada sai", async () => {
+        const s = await setup()
+        const { ids } = await expiring(s)
+        // Plano novo concluído: o anterior vira `completed`.
+        await completePlan(s, null)
+
+        expect(await s.dispatch(ids.email)).toBe("skipped")
+
+        expectDiscarded(s, ids.email, "plan no longer active")
+      })
+
+      it("plano já vencido (dias restantes < 0): nada sai", async () => {
+        const s = await setup()
+        const planId = s.repos.seed.mealPlan({ patientId: patientIdOf(s), endDate: "2026-10-06" })
+        // Enfileirado em d0 (06/10) e só enviado em 07/10, depois do vencimento.
+        const ids = await enqueuedOn(s, planId, "2026-10-06")
+
+        expect(await s.dispatch(ids.whatsapp)).toBe("skipped")
+
+        expectDiscarded(s, ids.whatsapp, "plan already expired")
+      })
+
+      it("plano ainda válido, atrasado: sai o texto do estágio enfileirado, com a data explícita", async () => {
+        const s = await setup()
+        const planId = s.repos.seed.mealPlan({ patientId: patientIdOf(s), endDate: "2026-10-08" })
+        // Enfileirado em d5 (03/10); no envio (07/10) falta 1 dia, mas o texto com a data continua verdadeiro.
+        const ids = await enqueuedOn(s, planId, "2026-10-03")
+
+        expect(await s.dispatch(ids.email)).toBe("sent")
+
+        const sent = s.email.send.mock.calls[0][0]
+        expect(sent.subject).toBe(PLAN_EXPIRING_TITLES.d5)
+        expect(sent.html).toContain("<strong>08/10/2026</strong>")
+        expect(planRow(s, ids.email)).toMatchObject({ status: "sent" })
+      })
+
+      it("renovação aguardando pagamento: o aviso sai normalmente", async () => {
+        const s = await setup()
+        const planId = s.repos.seed.mealPlan({ patientId: patientIdOf(s), endDate: "2026-10-08" })
+        await renewalCharge(s)
+        const ids = await enqueuedOn(s, planId, TODAY)
+
+        expect(await s.dispatch(ids.email)).toBe("sent")
+        expect(s.email.send.mock.calls[0][0].html).toContain(RENEWAL_PAY_URL)
+      })
+
+      it("não consegue registrar o descarte: nada sai, sem alerta, segue pendente e o lock é solto", async () => {
+        const s = await setup({
+          wrap: (repos) => ({
+            ...repos.notifications,
+            markFailure: async () => {
+              throw new Error("db down")
+            },
+          }),
+        })
+        const planId = s.repos.seed.mealPlan({ patientId: patientIdOf(s), endDate: "2026-10-06" })
+        const ids = await enqueuedOn(s, planId, "2026-10-06")
+
+        expect(await s.dispatch(ids.email)).toBe("skipped")
+
+        expect(s.email.send).not.toHaveBeenCalled()
+        expect(s.alertAdmin).not.toHaveBeenCalled()
+        expect(planRow(s, ids.email)).toMatchObject({ status: "pending", lockedUntil: null })
+        expect(s.log.error).toHaveBeenCalledWith(
+          "notification.dispatch.record_stale_failed",
+          expect.objectContaining({ notificationId: ids.email, reason: "plan already expired" }),
+        )
+      })
+    })
   })
 
   describe("payment_link de renovação", () => {

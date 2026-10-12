@@ -1420,5 +1420,84 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         recipient: renewalSub.patient.email,
       })
     })
+
+    describe("42. o aviso relido traz o status do plano e a cobrança de renovação de agora", () => {
+      it("sem cobrança depois do plano: plano ativo e sem cobrança", async () => {
+        const repos = await setup()
+        const plan = await planEnding(repos, "2026-10-13")
+
+        await expire(repos)
+
+        const rows = await expiringOf(repos, plan.mealPlanId)
+        expect(rows).toHaveLength(2)
+        for (const n of rows) {
+          expect(n.mealPlan).toEqual({
+            id: plan.mealPlanId,
+            endDate: "2026-10-13",
+            status: "active",
+            renewalCharge: null,
+          })
+        }
+      })
+
+      it("a cobrança mais recente criada depois do plano, lida na hora (paga depois do aviso)", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const plan = await planEnding(repos, "2026-10-13", { patient: { cpf } })
+        await sleep(5)
+        // Primeira cobrança de renovação, já vencida: o envio seguinte cria outra.
+        const old = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        await repos.payments.markSynced(old.paymentId, synced("PENDING", "2026-10-11"))
+        await sleep(5)
+        const renewal = await syncedPayment(repos, { patient: { cpf }, todaySP: TODAY })
+        expect(renewal.ref.paymentId).not.toBe(old.paymentId)
+
+        await expire(repos)
+        const [before] = await expiringOf(repos, plan.mealPlanId)
+        expect(before.mealPlan).toEqual({
+          id: plan.mealPlanId,
+          endDate: "2026-10-13",
+          status: "active",
+          renewalCharge: {
+            id: renewal.ref.paymentId,
+            status: "PENDING",
+            dueDate: "2026-10-14",
+            paymentUrl: "https://asaas.example/i/1",
+            paidAt: null,
+          },
+        })
+
+        // Pago depois de enfileirado: a releitura mostra o pagamento.
+        expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", on(renewal)), new Date()))
+        const after = (await repos.notifications.get(before.id))!
+        expect(after.mealPlan?.renewalCharge).toMatchObject({ id: renewal.ref.paymentId, status: "RECEIVED" })
+        expect(after.mealPlan?.renewalCharge?.paidAt).toBeInstanceOf(Date)
+      })
+
+      it("plano substituído depois do aviso: o status relido deixa de ser active", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const plan = await planEnding(repos, "2026-10-13", { patient: { cpf } })
+        await expire(repos)
+        const [n] = await expiringOf(repos, plan.mealPlanId)
+        await sleep(5)
+
+        await planEnding(repos, "2026-11-12", { patient: { cpf } })
+
+        expect((await repos.notifications.get(n.id))!.mealPlan).toMatchObject({
+          id: plan.mealPlanId,
+          status: "completed",
+        })
+      })
+
+      it("mensagem que não é aviso de vencimento: sem plano", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        await repos.notifications.enqueuePaymentLink({ paymentId: p.ref.paymentId }, BOTH)
+        const ids = await repos.notifications.listPendingIdsForQuizResponse(p.ref.quizResponseId)
+        expect(ids).toHaveLength(2)
+        for (const id of ids) expect((await repos.notifications.get(id))!.mealPlan).toBeNull()
+      })
+    })
   })
 }

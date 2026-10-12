@@ -20,7 +20,7 @@ import type {
   SubmissionRepo,
   WebhookRepo,
 } from "@/lib/db/repos/types"
-import { daysLeft, expiryStage, renewalState } from "@/lib/renewal/rules"
+import { daysLeft, expiryStage, renewalState, type RenewalCharge } from "@/lib/renewal/rules"
 
 // Fake em memória dos repositórios, com o relógio real. Um Map por tabela.
 // As operações que precisam ser atômicas (create, applyPaymentEvent, complete) não têm `await` no meio:
@@ -167,6 +167,17 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
   const mealPlans = new Map<string, MealPlanRow>()
 
   const patientByCpf = (cpf: string) => [...patients.values()].find((p) => p.cpf === cpf)
+
+  /** Cobrança de renovação do plano (§4): a mais recente do paciente criada depois dele, ou nula. */
+  function renewalChargeOf(plan: MealPlanRow): RenewalCharge | null {
+    const p =
+      [...payments.values()]
+        .filter((p) => p.patientId === plan.patientId && p.createdAt.getTime() > plan.createdAt.getTime())
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .pop() ?? null
+    if (!p) return null
+    return { id: p.id, status: p.status, dueDate: p.dueDate, paymentUrl: p.paymentUrl, paidAt: p.paidAt }
+  }
   const quizResponseBySubmission = (submissionId: string) =>
     [...quizResponses.values()].find((q) => q.submissionId === submissionId)
 
@@ -431,16 +442,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         const stage = expiryStage(daysLeft(plan.endDate, d.today))
         if (stage === null || stage === "expired") continue
 
-        // Cobrança de renovação (§4): a mais recente do paciente criada depois do plano.
-        const charge =
-          [...payments.values()]
-            .filter(
-              (p) =>
-                p.patientId === plan.patientId && p.createdAt.getTime() > plan.createdAt.getTime(),
-            )
-            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-            .pop() ?? null
-        const state = renewalState(charge, d.today)
+        const state = renewalState(renewalChargeOf(plan), d.today)
         if (state.status === "paid") continue
 
         // A cobrança entra no aviso só em d2 e d0, e só quando já tem link.
@@ -511,7 +513,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         patientPasswordHash: patient.passwordHash,
         paymentUrl: (n.paymentId && payments.get(n.paymentId)?.paymentUrl) || null,
         payload: n.payload ? structuredClone(n.payload) : null,
-        mealPlan: plan ? { id: plan.id, endDate: plan.endDate } : null,
+        mealPlan: plan
+          ? { id: plan.id, endDate: plan.endDate, status: plan.status, renewalCharge: renewalChargeOf(plan) }
+          : null,
       }
       return view
     },

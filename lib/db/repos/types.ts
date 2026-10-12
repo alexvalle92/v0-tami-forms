@@ -2,6 +2,8 @@
 // (tests/fakes/memory-repos.ts) satisfazem as mesmas interfaces e passam pelo mesmo contrato
 // (tests/db/repos.contract.ts). Todas as datas são `Date` (UTC).
 
+import type { RenewalCharge } from "@/lib/renewal/rules"
+
 export type Channel = "email" | "whatsapp"
 
 export type LastError = {
@@ -113,8 +115,17 @@ export type NotificationView = {
   paymentUrl: string | null
   /** Dados da própria mensagem (o link do `password_reset`); `markSent` os apaga. */
   payload: { link?: string } | null
-  /** Plano do aviso de vencimento; nulo nas demais mensagens. */
-  mealPlan: { id: string; endDate: string | null } | null
+  /**
+   * Plano do aviso de vencimento; nulo nas demais mensagens. `status` e `renewalCharge` são lidos na hora
+   * (o envio confere se o aviso ainda vale, spec §13): `renewalCharge` é a cobrança de renovação do plano
+   * (§4), a mais recente do paciente criada depois dele, ou nula.
+   */
+  mealPlan: {
+    id: string
+    endDate: string | null
+    status: string
+    renewalCharge: RenewalCharge | null
+  } | null
 }
 
 export interface NotificationRepo {

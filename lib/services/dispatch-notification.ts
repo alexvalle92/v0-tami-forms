@@ -12,8 +12,9 @@ import {
   renderRenewalPaymentLink,
   toWhatsAppParts,
 } from "@/lib/notify/templates"
-import type { ExpiryStage } from "@/lib/renewal/rules"
+import { daysLeft, renewalState, type ExpiryStage } from "@/lib/renewal/rules"
 import type { WhatsAppSender } from "@/lib/notify/whatsapp"
+import { todayInSaoPaulo } from "@/lib/time"
 import type { AlertAdmin } from "./alert-admin"
 import { safeErrorMessage, toLastError } from "./last-error"
 
@@ -37,6 +38,7 @@ export class PermanentNotificationError extends Error {
  * `plan_expiring_d5|d2|d0`). O `payment_link` de quem já tem senha usa o texto da renovação. O WhatsApp é retomável: cada parte enviada
  * é gravada (`parts_sent`), então uma nova tentativa continua da próxima parte e não reenvia as anteriores.
  * Falhas viram nova tentativa com backoff; a definitiva (erro permanente ou 5ª tentativa) alerta o admin.
+ * O aviso de vencimento que perdeu a validade até o envio sai da fila sem ser enviado e sem alerta (`skipped`).
  */
 export function createDispatchNotification(d: {
   notifications: NotificationRepo
@@ -151,6 +153,51 @@ export function createDispatchNotification(d: {
     return renderPlanReady({ name: n.patientName, appUrl: d.appUrl })
   }
 
+  /**
+   * Aviso de vencimento que perdeu a validade entre a fila e o envio (atraso por novas tentativas ou reabertura):
+   * plano que deixou de ser ativo, plano já vencido (nenhuma mensagem depois do vencimento) ou renovação já paga
+   * (spec §13: nunca pedir pagamento a quem já pagou). Devolve o motivo, ou null se o aviso ainda vale.
+   * Faltando 0 a 5 dias o aviso ainda vale mesmo que o estágio de hoje seja outro: d5 e d2 trazem a data explícita.
+   * Sem plano ou sem data, quem decide é `renderMessage` (falha definitiva).
+   */
+  function staleReason(n: NotificationView): string | null {
+    if (n.kind !== "plan_expiring_d5" && n.kind !== "plan_expiring_d2" && n.kind !== "plan_expiring_d0") return null
+    if (!n.mealPlan || !n.mealPlan.endDate) return null
+    if (n.mealPlan.status !== "active") return "plan no longer active"
+    const today = todayInSaoPaulo(d.now())
+    const days = daysLeft(n.mealPlan.endDate, today)
+    if (days !== null && days < 0) return "plan already expired"
+    if (renewalState(n.mealPlan.renewalCharge, today).status === "paid") return "renewal already paid"
+    return null
+  }
+
+  /**
+   * Tira da fila, sem enviar e sem alertar o admin, o aviso que perdeu a validade: `failed` com o motivo em
+   * `last_error` (etapa `notify.stale`). Se a gravação falhar, a linha segue pendente e o próximo envio confere de novo.
+   */
+  async function discardStale(n: NotificationView, reason: string): Promise<boolean> {
+    const attempts = n.attempts + 1
+    const at = d.now()
+    try {
+      await d.notifications.markFailure(n.id, {
+        attempts,
+        nextAttemptAt: null,
+        failed: true,
+        error: { step: "notify.stale", message: reason, attempt: attempts, at: at.toISOString() },
+      })
+    } catch (err) {
+      d.log.error("notification.dispatch.record_stale_failed", {
+        notificationId: n.id,
+        channel: n.channel,
+        reason,
+        recordMessage: safeErrorMessage(err),
+      })
+      return false
+    }
+    d.log.info("notification.dispatch.stale", { notificationId: n.id, channel: n.channel, reason })
+    return true
+  }
+
   return async function dispatchNotification(id) {
     const first = await d.notifications.get(id)
     if (!first || first.status !== "pending") return "skipped"
@@ -163,6 +210,14 @@ export function createDispatchNotification(d: {
       // Outro processo pode ter terminado entre o `get` e o lock: relê para não reenviar partes nem recontar tentativas.
       const n = await d.notifications.get(id)
       if (!n || n.status !== "pending") return "skipped"
+
+      // Conferido depois do lock e da releitura: o pagamento ou o plano novo podem ter chegado agora há pouco.
+      const stale = staleReason(n)
+      if (stale !== null) {
+        // `markFailure` solta o lock; se não gravou, o `finally` o solta.
+        if (await discardStale(n, stale)) lockHeld = false
+        return "skipped"
+      }
 
       let step = `notify.${n.channel}`
       let partsSent = n.partsSent
