@@ -153,7 +153,7 @@ describe.skipIf(!url)("repositórios MySQL", () => {
   beforeAll(async () => {
     ;({ db, pool } = createDb(url!))
     // Duas vezes: prova que as migrations são idempotentes. O banco chega vazio (os testes de
-    // migration acima apagam tudo), então a primeira aplica as quatro: daí o prazo maior.
+    // migration acima apagam tudo), então a primeira aplica as cinco: daí o prazo maior.
     await runMigrations(db)
     await runMigrations(db)
   }, 60_000)
@@ -177,6 +177,9 @@ describe.skipIf(!url)("repositórios MySQL", () => {
         "password_reset_tokens",
         "admins",
         "patients",
+        "funnel_sessions",
+        "funnel_events",
+        "app_logs",
       ]) {
         await connection.query(`TRUNCATE TABLE ${table}`)
       }
@@ -285,7 +288,7 @@ describe.skipIf(!url)("repositórios MySQL", () => {
       expect(await repos.payments.listDue(new Date(x.getTime() - 1), 100)).toEqual([])
     })
 
-    it("runMigrations é idempotente: só as 13 tabelas dos dois apps + a de controle do drizzle", async () => {
+    it("runMigrations é idempotente: só as 16 tabelas dos dois apps e da observabilidade + a de controle do drizzle", async () => {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name",
       )
@@ -293,8 +296,11 @@ describe.skipIf(!url)("repositórios MySQL", () => {
         "__drizzle_migrations",
         "admins",
         "allowed_meal_items",
+        "app_logs",
         "app_settings",
         "asaas_webhook_events",
+        "funnel_events",
+        "funnel_sessions",
         "meal_categories",
         "meal_plans",
         "notifications",
@@ -308,7 +314,7 @@ describe.skipIf(!url)("repositórios MySQL", () => {
       const [migrations] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT COUNT(*) AS n FROM __drizzle_migrations",
       )
-      expect(Number(migrations[0].n)).toBe(4)
+      expect(Number(migrations[0].n)).toBe(5)
     })
 
     it("aviso de vencimento: plano do admin e plano sem data de fim", async () => {

@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto"
 import type {
+  AnalyticsRepo,
+  AppLogRepo,
+  AppLogRow,
   Channel,
+  FunnelEventRow,
+  FunnelSessionView,
   LastError,
   MealPlanRepo,
   MealPlanView,
@@ -130,6 +135,9 @@ export type MealPlanRow = {
   createdAt: Date
 }
 
+/** Sessão do funil, como em `funnel_sessions`. */
+export type FunnelSessionRow = FunnelSessionView
+
 type Processed = Extract<PaymentEventResult, { outcome: "processed" }>
 
 const isLocked = (row: { lockedUntil: Date | null }, now: Date) =>
@@ -147,6 +155,9 @@ export type MemoryState = {
   webhookEvents: ReadonlyMap<string, Readonly<WebhookEventRow>>
   planGenerations: ReadonlyMap<string, Readonly<PlanGenerationRow>>
   mealPlans: ReadonlyMap<string, Readonly<MealPlanRow>>
+  funnelSessions: ReadonlyMap<string, Readonly<FunnelSessionRow>>
+  funnelEvents: readonly Readonly<FunnelEventRow>[]
+  appLogs: readonly Readonly<AppLogRow>[]
 }
 
 /** Atalhos de teste para estados que nenhuma interface pública do `v0-tami-forms` cria (o PlanA os cria no banco). */
@@ -165,6 +176,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
   const webhookEvents = new Map<string, WebhookEventRow>()
   const planGenerations = new Map<string, PlanGenerationRow>()
   const mealPlans = new Map<string, MealPlanRow>()
+  const funnelSessions = new Map<string, FunnelSessionRow>()
+  const funnelEvents: FunnelEventRow[] = []
+  const appLogRows: AppLogRow[] = []
 
   const patientByCpf = (cpf: string) => [...patients.values()].find((p) => p.cpf === cpf)
 
@@ -851,6 +865,117 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     },
   }
 
+  const cloneEvent = (e: FunnelEventRow): FunnelEventRow => ({
+    ...e,
+    props: structuredClone(e.props),
+    clientTs: new Date(e.clientTs),
+    createdAt: new Date(e.createdAt),
+  })
+
+  // Sem `await` em recordBatch e purgeOlderThan: cada chamada é atômica, como a transação do MySQL.
+  const analyticsRepo: AnalyticsRepo = {
+    async recordBatch(patch, events, now) {
+      const existing = funnelSessions.get(patch.sessionId)
+      if (!existing) {
+        funnelSessions.set(patch.sessionId, {
+          sessionId: patch.sessionId,
+          startedAt: new Date(now),
+          lastEventAt: new Date(now),
+          lastStep: patch.lastStep?.step ?? null,
+          lastStepSlug: patch.lastStep?.slug ?? null,
+          maxStep: patch.maxStep?.step ?? null,
+          maxStepSlug: patch.maxStep?.slug ?? null,
+          checkoutClicked: patch.checkoutClicked,
+          utm: { ...patch.start?.utm },
+          referrerHost: patch.start?.referrerHost ?? null,
+          deviceType: patch.device.deviceType,
+          os: patch.device.os,
+          browser: patch.device.browser,
+          viewportW: patch.start?.viewportW ?? null,
+          viewportH: patch.start?.viewportH ?? null,
+          answers: structuredClone(patch.answers),
+        })
+      } else {
+        if (now.getTime() > existing.lastEventAt.getTime()) existing.lastEventAt = new Date(now)
+        if (patch.lastStep) {
+          existing.lastStep = patch.lastStep.step
+          existing.lastStepSlug = patch.lastStep.slug
+        }
+        if (patch.maxStep && patch.maxStep.step > (existing.maxStep ?? -1)) {
+          existing.maxStep = patch.maxStep.step
+          existing.maxStepSlug = patch.maxStep.slug
+        }
+        existing.checkoutClicked = existing.checkoutClicked || patch.checkoutClicked
+        existing.answers = { ...existing.answers, ...structuredClone(patch.answers) }
+        // UTMs, referrer e viewport só entram se ainda estão nulos; o aparelho nunca muda.
+        existing.utm = { ...patch.start?.utm, ...existing.utm }
+        existing.referrerHost = existing.referrerHost ?? patch.start?.referrerHost ?? null
+        existing.viewportW = existing.viewportW ?? patch.start?.viewportW ?? null
+        existing.viewportH = existing.viewportH ?? patch.start?.viewportH ?? null
+      }
+      for (const e of events) funnelEvents.push(cloneEvent(e))
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const byAge = (a: { at: Date }, b: { at: Date }) => a.at.getTime() - b.at.getTime()
+      const oldEvents = funnelEvents
+        .map((e, i) => ({ e, i, at: e.createdAt }))
+        .filter((x) => x.at.getTime() < cutoff.getTime())
+        .sort(byAge)
+        .slice(0, limit)
+      const drop = new Set(oldEvents.map((x) => x.e))
+      for (let i = funnelEvents.length - 1; i >= 0; i--) if (drop.has(funnelEvents[i])) funnelEvents.splice(i, 1)
+
+      const oldSessions = [...funnelSessions.values()]
+        .map((s) => ({ s, at: s.lastEventAt }))
+        .filter((x) => x.at.getTime() < cutoff.getTime())
+        .sort(byAge)
+        .slice(0, limit)
+      for (const { s } of oldSessions) funnelSessions.delete(s.sessionId)
+      return oldEvents.length + oldSessions.length
+    },
+
+    async getSession(sessionId) {
+      const s = funnelSessions.get(sessionId)
+      return s
+        ? {
+            ...s,
+            startedAt: new Date(s.startedAt),
+            lastEventAt: new Date(s.lastEventAt),
+            utm: { ...s.utm },
+            answers: structuredClone(s.answers),
+          }
+        : null
+    },
+
+    async listEvents(sessionId) {
+      return funnelEvents.filter((e) => e.sessionId === sessionId).map(cloneEvent)
+    },
+  }
+
+  const appLogsRepo: AppLogRepo = {
+    async insertMany(rows) {
+      for (const r of rows) appLogRows.push({ ...r, ts: new Date(r.ts), fields: structuredClone(r.fields) })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const old = appLogRows
+        .filter((r) => r.ts.getTime() < cutoff.getTime())
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+        .slice(0, limit)
+      const drop = new Set(old)
+      for (let i = appLogRows.length - 1; i >= 0; i--) if (drop.has(appLogRows[i])) appLogRows.splice(i, 1)
+      return old.length
+    },
+
+    async listByEvent(event) {
+      return appLogRows
+        .filter((r) => r.event === event)
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+        .map((r) => ({ ...r, ts: new Date(r.ts), fields: structuredClone(r.fields) }))
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -858,7 +983,19 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     webhooks,
     planGenerations: planGenerationsRepo,
     mealPlans: mealPlansRepo,
-    state: { patients, payments, notifications, webhookEvents, planGenerations, mealPlans },
+    analytics: analyticsRepo,
+    appLogs: appLogsRepo,
+    state: {
+      patients,
+      payments,
+      notifications,
+      webhookEvents,
+      planGenerations,
+      mealPlans,
+      funnelSessions,
+      funnelEvents,
+      appLogs: appLogRows,
+    },
     seed: {
       passwordReset({ patientId, channel, link }) {
         const patient = patients.get(patientId)

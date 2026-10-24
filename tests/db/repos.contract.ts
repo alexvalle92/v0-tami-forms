@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import type {
   Channel,
+  FunnelEventRow,
+  FunnelSessionPatch,
   NewSubmission,
   NotificationView,
   PaymentEventGroup,
@@ -1497,6 +1499,368 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         const ids = await repos.notifications.listPendingIdsForQuizResponse(p.ref.quizResponseId)
         expect(ids).toHaveLength(2)
         for (const id of ids) expect((await repos.notifications.get(id))!.mealPlan).toBeNull()
+      })
+    })
+
+    describe("43. funil do quiz: AnalyticsRepo", () => {
+      const DAY = 86_400_000
+      const device = { deviceType: "mobile", os: "iOS", browser: "Instagram" }
+
+      const patch = (sessionId: string, over: Partial<FunnelSessionPatch> = {}): FunnelSessionPatch => ({
+        sessionId,
+        device,
+        checkoutClicked: false,
+        answers: {},
+        ...over,
+      })
+
+      const ev = (sessionId: string, event: string, now: Date, over: Partial<FunnelEventRow> = {}): FunnelEventRow => ({
+        sessionId,
+        event,
+        step: null,
+        stepSlug: null,
+        props: {},
+        clientTs: now,
+        createdAt: now,
+        ...over,
+      })
+
+      it("cria a sessão com tudo e grava os eventos na ordem enviada", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const now = new Date("2026-10-20T12:00:00.123Z")
+        const events = [
+          ev(sessionId, "session_start", now, { props: { referrerHost: "l.instagram.com" } }),
+          ev(sessionId, "step_view", now, { step: 1, stepSlug: "tipo_fisico", props: {} }),
+          ev(sessionId, "step_answer", now, {
+            step: 1,
+            stepSlug: "tipo_fisico",
+            props: { durationMs: 1500 },
+            clientTs: new Date("2026-10-20T11:59:59.000Z"),
+          }),
+        ]
+
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "ig" }, referrerHost: "l.instagram.com", viewportW: 390, viewportH: 844 },
+            lastStep: { step: 2, slug: "sono" },
+            maxStep: { step: 2, slug: "sono" },
+            answers: { tipo_fisico: "Gordinho(a)" },
+          }),
+          events,
+          now,
+        )
+
+        expect(await analytics.getSession(sessionId)).toEqual({
+          sessionId,
+          startedAt: now,
+          lastEventAt: now,
+          lastStep: 2,
+          lastStepSlug: "sono",
+          maxStep: 2,
+          maxStepSlug: "sono",
+          checkoutClicked: false,
+          utm: { source: "ig" },
+          referrerHost: "l.instagram.com",
+          deviceType: "mobile",
+          os: "iOS",
+          browser: "Instagram",
+          viewportW: 390,
+          viewportH: 844,
+          answers: { tipo_fisico: "Gordinho(a)" },
+        })
+        const rows = await analytics.listEvents(sessionId)
+        expect(rows).toHaveLength(3)
+        expect(rows).toEqual(events)
+      })
+
+      it("sessão inexistente: getSession devolve null e listEvents, lista vazia", async () => {
+        const { analytics } = await setup()
+        expect(await analytics.getSession(randomUUID())).toBeNull()
+        expect(await analytics.listEvents(randomUUID())).toEqual([])
+      })
+
+      it("max_step não diminui; last_step acompanha o último lote", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(
+          patch(sessionId, { lastStep: { step: 2, slug: "sono" }, maxStep: { step: 2, slug: "sono" } }),
+          [],
+          t1,
+        )
+        await analytics.recordBatch(
+          patch(sessionId, { lastStep: { step: 1, slug: "tipo_fisico" }, maxStep: { step: 1, slug: "tipo_fisico" } }),
+          [],
+          t2,
+        )
+
+        expect(await analytics.getSession(sessionId)).toMatchObject({
+          maxStep: 2,
+          maxStepSlug: "sono",
+          lastStep: 1,
+          lastStepSlug: "tipo_fisico",
+        })
+      })
+
+      it("max_step maior no segundo lote avança junto com o slug", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 1, slug: "tipo_fisico" } }), [], t1)
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 3, slug: "agua" } }), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ maxStep: 3, maxStepSlug: "agua" })
+      })
+
+      it("max_step igual ao anterior não troca o slug", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 2, slug: "sono" } }), [], t1)
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 2, slug: "outro" } }), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ maxStep: 2, maxStepSlug: "sono" })
+      })
+
+      it("lote sem etapa na criação deixa max_step nulo; o seguinte (etapa 0 inclusive) o define", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        expect(await analytics.getSession(sessionId)).toMatchObject({
+          maxStep: null,
+          maxStepSlug: null,
+          lastStep: null,
+          lastStepSlug: null,
+        })
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 0, slug: "inicio" } }), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ maxStep: 0, maxStepSlug: "inicio" })
+      })
+
+      it("checkout_clicked vira true e não volta", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId, { checkoutClicked: true }), [], t1)
+        await analytics.recordBatch(patch(sessionId, { checkoutClicked: false }), [], t2)
+        expect((await analytics.getSession(sessionId))!.checkoutClicked).toBe(true)
+      })
+
+      it("UTMs, referrer e viewport não são sobrescritos", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "ig" }, referrerHost: "l.instagram.com", viewportW: 390, viewportH: 844 },
+          }),
+          [],
+          t1,
+        )
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "fb", campaign: "c1" }, referrerHost: "facebook.com", viewportW: 1, viewportH: 2 },
+          }),
+          [],
+          t2,
+        )
+
+        const session = (await analytics.getSession(sessionId))!
+        expect(session.utm.source).toBe("ig")
+        expect(session.referrerHost).toBe("l.instagram.com")
+        expect(session.viewportW).toBe(390)
+        expect(session.viewportH).toBe(844)
+      })
+
+      it("UTM ainda nula é preenchida por um lote posterior", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "fb", campaign: "c1" }, referrerHost: null, viewportW: null, viewportH: null },
+          }),
+          [],
+          t2,
+        )
+        const session = (await analytics.getSession(sessionId))!
+        expect(session.utm).toEqual({ source: "fb", campaign: "c1" })
+        expect(session.referrerHost).toBeNull()
+        expect(session.viewportW).toBeNull()
+      })
+
+      it("answers faz merge e a mesma chave é substituída", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const at = (min: number) => new Date(Date.UTC(2026, 9, 20, 12, min))
+        await analytics.recordBatch(patch(sessionId, { answers: { tipo_fisico: "Gordinho(a)" } }), [], at(0))
+        await analytics.recordBatch(patch(sessionId, { answers: { sono: "6h" } }), [], at(1))
+        expect((await analytics.getSession(sessionId))!.answers).toEqual({ tipo_fisico: "Gordinho(a)", sono: "6h" })
+
+        await analytics.recordBatch(patch(sessionId, { answers: { sono: "8h" } }), [], at(2))
+        expect((await analytics.getSession(sessionId))!.answers).toEqual({ tipo_fisico: "Gordinho(a)", sono: "8h" })
+
+        await analytics.recordBatch(patch(sessionId, { answers: { sintomas: ["a", "b"] } }), [], at(3))
+        await analytics.recordBatch(patch(sessionId, { answers: { sintomas: ["c"] } }), [], at(4))
+        expect((await analytics.getSession(sessionId))!.answers).toEqual({
+          tipo_fisico: "Gordinho(a)",
+          sono: "8h",
+          sintomas: ["c"],
+        })
+      })
+
+      it("lote sem lastStep preserva o lastStep anterior", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        await analytics.recordBatch(
+          patch(sessionId, { lastStep: { step: 4, slug: "agua" } }),
+          [],
+          new Date("2026-10-20T12:00:00.000Z"),
+        )
+        await analytics.recordBatch(patch(sessionId), [], new Date("2026-10-20T12:01:00.000Z"))
+        expect(await analytics.getSession(sessionId)).toMatchObject({ lastStep: 4, lastStepSlug: "agua" })
+      })
+
+      it("lastEventAt passa a ser o now do lote mais recente", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:05:00.456Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        await analytics.recordBatch(patch(sessionId), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ startedAt: t1, lastEventAt: t2 })
+      })
+
+      it("o aparelho é gravado na criação e não muda depois", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        await analytics.recordBatch(
+          patch(sessionId, { device: { deviceType: "desktop", os: "Windows", browser: "Chrome" } }),
+          [],
+          t2,
+        )
+        expect(await analytics.getSession(sessionId)).toMatchObject({
+          deviceType: "mobile",
+          os: "iOS",
+          browser: "Instagram",
+        })
+      })
+
+      it("os eventos de lotes diferentes acumulam na ordem de gravação", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [ev(sessionId, "step_view", t1, { step: 1, stepSlug: "a" })], t1)
+        await analytics.recordBatch(
+          patch(sessionId),
+          [
+            ev(sessionId, "step_back", t2, { step: 1, stepSlug: "a" }),
+            ev(sessionId, "page_hide", t2, { props: { msOnStep: 10 } }),
+          ],
+          t2,
+        )
+        expect((await analytics.listEvents(sessionId)).map((e) => e.event)).toEqual([
+          "step_view",
+          "step_back",
+          "page_hide",
+        ])
+      })
+
+      it("purge do funil: remove só o antigo e devolve o total", async () => {
+        const { analytics } = await setup()
+        const oldSession = randomUUID()
+        const freshSession = randomUUID()
+        const old = new Date(Date.now() - 400 * DAY)
+        const fresh = new Date()
+        await analytics.recordBatch(
+          patch(oldSession),
+          [ev(oldSession, "session_start", old), ev(oldSession, "step_view", old, { step: 1, stepSlug: "a" })],
+          old,
+        )
+        await analytics.recordBatch(patch(freshSession), [ev(freshSession, "session_start", fresh)], fresh)
+
+        const removed = await analytics.purgeOlderThan(new Date(Date.now() - 365 * DAY), 1000)
+
+        expect(removed).toBeGreaterThanOrEqual(3) // 2 eventos + 1 sessão (um banco compartilhado pode ter mais antigos)
+        expect(await analytics.getSession(oldSession)).toBeNull()
+        expect(await analytics.listEvents(oldSession)).toEqual([])
+        expect(await analytics.getSession(freshSession)).not.toBeNull()
+        expect(await analytics.listEvents(freshSession)).toHaveLength(1)
+      })
+
+      it("purge do funil: o limite vale por tabela", async () => {
+        const { analytics } = await setup()
+        const a = randomUUID()
+        const b = randomUUID()
+        const old = new Date(Date.now() - 400 * DAY)
+        await analytics.recordBatch(patch(a), [ev(a, "session_start", old), ev(a, "step_view", old)], old)
+        await analytics.recordBatch(patch(b), [ev(b, "session_start", old), ev(b, "step_view", old)], old)
+        const cutoff = new Date(Date.now() - 365 * DAY)
+
+        // 4 eventos e 2 sessões velhas: com limit 1, no máximo 1 de cada tabela.
+        expect(await analytics.purgeOlderThan(cutoff, 1)).toBe(2)
+        const eventsLeft = (await analytics.listEvents(a)).length + (await analytics.listEvents(b)).length
+        expect(eventsLeft).toBe(3)
+        const sessionsLeft = [await analytics.getSession(a), await analytics.getSession(b)].filter(Boolean)
+        expect(sessionsLeft).toHaveLength(1)
+      })
+    })
+
+    describe("44. logs do app: AppLogRepo", () => {
+      const DAY = 86_400_000
+
+      it("insertMany e listByEvent devolvem as linhas por ts, com fields iguais", async () => {
+        const { appLogs } = await setup()
+        const event = `contrato.${randomUUID()}`
+        const t1 = new Date("2026-10-20T12:00:00.100Z")
+        const t2 = new Date("2026-10-20T12:00:00.200Z")
+        await appLogs.insertMany([
+          { ts: t2, level: "error", event, area: "contrato", fields: { paymentId: "p2", attempt: 2, nested: { a: [1, 2] } } },
+          { ts: t1, level: "warn", event, area: "contrato", fields: { paymentId: "p1" } },
+        ])
+
+        expect(await appLogs.listByEvent(event)).toEqual([
+          { ts: t1, level: "warn", event, area: "contrato", fields: { paymentId: "p1" } },
+          { ts: t2, level: "error", event, area: "contrato", fields: { paymentId: "p2", attempt: 2, nested: { a: [1, 2] } } },
+        ])
+        expect(await appLogs.listByEvent(`contrato.${randomUUID()}`)).toEqual([])
+      })
+
+      it("purge dos logs: apaga só as linhas anteriores ao corte e respeita o limite", async () => {
+        const { appLogs } = await setup()
+        const event = `contrato.${randomUUID()}`
+        const old = new Date(Date.now() - 100 * DAY)
+        const fresh = new Date()
+        await appLogs.insertMany([
+          { ts: old, level: "warn", event, area: "contrato", fields: {} },
+          { ts: new Date(old.getTime() + 1), level: "warn", event, area: "contrato", fields: {} },
+          { ts: fresh, level: "info", event, area: "contrato", fields: {} },
+        ])
+        const cutoff = new Date(Date.now() - 90 * DAY)
+
+        expect(await appLogs.purgeOlderThan(cutoff, 1)).toBe(1)
+        expect(await appLogs.listByEvent(event)).toHaveLength(2)
+
+        expect(await appLogs.purgeOlderThan(cutoff, 1000)).toBeGreaterThanOrEqual(1)
+        const rest = await appLogs.listByEvent(event)
+        expect(rest).toHaveLength(1)
+        expect(rest[0].level).toBe("info")
+      })
+
+      it("insertMany([]) não lança", async () => {
+        const { appLogs } = await setup()
+        await expect(appLogs.insertMany([])).resolves.toBeUndefined()
       })
     })
   })

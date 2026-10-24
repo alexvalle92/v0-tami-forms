@@ -29,6 +29,13 @@
       "when": 1791829848036,
       "tag": "0003_plan_expiring_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1792844393915,
+      "tag": "0004_observability_tables",
+      "breakpoints": true
     }
   ]
 }

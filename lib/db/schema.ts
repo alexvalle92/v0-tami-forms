@@ -2,6 +2,7 @@
 // atualizada com "pnpm db:sync-schema" (que copia este arquivo).
 import { sql } from "drizzle-orm"
 import {
+  bigint,
   boolean,
   char,
   datetime,
@@ -12,7 +13,9 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  smallint,
   text,
+  tinyint,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
@@ -313,3 +316,73 @@ export const appSettings = mysqlTable("app_settings", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 })
+
+// ---------------------------------------------------------------------------
+// Observabilidade (spec 2026-10-24-observabilidade-funil, §7). Só este app grava; o Metabase lê.
+// ---------------------------------------------------------------------------
+
+// Uma linha por visita ao quiz: etapa mais avançada, origem, aparelho e respostas permitidas.
+export const funnelSessions = mysqlTable(
+  "funnel_sessions",
+  {
+    sessionId: char("session_id", { length: 36 }).primaryKey(),
+    startedAt: dateTime("started_at").notNull(),
+    lastEventAt: dateTime("last_event_at").notNull(),
+    lastStep: tinyint("last_step"),
+    lastStepSlug: varchar("last_step_slug", { length: 40 }),
+    // `max_step_slug` vem ANTES de `max_step` de propósito: o Drizzle monta o ON DUPLICATE KEY UPDATE na
+    // ordem das colunas, e no MySQL cada atribuição já enxerga as anteriores. O slug precisa comparar com o
+    // `max_step` antigo, então tem de ser atribuído primeiro (ver AnalyticsRepo.recordBatch).
+    maxStepSlug: varchar("max_step_slug", { length: 40 }),
+    maxStep: tinyint("max_step"),
+    checkoutClicked: boolean("checkout_clicked").notNull().default(false),
+    utmSource: varchar("utm_source", { length: 100 }),
+    utmMedium: varchar("utm_medium", { length: 100 }),
+    utmCampaign: varchar("utm_campaign", { length: 100 }),
+    utmContent: varchar("utm_content", { length: 100 }),
+    utmTerm: varchar("utm_term", { length: 100 }),
+    referrerHost: varchar("referrer_host", { length: 100 }),
+    deviceType: varchar("device_type", { length: 20 }).notNull(),
+    os: varchar("os", { length: 20 }).notNull(),
+    browser: varchar("browser", { length: 20 }).notNull(),
+    viewportW: smallint("viewport_w"),
+    viewportH: smallint("viewport_h"),
+    answers: json("answers").$type<Record<string, string | string[]>>().notNull().default(sql`(JSON_OBJECT())`),
+  },
+  (t) => [index("funnel_sessions_started_at_idx").on(t.startedAt), index("funnel_sessions_last_event_at_idx").on(t.lastEventAt)],
+)
+
+// Um evento do quiz por linha. Sem chave estrangeira para a sessão: o purge em lotes não depende de ordem.
+export const funnelEvents = mysqlTable(
+  "funnel_events",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    sessionId: char("session_id", { length: 36 }).notNull(),
+    event: varchar("event", { length: 32 }).notNull(),
+    step: tinyint("step"),
+    stepSlug: varchar("step_slug", { length: 40 }),
+    props: json("props").$type<Record<string, unknown>>().notNull(),
+    clientTs: dateTime("client_ts").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("funnel_events_session_id_idx").on(t.sessionId),
+    index("funnel_events_event_created_at_idx").on(t.event, t.createdAt),
+    index("funnel_events_created_at_idx").on(t.createdAt),
+  ],
+)
+
+// Logs do backend que valem ser consultados (todo warn/error e poucos info), já passados pelo redact.
+export const appLogs = mysqlTable(
+  "app_logs",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    ts: dateTime("ts").notNull(),
+    level: varchar("level", { length: 5 }).notNull(),
+    event: varchar("event", { length: 100 }).notNull(),
+    // Texto antes do primeiro ponto do evento.
+    area: varchar("area", { length: 40 }).notNull(),
+    fields: json("fields").$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [index("app_logs_ts_idx").on(t.ts), index("app_logs_area_level_ts_idx").on(t.area, t.level, t.ts)],
+)

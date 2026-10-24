@@ -277,6 +277,8 @@ export type Repos = {
   webhooks: WebhookRepo
   planGenerations: PlanGenerationRepo
   mealPlans: MealPlanRepo
+  analytics: AnalyticsRepo
+  appLogs: AppLogRepo
 }
 
 /** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */
@@ -308,4 +310,50 @@ export type FunnelEventRow = {
   props: Record<string, unknown>
   clientTs: Date
   createdAt: Date
+}
+
+/** Sessão do funil como gravada em `funnel_sessions` (leitura para os testes de contrato). */
+export type FunnelSessionView = {
+  sessionId: string
+  startedAt: Date
+  lastEventAt: Date
+  lastStep: number | null
+  lastStepSlug: string | null
+  maxStep: number | null
+  maxStepSlug: string | null
+  checkoutClicked: boolean
+  utm: Utm
+  referrerHost: string | null
+  deviceType: string
+  os: string
+  browser: string
+  viewportW: number | null
+  viewportH: number | null
+  answers: Record<string, string | string[]>
+}
+
+export interface AnalyticsRepo {
+  /** Uma transação: upsert da sessão (§7) e insert dos eventos. */
+  recordBatch(session: FunnelSessionPatch, events: FunnelEventRow[], now: Date): Promise<void>
+  /** Apaga até `limit` eventos (`created_at < cutoff`) e até `limit` sessões (`last_event_at < cutoff`); devolve o total. */
+  purgeOlderThan(cutoff: Date, limit: number): Promise<number>
+  /** Leitura para os testes de contrato. */
+  getSession(sessionId: string): Promise<FunnelSessionView | null>
+  listEvents(sessionId: string): Promise<FunnelEventRow[]>
+}
+
+export type AppLogRow = {
+  ts: Date
+  level: "info" | "warn" | "error"
+  event: string
+  area: string
+  fields: Record<string, unknown>
+}
+
+export interface AppLogRepo {
+  insertMany(rows: AppLogRow[]): Promise<void>
+  /** Apaga até `limit` linhas com `ts < cutoff`; devolve quantas. */
+  purgeOlderThan(cutoff: Date, limit: number): Promise<number>
+  /** Leitura para os testes de contrato: linhas com o `event` dado, por `ts`. */
+  listByEvent(event: string): Promise<AppLogRow[]>
 }

@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto"
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm"
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm"
 import type { Db } from "@/lib/db/client"
 import { daysLeft, expiryStage, renewalState, WARN_DAYS, type RenewalCharge } from "@/lib/renewal/rules"
 import { addDaysISO } from "@/lib/time"
 import {
+  appLogs,
   asaasWebhookEvents,
+  funnelEvents,
+  funnelSessions,
   mealPlans,
   notifications,
   patients,
@@ -13,7 +16,12 @@ import {
   quizResponses,
 } from "@/lib/db/schema"
 import type {
+  AnalyticsRepo,
+  AppLogRepo,
+  AppLogRow,
   Channel,
+  FunnelEventRow,
+  FunnelSessionView,
   MealPlanRepo,
   MealPlanView,
   NewSubmission,
@@ -82,6 +90,11 @@ async function withTxRetry<T>(run: () => Promise<T>): Promise<T> {
     }
   }
 }
+
+/** Coluna da própria linha, para o ON DUPLICATE KEY UPDATE (sem prefixo de tabela). */
+const current = (column: string) => sql.raw("`" + column + "`")
+/** Valor que o INSERT tentou gravar nessa coluna. */
+const incoming = (column: string) => sql.raw("VALUES(`" + column + "`)")
 
 const affected = (result: unknown): number => (result as [{ affectedRows: number }])[0].affectedRows
 
@@ -1058,6 +1071,167 @@ export function createMysqlRepos(db: Db): Repos {
     },
   }
 
+  const analyticsRepo: AnalyticsRepo = {
+    async recordBatch(patch, events, now) {
+      await withTxRetry(() =>
+        db.transaction(async (tx) => {
+          const start = patch.start
+          // No MySQL, cada atribuição do ON DUPLICATE KEY UPDATE já enxerga as anteriores, e o Drizzle as
+          // emite na ordem das colunas do schema. Por isso `max_step_slug` (declarada antes de `max_step`)
+          // compara com o `max_step` ainda antigo. Não reordene as duas colunas no schema.
+          await tx
+            .insert(funnelSessions)
+            .values({
+              sessionId: patch.sessionId,
+              startedAt: now,
+              lastEventAt: now,
+              lastStep: patch.lastStep?.step ?? null,
+              lastStepSlug: patch.lastStep?.slug ?? null,
+              maxStep: patch.maxStep?.step ?? null,
+              maxStepSlug: patch.maxStep?.slug ?? null,
+              checkoutClicked: patch.checkoutClicked,
+              utmSource: start?.utm.source ?? null,
+              utmMedium: start?.utm.medium ?? null,
+              utmCampaign: start?.utm.campaign ?? null,
+              utmContent: start?.utm.content ?? null,
+              utmTerm: start?.utm.term ?? null,
+              referrerHost: start?.referrerHost ?? null,
+              deviceType: patch.device.deviceType,
+              os: patch.device.os,
+              browser: patch.device.browser,
+              viewportW: start?.viewportW ?? null,
+              viewportH: start?.viewportH ?? null,
+              answers: patch.answers,
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                lastEventAt: sql`GREATEST(${current("last_event_at")}, ${incoming("last_event_at")})`,
+                lastStep: sql`COALESCE(${incoming("last_step")}, ${current("last_step")})`,
+                lastStepSlug: sql`COALESCE(${incoming("last_step_slug")}, ${current("last_step_slug")})`,
+                maxStepSlug: sql`IF(${incoming("max_step")} > COALESCE(${current("max_step")}, -1), ${incoming("max_step_slug")}, ${current("max_step_slug")})`,
+                maxStep: sql`IF(${incoming("max_step")} > COALESCE(${current("max_step")}, -1), ${incoming("max_step")}, ${current("max_step")})`,
+                checkoutClicked: sql`(${current("checkout_clicked")} OR ${incoming("checkout_clicked")})`,
+                utmSource: sql`COALESCE(${current("utm_source")}, ${incoming("utm_source")})`,
+                utmMedium: sql`COALESCE(${current("utm_medium")}, ${incoming("utm_medium")})`,
+                utmCampaign: sql`COALESCE(${current("utm_campaign")}, ${incoming("utm_campaign")})`,
+                utmContent: sql`COALESCE(${current("utm_content")}, ${incoming("utm_content")})`,
+                utmTerm: sql`COALESCE(${current("utm_term")}, ${incoming("utm_term")})`,
+                referrerHost: sql`COALESCE(${current("referrer_host")}, ${incoming("referrer_host")})`,
+                viewportW: sql`COALESCE(${current("viewport_w")}, ${incoming("viewport_w")})`,
+                viewportH: sql`COALESCE(${current("viewport_h")}, ${incoming("viewport_h")})`,
+                answers: sql`JSON_MERGE_PATCH(${current("answers")}, ${incoming("answers")})`,
+              },
+            })
+
+          if (events.length > 0) {
+            await tx.insert(funnelEvents).values(
+              events.map((e) => ({
+                sessionId: e.sessionId,
+                event: e.event,
+                step: e.step,
+                stepSlug: e.stepSlug,
+                props: e.props,
+                clientTs: e.clientTs,
+                createdAt: e.createdAt,
+              })),
+            )
+          }
+        }),
+      )
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const events = await db.execute(
+        sql`DELETE FROM ${funnelEvents} WHERE ${funnelEvents.createdAt} < ${sql.param(cutoff, funnelEvents.createdAt)} ORDER BY ${funnelEvents.createdAt} LIMIT ${limit}`,
+      )
+      const sessions = await db.execute(
+        sql`DELETE FROM ${funnelSessions} WHERE ${funnelSessions.lastEventAt} < ${sql.param(cutoff, funnelSessions.lastEventAt)} ORDER BY ${funnelSessions.lastEventAt} LIMIT ${limit}`,
+      )
+      return affected(events) + affected(sessions)
+    },
+
+    async getSession(sessionId) {
+      const [r] = await db.select().from(funnelSessions).where(eq(funnelSessions.sessionId, sessionId))
+      if (!r) return null
+      const utm: FunnelSessionView["utm"] = {}
+      if (r.utmSource !== null) utm.source = r.utmSource
+      if (r.utmMedium !== null) utm.medium = r.utmMedium
+      if (r.utmCampaign !== null) utm.campaign = r.utmCampaign
+      if (r.utmContent !== null) utm.content = r.utmContent
+      if (r.utmTerm !== null) utm.term = r.utmTerm
+      return {
+        sessionId: r.sessionId,
+        startedAt: r.startedAt,
+        lastEventAt: r.lastEventAt,
+        lastStep: r.lastStep,
+        lastStepSlug: r.lastStepSlug,
+        maxStep: r.maxStep,
+        maxStepSlug: r.maxStepSlug,
+        checkoutClicked: r.checkoutClicked,
+        utm,
+        referrerHost: r.referrerHost,
+        deviceType: r.deviceType,
+        os: r.os,
+        browser: r.browser,
+        viewportW: r.viewportW,
+        viewportH: r.viewportH,
+        answers: r.answers,
+      }
+    },
+
+    async listEvents(sessionId) {
+      const rows = await db
+        .select()
+        .from(funnelEvents)
+        .where(eq(funnelEvents.sessionId, sessionId))
+        .orderBy(asc(funnelEvents.id))
+      return rows.map(
+        (r): FunnelEventRow => ({
+          sessionId: r.sessionId,
+          event: r.event,
+          step: r.step,
+          stepSlug: r.stepSlug,
+          props: r.props,
+          clientTs: r.clientTs,
+          createdAt: r.createdAt,
+        }),
+      )
+    },
+  }
+
+  const appLogsRepo: AppLogRepo = {
+    async insertMany(rows) {
+      if (rows.length === 0) return
+      await db
+        .insert(appLogs)
+        .values(rows.map((r) => ({ ts: r.ts, level: r.level, event: r.event, area: r.area, fields: r.fields })))
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const result = await db.execute(
+        sql`DELETE FROM ${appLogs} WHERE ${appLogs.ts} < ${sql.param(cutoff, appLogs.ts)} ORDER BY ${appLogs.ts} LIMIT ${limit}`,
+      )
+      return affected(result)
+    },
+
+    async listByEvent(event) {
+      const rows = await db
+        .select()
+        .from(appLogs)
+        .where(eq(appLogs.event, event))
+        .orderBy(asc(appLogs.ts), asc(appLogs.id))
+      return rows.map(
+        (r): AppLogRow => ({
+          ts: r.ts,
+          level: r.level as AppLogRow["level"],
+          event: r.event,
+          area: r.area,
+          fields: r.fields,
+        }),
+      )
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -1065,5 +1239,7 @@ export function createMysqlRepos(db: Db): Repos {
     webhooks,
     planGenerations: planGenerationsRepo,
     mealPlans: mealPlansRepo,
+    analytics: analyticsRepo,
+    appLogs: appLogsRepo,
   }
 }
