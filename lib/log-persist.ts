@@ -9,6 +9,12 @@ export const PERSISTED_INFO_EVENTS: ReadonlySet<string> = new Set([
   "notification.dispatch.sent",
 ])
 
+/**
+ * Eventos que só vão para o stdout: rate limit é ruído sob enxurrada e encheria o buffer,
+ * derrubando os warn e error de verdade (pagamento, notificação, plano).
+ */
+export const NOT_PERSISTED_EVENTS: ReadonlySet<string> = new Set(["events.rate_limited", "submit.rate_limited"])
+
 const AREA_MAX = 40
 
 type Deps = {
@@ -50,10 +56,15 @@ export function createLogPersister(d: Deps): { push(entry: LogEntry): void; flus
   const schedule = () => {
     if (scheduled) return
     scheduled = true
-    setTimer(() => {
+    try {
+      setTimer(() => {
+        scheduled = false
+        void flush()
+      }, intervalMs)
+    } catch {
+      // sem timer agora; o próximo push tenta de novo
       scheduled = false
-      void flush()
-    }, intervalMs)
+    }
   }
 
   async function run(): Promise<void> {
@@ -87,6 +98,7 @@ export function createLogPersister(d: Deps): { push(entry: LogEntry): void; flus
   }
 
   function push(entry: LogEntry): void {
+    if (NOT_PERSISTED_EVENTS.has(entry.event)) return
     if (entry.level === "info" && !PERSISTED_INFO_EVENTS.has(entry.event)) return
     if (buffer.length >= maxBuffer) {
       dropped++

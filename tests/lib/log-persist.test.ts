@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AppLogRow } from "@/lib/db/repos/types"
 import type { LogEntry } from "@/lib/log"
-import { createLogPersister, PERSISTED_INFO_EVENTS } from "@/lib/log-persist"
+import { createLogPersister, NOT_PERSISTED_EVENTS, PERSISTED_INFO_EVENTS } from "@/lib/log-persist"
 
 const entry = (level: LogEntry["level"], event: string, fields: Record<string, unknown> = {}): LogEntry => ({
   ts: new Date("2026-10-24T12:00:00.000Z"),
@@ -50,6 +50,35 @@ describe("createLogPersister: filtro", () => {
     expect(batches).toHaveLength(1)
     expect(batches[0].map((r) => r.event)).toEqual(["submit.done", "a.b", "c.d"])
     expect(batches[0].map((r) => r.level)).toEqual(["info", "warn", "error"])
+  })
+
+  it("lista os eventos de rate limit que nunca vão para app_logs", () => {
+    expect([...NOT_PERSISTED_EVENTS].sort()).toEqual(["events.rate_limited", "submit.rate_limited"])
+  })
+
+  it("não grava warn de rate limit, mas grava outro warn", async () => {
+    const { repo, insertMany, batches } = makeRepo()
+    const p = createLogPersister({ repo, write: vi.fn() })
+    p.push(entry("warn", "events.rate_limited"))
+    p.push(entry("warn", "submit.rate_limited"))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(insertMany).not.toHaveBeenCalled()
+
+    p.push(entry("warn", "payment.x"))
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(batches).toHaveLength(1)
+    expect(batches[0].map((r) => r.event)).toEqual(["payment.x"])
+  })
+
+  it("rate limit em enxurrada não ocupa o buffer", async () => {
+    const { repo, batches } = makeRepo()
+    const write = vi.fn()
+    const p = createLogPersister({ repo, write, maxBuffer: 2 })
+    for (let i = 0; i < 50; i++) p.push(entry("warn", "events.rate_limited"))
+    p.push(entry("error", "payment.fail"))
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(batches[0].map((r) => r.event)).toEqual(["payment.fail"])
+    expect(write).not.toHaveBeenCalled()
   })
 
   it("não agenda nada quando nada é gravável", async () => {
@@ -186,6 +215,18 @@ describe("createLogPersister: timer", () => {
     p.push(entry("warn", "a.b"))
     expect(setTimer).toHaveBeenCalledTimes(1)
     expect(setTimer).toHaveBeenCalledWith(expect.any(Function), 500)
+  })
+
+  it("se o setTimer lançar, o próximo push tenta agendar de novo", () => {
+    const setTimer = vi
+      .fn((_fn: () => void, _ms: number): unknown => ({}))
+      .mockImplementationOnce(() => {
+        throw new Error("sem timer")
+      })
+    const p = createLogPersister({ repo: makeRepo().repo, write: vi.fn(), setTimer })
+    expect(() => p.push(entry("warn", "a.b"))).not.toThrow()
+    p.push(entry("warn", "a.b"))
+    expect(setTimer).toHaveBeenCalledTimes(2)
   })
 
   it("o timer padrão não segura o processo (unref)", () => {
