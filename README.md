@@ -184,6 +184,8 @@ Faça depois do primeiro deploy do app com as migrations `0004` e `0005` aplicad
    GRANT SELECT ON tami_forms.vw_api_errors TO 'metabase_ro'@'%';
    ```
 
+   Os usuários `metabase_*` são criados em `'%'` para a rede interna do Easypanel: **não publique a porta do MySQL na internet** no Easypanel. O usuário do próprio app (o de `DATABASE_URL`) precisa de permissão para `CREATE VIEW`, porque a migration das views roda no boot.
+
    Se o banco do app não se chamar `tami_forms`, troque o nome nas 8 linhas. Os `GRANT` valem pelo nome: continuam valendo quando uma migration recria uma view.
 
 3. **Serviço novo** pelo template **Metabase** do Easypanel, com estas variáveis de ambiente:
@@ -315,7 +317,7 @@ ORDER BY sessoes DESC;
 
 #### 6. Conversão por aparelho
 
-Objetivo: ver se o quiz converte pior em algum aparelho, sistema ou navegador (inclusive os navegadores internos do Instagram e do Facebook). Filtros de campo: `periodo` em `funnel_sessions.started_at`, `utm_source` e `utm_campaign` em `funnel_sessions`. Visualização: **Tabela** (ou barras de `pct_checkout` por `device_type`).
+Objetivo: ver se o quiz converte pior em algum aparelho, sistema ou navegador (inclusive os navegadores internos do Instagram e do Facebook). Filtros de campo: `periodo` em `funnel_sessions.started_at`, `utm_source` e `utm_campaign` em `funnel_sessions`. Visualização: **Tabela** (ou barras de `pct_checkout` por `device_type`). O Safari do iPadOS 13 ou mais novo se identifica como Mac, então os iPads aparecem como desktop/macOS.
 
 ```sql
 SELECT device_type,
@@ -370,7 +372,7 @@ ORDER BY dia, resultado;
 
 #### 9. Saúde das integrações
 
-Objetivo: acompanhar os erros do servidor por área (a parte do nome do evento antes do primeiro ponto: `asaas`, `webhook`, `submit`, `plan`, `notification`, `payment` etc.) e por dia, com os sucessos ao lado. Só quatro eventos de sucesso são gravados (`submit`, `webhook`, `plan` e `notification`); nas demais áreas a coluna `sucessos` fica em 0. Filtro de campo: `periodo` em `vw_api_errors.day`. Visualização: **Linhas** (ou barras) com `erros` e `sucessos` por `day`, uma série por `area`.
+Objetivo: acompanhar os erros do servidor por área (a parte do nome do evento antes do primeiro ponto: `payment`, `webhook`, `submit`, `events`, `plan`, `notification`, `notifications`, `renewals`, `job`, `jobs`, `boot`, `alert_admin`, `notice_admin`; as falhas do Asaas aparecem em `payment.*` e `webhook.asaas.*`, não existe uma área `asaas`) e por dia, com os sucessos ao lado. Só quatro eventos de sucesso são gravados (`submit`, `webhook`, `plan` e `notification`); nas demais áreas a coluna `sucessos` fica em 0. Nas áreas `submit` e `events`, os avisos de erro do cliente (4xx, como `*.invalid` e `*.bad_body`) também contam como "erros". Os avisos de limite de requisições (`events.rate_limited` e `submit.rate_limited`) não são gravados em `app_logs`. Filtro de campo: `periodo` em `vw_api_errors.day`. Visualização: **Linhas** (ou barras) com `erros` e `sucessos` por `day`, uma série por `area`.
 
 ```sql
 SELECT day,
