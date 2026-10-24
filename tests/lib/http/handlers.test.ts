@@ -46,6 +46,7 @@ function post(body: string, headers: Record<string, string> = {}): Request {
 function setupSubmit(opts: { result?: SubmitResult | (() => Promise<SubmitResult>); limiter?: { hit(k: string): boolean } } = {}) {
   const calls = {
     submitQuiz: [] as ParsedSubmission[],
+    contexts: [] as unknown[],
     dispatch: [] as string[],
     deferred: [] as (() => Promise<void>)[],
     hits: [] as string[],
@@ -54,8 +55,9 @@ function setupSubmit(opts: { result?: SubmitResult | (() => Promise<SubmitResult
   const limiter = opts.limiter ?? { hit: () => true }
   const log = fakeLog()
   const handler = createSubmitQuizHandler({
-    submitQuiz: async (input) => {
+    submitQuiz: async (input, ctx) => {
       calls.submitQuiz.push(input)
+      calls.contexts.push(ctx)
       return typeof result === "function" ? result() : result
     },
     dispatchForQuizResponse: async (id) => {
@@ -173,6 +175,22 @@ describe("submit-quiz handler: respostas por caso", () => {
     const res = await handler(post("{"))
     expect(res.status).toBe(429)
     expect(calls.submitQuiz).toEqual([])
+  })
+})
+
+describe("submit-quiz handler: contexto do pedido para a atribuição da Meta", () => {
+  it("passa o primeiro IP de x-forwarded-for e o User-Agent ao serviço", async () => {
+    const { handler, calls } = setupSubmit()
+    await handler(
+      post(JSON.stringify(validBody()), { "x-forwarded-for": "9.9.9.9, 10.0.0.1", "user-agent": "UA-X" }),
+    )
+    expect(calls.contexts).toEqual([{ clientIp: "9.9.9.9", userAgent: "UA-X" }])
+  })
+
+  it("sem os cabeçalhos, o IP é 'unknown' e o User-Agent fica ausente", async () => {
+    const { handler, calls } = setupSubmit()
+    await handler(post(JSON.stringify(validBody())))
+    expect(calls.contexts).toEqual([{ clientIp: "unknown", userAgent: undefined }])
   })
 })
 

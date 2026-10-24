@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest"
-import type { Channel, NotificationRepo, PaymentRepo, SubmissionRepo } from "@/lib/db/repos/types"
+import type {
+  Channel,
+  MetaAttributionRepo,
+  NotificationRepo,
+  PaymentRepo,
+  SubmissionRepo,
+} from "@/lib/db/repos/types"
 import { HttpError } from "@/lib/http/retry"
 import type { Logger } from "@/lib/log"
 import type { ParsedSubmission } from "@/lib/quiz/validation"
@@ -31,7 +37,10 @@ type Overrides = {
   syncPayment?: (real: SyncPayment) => SyncPayment
 }
 
-function setup(wrap: (repos: ReturnType<typeof createMemoryRepos>) => Overrides = () => ({})) {
+function setup(
+  wrap: (repos: ReturnType<typeof createMemoryRepos>) => Overrides = () => ({}),
+  opts: { metaEnabled?: boolean; metaAttributions?: MetaAttributionRepo } = {},
+) {
   const repos = createMemoryRepos()
   const asaas = createFakeAsaas()
   const log: Logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
@@ -52,9 +61,10 @@ function setup(wrap: (repos: ReturnType<typeof createMemoryRepos>) => Overrides 
     payments: override.payments ?? repos.payments,
     notifications: override.notifications ?? repos.notifications,
     syncPayment,
+    metaAttributions: opts.metaAttributions ?? repos.metaAttributions,
     log,
     now: () => NOW,
-    config: { amount: "39.90", channels: CHANNELS, requestBudgetMs: BUDGET_MS },
+    config: { amount: "39.90", channels: CHANNELS, requestBudgetMs: BUDGET_MS, metaEnabled: opts.metaEnabled ?? false },
   })
   return { repos, asaas, log, alertAdmin, submit }
 }
@@ -324,5 +334,84 @@ describe("createSubmitQuiz", () => {
       expect(text).not.toContain(CPF)
       expect(text).not.toContain("Ana Souza")
     }
+  })
+})
+
+describe("createSubmitQuiz: atribuição da Meta", () => {
+  const META = { externalId: "123e4567-e89b-42d3-a456-426614174000", fbp: "fb.1.1700000000000.123" }
+  const withMeta = (submissionId: string): ParsedSubmission => ({ ...submission(submissionId), meta: META })
+
+  it("com o rastreamento ligado, grava a atribuição do envio com IP e User-Agent do pedido", async () => {
+    const s = setup(undefined, { metaEnabled: true })
+
+    const result = await s.submit(withMeta("sub-1"), { clientIp: "1.2.3.4", userAgent: "UA" })
+
+    expect(result.kind).toBe("link")
+    const quizResponseId = result.kind === "link" ? result.quizResponseId : ""
+    expect(s.repos.state.metaAttributions.get(quizResponseId)).toEqual({
+      quizResponseId,
+      externalId: META.externalId,
+      fbp: META.fbp,
+      fbc: null,
+      clientIp: "1.2.3.4",
+      userAgent: "UA",
+      eventSourceUrl: null,
+      createdAt: NOW,
+    })
+  })
+
+  it("IP 'unknown' vira nulo e IP e User-Agent enormes são cortados no tamanho da coluna", async () => {
+    const s = setup(undefined, { metaEnabled: true })
+    await s.submit(withMeta("sub-1"), { clientIp: "unknown", userAgent: "u".repeat(600) })
+    await s.submit(withMeta("sub-2"), { clientIp: "i".repeat(80) })
+
+    const rows = [...s.repos.state.metaAttributions.values()]
+    expect(rows).toHaveLength(2)
+    expect(rows.find((r) => r.clientIp === null)?.userAgent).toHaveLength(500)
+    expect(rows.find((r) => r.clientIp !== null)?.clientIp).toHaveLength(45)
+    expect(rows.find((r) => r.clientIp !== null)?.userAgent).toBeNull()
+  })
+
+  it("sem meta no envio, ou com o rastreamento desligado, não grava nada", async () => {
+    const on = setup(undefined, { metaEnabled: true })
+    await on.submit(submission("sub-1"), { clientIp: "1.2.3.4", userAgent: "UA" })
+    const off = setup(undefined, { metaEnabled: false })
+    await off.submit(withMeta("sub-1"), { clientIp: "1.2.3.4", userAgent: "UA" })
+
+    expect(on.repos.state.metaAttributions.size).toBe(0)
+    expect(off.repos.state.metaAttributions.size).toBe(0)
+  })
+
+  it("o reenvio do mesmo submissionId não troca a atribuição já gravada", async () => {
+    const s = setup(undefined, { metaEnabled: true })
+    await s.submit(withMeta("sub-1"), { clientIp: "1.1.1.1" })
+    await s.submit(withMeta("sub-1"), { clientIp: "2.2.2.2" })
+
+    const rows = [...s.repos.state.metaAttributions.values()]
+    expect(rows).toHaveLength(1)
+    expect(rows[0].clientIp).toBe("1.1.1.1")
+  })
+
+  it("se gravar a atribuição falhar, o envio segue igual e só um aviso sem dado pessoal é logado", async () => {
+    const failing: MetaAttributionRepo = {
+      save: async () => {
+        throw new Error(`insert falhou para ${EMAIL}`)
+      },
+      purgeOlderThan: async () => 0,
+    }
+    const s = setup(undefined, { metaEnabled: true, metaAttributions: failing })
+
+    const result = await s.submit(withMeta("sub-1"), { clientIp: "1.2.3.4" })
+
+    expect(result.kind).toBe("link")
+    const quizResponseId = result.kind === "link" ? result.quizResponseId : ""
+    expect(s.log.warn).toHaveBeenCalledWith("submit.meta_attribution_failed", {
+      submissionId: "sub-1",
+      quizResponseId,
+      message: expect.any(String),
+    })
+    const text = loggedText(s.log)
+    expect(text).not.toContain(EMAIL)
+    expect(text).not.toContain("1.2.3.4")
   })
 })

@@ -47,7 +47,10 @@ export function createSubmitQuizHandler(d: {
         return failure(400)
       }
 
-      const result = await d.submitQuiz(parsed.value)
+      const result = await d.submitQuiz(parsed.value, {
+        clientIp: clientIp(req),
+        userAgent: req.headers.get("user-agent") ?? undefined,
+      })
       switch (result.kind) {
         case "link": {
           const { quizResponseId } = result

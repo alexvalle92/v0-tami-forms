@@ -127,9 +127,15 @@ function buildContainer(): Container {
     payments,
     notifications,
     syncPayment,
+    metaAttributions: repos.metaAttributions,
     log,
     now,
-    config: { amount: env.PAYMENT_AMOUNT, channels, requestBudgetMs: SUBMIT_REQUEST_BUDGET_MS },
+    config: {
+      amount: env.PAYMENT_AMOUNT,
+      channels,
+      requestBudgetMs: SUBMIT_REQUEST_BUDGET_MS,
+      metaEnabled: env.META_TRACKING_ENABLED,
+    },
   })
   const dispatchForQuizResponse = createDispatchForQuizResponse({ notifications, dispatchNotification, log })
   const generatePlan = createGeneratePlan({
