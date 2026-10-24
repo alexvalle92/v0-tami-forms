@@ -285,7 +285,7 @@ export type MetaAttributionInput = {
 
 export interface MetaAttributionRepo {
   /** INSERT IGNORE: a primeira gravação do envio vale (reenvio com o mesmo submissionId não troca). */
-  save(quizResponseId: string, a: MetaAttributionInput): Promise<void>
+  save(quizResponseId: string, a: MetaAttributionInput, now: Date): Promise<void>
   purgeOlderThan(cutoff: Date, limit: number): Promise<number>
 }
 
