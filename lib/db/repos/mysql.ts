@@ -10,6 +10,7 @@ import {
   funnelSessions,
   mealPlans,
   metaAttributions,
+  metaConversions,
   notifications,
   patients,
   payments,
@@ -26,6 +27,7 @@ import type {
   MealPlanRepo,
   MealPlanView,
   MetaAttributionRepo,
+  MetaConversionRepo,
   NewSubmission,
   NotificationKind,
   NotificationRepo,
@@ -53,6 +55,8 @@ const MYSQL_DUPLICATE_ENTRY = 1062
 const SUBMISSION_UNIQUE_KEY = "quiz_responses_submission_id_unique"
 /** Tentativas de uma transação que caiu em deadlock ou lock wait timeout. */
 const TX_MAX_ATTEMPTS = 3
+/** Quanto tempo `metaConversions.claim` reserva a linha para quem vai enviá-la. */
+const META_CONVERSION_LOCK_MS = 60_000
 
 type MysqlErrorLike = { errno: number; sqlMessage?: string; message?: string }
 
@@ -737,6 +741,7 @@ export function createMysqlRepos(db: Db): Repos {
 
       let pendingGeneration: { id: string; quizResponseId: string } | null = null
       let missingQuizResponse = false
+      let pendingConversion: { id: string } | null = null
       if (e.group === "paid") {
         // Leitura sem lock: a geração só é criada com a cobrança travada, e o lock acima já
         // foi obtido, então esta leitura vê a de um evento anterior. Um lock aqui (gap lock
@@ -786,6 +791,35 @@ export function createMysqlRepos(db: Db): Repos {
             missingQuizResponse = true
           }
         }
+
+        // Purchase da Meta: só no primeiro evento pago (`p.paidAt` é o valor de antes do UPDATE) e só se
+        // algum envio da cobrança tem atribuição; o mais recente com atribuição vale. UNIQUE (payment_id)
+        // mantém uma linha por cobrança mesmo se esta leitura rodar duas vezes.
+        if (p.paidAt === null) {
+          const [attributed] = await tx
+            .select({ id: quizResponses.id })
+            .from(quizResponses)
+            .innerJoin(metaAttributions, eq(metaAttributions.quizResponseId, quizResponses.id))
+            .where(eq(quizResponses.paymentId, p.id))
+            .orderBy(desc(quizResponses.createdAt), desc(quizResponses.id))
+            .limit(1)
+          if (attributed) {
+            const conversionId = randomUUID()
+            const created = await tx.insert(metaConversions).ignore().values({
+              id: conversionId,
+              paymentId: p.id,
+              quizResponseId: attributed.id,
+              eventId: `purchase:${p.id}`,
+              eventTime: now,
+              status: "pending",
+              attempts: 0,
+              nextAttemptAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            if (affected(created) === 1) pendingConversion = { id: conversionId }
+          }
+        }
       }
 
       const [patient] = await tx
@@ -800,6 +834,7 @@ export function createMysqlRepos(db: Db): Repos {
         patientName: patient.name,
         pendingGeneration,
         missingQuizResponse,
+        pendingConversion,
       }
     })
   }
@@ -1247,6 +1282,122 @@ export function createMysqlRepos(db: Db): Repos {
     },
   }
 
+  const metaConversionUnlockedAt = (now: Date) =>
+    or(isNull(metaConversions.lockedUntil), lt(metaConversions.lockedUntil, now))
+  const metaConversionDue = (now: Date) =>
+    and(eq(metaConversions.status, "pending"), lte(metaConversions.nextAttemptAt, now), metaConversionUnlockedAt(now))
+  const addAttempt = sql`${metaConversions.attempts} + 1`
+  const reopenMetaConversionSet = (now: Date) => ({
+    status: "pending" as const,
+    attempts: 0,
+    nextAttemptAt: now,
+    lastError: null,
+    lockedUntil: null,
+    updatedAt: now,
+  })
+
+  const metaConversionsRepo: MetaConversionRepo = {
+    async listDue(now, limit) {
+      const rows = await db
+        .select({ id: metaConversions.id })
+        .from(metaConversions)
+        .where(metaConversionDue(now))
+        .orderBy(asc(metaConversions.nextAttemptAt), asc(metaConversions.id))
+        .limit(limit)
+      return rows.map((r) => r.id)
+    },
+
+    async claim(id, now) {
+      const result = await db
+        .update(metaConversions)
+        .set({ lockedUntil: new Date(now.getTime() + META_CONVERSION_LOCK_MS), updatedAt: now })
+        .where(and(eq(metaConversions.id, id), metaConversionDue(now)))
+      return affected(result) === 1
+    },
+
+    async loadPayload(id) {
+      const [row] = await db
+        .select({
+          id: metaConversions.id,
+          paymentId: metaConversions.paymentId,
+          eventId: metaConversions.eventId,
+          eventTime: metaConversions.eventTime,
+          attempts: metaConversions.attempts,
+          amount: payments.amount,
+          name: patients.name,
+          email: patients.email,
+          phone: patients.phone,
+          externalId: metaAttributions.externalId,
+          fbp: metaAttributions.fbp,
+          fbc: metaAttributions.fbc,
+          clientIp: metaAttributions.clientIp,
+          userAgent: metaAttributions.userAgent,
+          eventSourceUrl: metaAttributions.eventSourceUrl,
+        })
+        .from(metaConversions)
+        .innerJoin(payments, eq(payments.id, metaConversions.paymentId))
+        .innerJoin(patients, eq(patients.id, payments.patientId))
+        .innerJoin(metaAttributions, eq(metaAttributions.quizResponseId, metaConversions.quizResponseId))
+        .where(eq(metaConversions.id, id))
+        .limit(1)
+      if (!row) return null
+      return {
+        id: row.id,
+        paymentId: row.paymentId,
+        eventId: row.eventId,
+        eventTime: row.eventTime,
+        attempts: row.attempts,
+        amount: row.amount,
+        patient: { email: row.email, phone: row.phone, name: row.name },
+        attribution: {
+          externalId: row.externalId,
+          fbp: row.fbp,
+          fbc: row.fbc,
+          clientIp: row.clientIp,
+          userAgent: row.userAgent,
+          eventSourceUrl: row.eventSourceUrl,
+        },
+      }
+    },
+
+    async markSent(id, now) {
+      await db
+        .update(metaConversions)
+        .set({ status: "sent", sentAt: now, attempts: addAttempt, lockedUntil: null, updatedAt: now })
+        .where(eq(metaConversions.id, id))
+    },
+
+    async markRetry(id, nextAttemptAt, lastError) {
+      await db
+        .update(metaConversions)
+        .set({ nextAttemptAt, lastError, attempts: addAttempt, lockedUntil: null, updatedAt: new Date() })
+        .where(eq(metaConversions.id, id))
+    },
+
+    async markFailed(id, lastError) {
+      await db
+        .update(metaConversions)
+        .set({ status: "failed", lastError, attempts: addAttempt, lockedUntil: null, updatedAt: new Date() })
+        .where(eq(metaConversions.id, id))
+    },
+
+    async reopen(id) {
+      const result = await db
+        .update(metaConversions)
+        .set(reopenMetaConversionSet(new Date()))
+        .where(and(eq(metaConversions.id, id), eq(metaConversions.status, "failed")))
+      return affected(result) === 1
+    },
+
+    async reopenAllFailed() {
+      const result = await db
+        .update(metaConversions)
+        .set(reopenMetaConversionSet(new Date()))
+        .where(eq(metaConversions.status, "failed"))
+      return affected(result)
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -1257,5 +1408,6 @@ export function createMysqlRepos(db: Db): Repos {
     analytics: analyticsRepo,
     appLogs: appLogsRepo,
     metaAttributions: metaAttributionsRepo,
+    metaConversions: metaConversionsRepo,
   }
 }

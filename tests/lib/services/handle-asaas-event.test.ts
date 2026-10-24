@@ -161,6 +161,7 @@ describe("createHandleAsaasEvent", () => {
       patientName: "Ana Souza",
       pendingGeneration: null,
       missingQuizResponse: true,
+      pendingConversion: null,
     }
     const webhooks: WebhookRepo = { applyPaymentEvent: vi.fn(async () => processed) }
     const handle = createHandleAsaasEvent({ webhooks, log: fakeLog(), now: () => NOW })

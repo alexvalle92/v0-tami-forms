@@ -11,6 +11,7 @@ import type {
   MealPlanView,
   MetaAttributionInput,
   MetaAttributionRepo,
+  MetaConversionRepo,
   NewSubmission,
   NotificationKind,
   NotificationRepo,
@@ -161,9 +162,24 @@ export type MemoryState = {
   funnelEvents: readonly Readonly<FunnelEventRow>[]
   appLogs: readonly Readonly<AppLogRow>[]
   metaAttributions: ReadonlyMap<string, Readonly<MetaAttributionRow>>
+  metaConversions: ReadonlyMap<string, Readonly<MetaConversionRow>>
 }
 
 export type MetaAttributionRow = MetaAttributionInput & { quizResponseId: string; createdAt: Date }
+
+export type MetaConversionRow = {
+  id: string
+  paymentId: string
+  quizResponseId: string
+  eventId: string
+  eventTime: Date
+  status: "pending" | "sent" | "failed"
+  attempts: number
+  nextAttemptAt: Date
+  lockedUntil: Date | null
+  lastError: LastError | null
+  sentAt: Date | null
+}
 
 /** Atalhos de teste para estados que nenhuma interface pública do `v0-tami-forms` cria (o PlanA os cria no banco). */
 export type MemorySeed = {
@@ -185,6 +201,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
   const funnelEvents: FunnelEventRow[] = []
   const appLogRows: AppLogRow[] = []
   const metaAttributionRows = new Map<string, MetaAttributionRow>()
+  const metaConversionRows = new Map<string, MetaConversionRow>()
 
   const patientByCpf = (cpf: string) => [...patients.values()].find((p) => p.cpf === cpf)
 
@@ -659,10 +676,12 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       p.lastEvent = e.event
       let pendingGeneration: Processed["pendingGeneration"] = null
       let missingQuizResponse = false
+      let pendingConversion: Processed["pendingConversion"] = null
 
       if (e.group === "paid") {
         // 5. Pago.
         p.status = e.status ?? (e.event === "PAYMENT_CONFIRMED" ? "CONFIRMED" : "RECEIVED")
+        const firstPayment = p.paidAt === null
         if (p.paidAt === null) p.paidAt = now
         p.paymentDate = e.paymentDate ?? p.paymentDate
         p.billingType = e.billingType ?? p.billingType
@@ -694,6 +713,30 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         if (generation?.status === "pending") {
           pendingGeneration = { id: generation.id, quizResponseId: generation.quizResponseId }
         }
+
+        // Purchase da Meta: primeiro evento pago e envio mais recente da cobrança que tem atribuição.
+        if (firstPayment) {
+          const attributed = [...quizResponses.values()]
+            .filter((q) => q.paymentId === p.id && metaAttributionRows.has(q.id))
+            .pop()
+          if (attributed && ![...metaConversionRows.values()].some((c) => c.paymentId === p.id)) {
+            const conversion: MetaConversionRow = {
+              id: randomUUID(),
+              paymentId: p.id,
+              quizResponseId: attributed.id,
+              eventId: `purchase:${p.id}`,
+              eventTime: new Date(now),
+              status: "pending",
+              attempts: 0,
+              nextAttemptAt: new Date(now),
+              lockedUntil: null,
+              lastError: null,
+              sentAt: null,
+            }
+            metaConversionRows.set(conversion.id, conversion)
+            pendingConversion = { id: conversion.id }
+          }
+        }
       } else {
         // 6. Reversão e 7. antes de pagar: só o status (sem status no evento, mantém o atual).
         p.status = e.status ?? p.status
@@ -706,6 +749,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         patientName: patients.get(p.patientId)!.name,
         pendingGeneration,
         missingQuizResponse,
+        pendingConversion,
       }
     },
   }
@@ -998,6 +1042,104 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     },
   }
 
+  const conversionDue = (c: MetaConversionRow, now: Date) =>
+    c.status === "pending" &&
+    c.nextAttemptAt.getTime() <= now.getTime() &&
+    (c.lockedUntil === null || c.lockedUntil.getTime() < now.getTime())
+  const reopenConversion = (c: MetaConversionRow, now: Date) => {
+    c.status = "pending"
+    c.attempts = 0
+    c.nextAttemptAt = now
+    c.lastError = null
+    c.lockedUntil = null
+  }
+
+  const metaConversionsRepo: MetaConversionRepo = {
+    async listDue(now, limit) {
+      return [...metaConversionRows.values()]
+        .filter((c) => conversionDue(c, now))
+        .sort((a, b) => a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime() || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map((c) => c.id)
+    },
+
+    async claim(id, now) {
+      const c = metaConversionRows.get(id)
+      if (!c || !conversionDue(c, now)) return false
+      c.lockedUntil = new Date(now.getTime() + 60_000)
+      return true
+    },
+
+    async loadPayload(id) {
+      const c = metaConversionRows.get(id)
+      const payment = c && payments.get(c.paymentId)
+      const patient = payment && patients.get(payment.patientId)
+      const a = c && metaAttributionRows.get(c.quizResponseId)
+      if (!c || !payment || !patient || !a) return null
+      return {
+        id: c.id,
+        paymentId: c.paymentId,
+        eventId: c.eventId,
+        eventTime: new Date(c.eventTime),
+        attempts: c.attempts,
+        amount: payment.amount,
+        patient: { email: patient.email, phone: patient.phone, name: patient.name },
+        attribution: {
+          externalId: a.externalId,
+          fbp: a.fbp,
+          fbc: a.fbc,
+          clientIp: a.clientIp,
+          userAgent: a.userAgent,
+          eventSourceUrl: a.eventSourceUrl,
+        },
+      }
+    },
+
+    async markSent(id, now) {
+      const c = metaConversionRows.get(id)
+      if (!c) return
+      c.status = "sent"
+      c.sentAt = new Date(now)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async markRetry(id, nextAttemptAt, lastError) {
+      const c = metaConversionRows.get(id)
+      if (!c) return
+      c.nextAttemptAt = new Date(nextAttemptAt)
+      c.lastError = structuredClone(lastError)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async markFailed(id, lastError) {
+      const c = metaConversionRows.get(id)
+      if (!c) return
+      c.status = "failed"
+      c.lastError = structuredClone(lastError)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async reopen(id) {
+      const c = metaConversionRows.get(id)
+      if (!c || c.status !== "failed") return false
+      reopenConversion(c, new Date())
+      return true
+    },
+
+    async reopenAllFailed() {
+      let n = 0
+      for (const c of metaConversionRows.values()) {
+        if (c.status !== "failed") continue
+        reopenConversion(c, new Date())
+        n++
+      }
+      return n
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -1008,6 +1150,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     analytics: analyticsRepo,
     appLogs: appLogsRepo,
     metaAttributions: metaAttributionsRepo,
+    metaConversions: metaConversionsRepo,
     state: {
       patients,
       payments,
@@ -1019,6 +1162,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       funnelEvents,
       appLogs: appLogRows,
       metaAttributions: metaAttributionRows,
+      metaConversions: metaConversionRows,
     },
     seed: {
       passwordReset({ patientId, channel, link }) {

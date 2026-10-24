@@ -1902,5 +1902,205 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         expect(await metaAttributions.purgeOlderThan(cutoff, 1000)).toBe(0)
       })
     })
+
+    describe("46. Purchase da Meta: MetaConversionRepo", () => {
+      const attr = (clientIp: string): MetaAttributionInput => ({
+        externalId: randomUUID(),
+        fbp: "fb.1.1700000000000.123",
+        fbc: null,
+        clientIp,
+        userAgent: "UA",
+        eventSourceUrl: "https://quiz.example.com/",
+      })
+
+      /** Envio sincronizado com atribuição gravada, como o quiz deixa. */
+      async function attributedPayment(repos: Repos, clientIp = "1.2.3.4") {
+        const p = await syncedPayment(repos)
+        await repos.metaAttributions.save(p.ref.quizResponseId, attr(clientIp), new Date())
+        return p
+      }
+
+      const pay = async (repos: Repos, p: { ref: SubmissionRef; asaasId: string | null }, over = {}, when = new Date()) =>
+        expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", { ...on(p), ...over }), when))
+
+      it("o primeiro evento pago de cobrança com atribuição cria o Purchase com os dados do envio", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const when = new Date()
+
+        const r = await pay(repos, p, {}, when)
+
+        expect(r.pendingConversion).not.toBeNull()
+        const payload = await repos.metaConversions.loadPayload(r.pendingConversion!.id)
+        expect(payload).toMatchObject({
+          id: r.pendingConversion!.id,
+          paymentId: p.ref.paymentId,
+          eventId: `purchase:${p.ref.paymentId}`,
+          amount: "39.90",
+          attempts: 0,
+          patient: { name: p.sub.patient.name, email: p.sub.patient.email, phone: p.sub.patient.phone },
+          attribution: { clientIp: "1.2.3.4", userAgent: "UA", fbc: null },
+        })
+        expect(payload!.eventTime.getTime()).toBe(when.getTime())
+      })
+
+      it("PAYMENT_CONFIRMED e depois PAYMENT_RECEIVED geram uma conversão só", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+
+        const first = await pay(repos, p, { event: "PAYMENT_CONFIRMED", status: "CONFIRMED" })
+        const second = await pay(repos, p, { event: "PAYMENT_RECEIVED", status: "RECEIVED" })
+
+        expect(first.pendingConversion).not.toBeNull()
+        expect(second.pendingConversion).toBeNull()
+        const due = await repos.metaConversions.listDue(inMinutes(1), BIG)
+        expect(due.filter((id) => id === first.pendingConversion!.id)).toHaveLength(1)
+      })
+
+      it("cobrança sem atribuição (renovação) não gera conversão", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        expect((await pay(repos, p)).pendingConversion).toBeNull()
+      })
+
+      it("reversão e evento antes do pagamento não geram conversão", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const reversal = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("reversal", on(p)), new Date()))
+        const overdue = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("pre_payment", on(p)), new Date()))
+        expect(reversal.pendingConversion).toBeNull()
+        expect(overdue.pendingConversion).toBeNull()
+      })
+
+      it("o mesmo evento reenviado é duplicate e não cria outra conversão", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const event = ev("paid", on(p))
+
+        expectProcessed(await repos.webhooks.applyPaymentEvent(event, new Date()))
+        expect(await repos.webhooks.applyPaymentEvent(event, new Date())).toEqual({ outcome: "duplicate" })
+      })
+
+      it("uma segunda gravação da atribuição do mesmo envio não troca a primeira", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos, "1.2.3.4")
+        await repos.metaAttributions.save(p.ref.quizResponseId, attr("9.9.9.9"), new Date())
+
+        const r = await pay(repos, p)
+
+        expect((await repos.metaConversions.loadPayload(r.pendingConversion!.id))!.attribution.clientIp).toBe("1.2.3.4")
+      })
+
+      describe("cobrança reaproveitada por dois envios", () => {
+        async function twoSubmissions(repos: Awaited<ReturnType<typeof setup>>, ips: [string | null, string | null]) {
+          const cpf = randomCpf()
+          const first = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+          await sleep(5)
+          const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+          expect(second.paymentId).toBe(first.paymentId)
+          const data = synced("PENDING", "2026-10-14")
+          await repos.payments.markSynced(first.paymentId, data)
+          if (ips[0]) await repos.metaAttributions.save(first.quizResponseId, attr(ips[0]), new Date())
+          if (ips[1]) await repos.metaAttributions.save(second.quizResponseId, attr(ips[1]), new Date())
+          return { ref: first, asaasId: data.asaasId }
+        }
+
+        it("usa a atribuição do envio mais recente que tem uma, numa linha só", async () => {
+          const repos = await setup()
+          const p = await twoSubmissions(repos, ["1.1.1.1", "2.2.2.2"])
+
+          const r = await pay(repos, p)
+
+          expect((await repos.metaConversions.loadPayload(r.pendingConversion!.id))!.attribution.clientIp).toBe("2.2.2.2")
+        })
+
+        it("se só o envio mais antigo tem atribuição, usa a dele", async () => {
+          const repos = await setup()
+          const p = await twoSubmissions(repos, ["1.1.1.1", null])
+
+          const r = await pay(repos, p)
+
+          expect((await repos.metaConversions.loadPayload(r.pendingConversion!.id))!.attribution.clientIp).toBe("1.1.1.1")
+        })
+      })
+
+      it("loadPayload de um id inexistente devolve null", async () => {
+        const { metaConversions } = await setup()
+        expect(await metaConversions.loadPayload(UNKNOWN_ID)).toBeNull()
+      })
+
+      it("claim reserva a linha por 60 s e não deixa dois processos pegarem a mesma", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const id = (await pay(repos, p)).pendingConversion!.id
+        const now = new Date()
+
+        expect(await repos.metaConversions.claim(id, now)).toBe(true)
+        expect(await repos.metaConversions.claim(id, now)).toBe(false)
+        expect(await repos.metaConversions.claim(id, new Date(now.getTime() + 61_000))).toBe(true)
+      })
+
+      it("claim não pega linha que ainda não venceu nem uma que já foi enviada", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const id = (await pay(repos, p)).pendingConversion!.id
+
+        expect(await repos.metaConversions.claim(id, new Date(Date.now() - 60_000))).toBe(false)
+        await repos.metaConversions.markSent(id, new Date())
+        expect(await repos.metaConversions.claim(id, inMinutes(5))).toBe(false)
+      })
+
+      it("listDue respeita next_attempt_at, a reserva e o status", async () => {
+        const repos = await setup()
+        const { metaConversions } = repos
+        const p = await attributedPayment(repos)
+        const when = new Date()
+        const id = (await pay(repos, p, {}, when)).pendingConversion!.id
+        const now = new Date()
+
+        expect(await metaConversions.listDue(now, BIG)).toContain(id)
+        expect(await metaConversions.listDue(new Date(when.getTime() - 1000), BIG)).not.toContain(id)
+
+        expect(await metaConversions.claim(id, now)).toBe(true)
+        expect(await metaConversions.listDue(now, BIG)).not.toContain(id)
+
+        const later = inMinutes(10)
+        await metaConversions.markRetry(id, later, syncError("meta_capi"))
+        expect((await metaConversions.loadPayload(id))!.attempts).toBe(1)
+        expect(await metaConversions.listDue(now, BIG)).not.toContain(id)
+        expect(await metaConversions.listDue(new Date(later.getTime() + 1000), BIG)).toContain(id)
+
+        await metaConversions.markSent(id, new Date())
+        expect(await metaConversions.listDue(inMinutes(60 * 24), BIG)).not.toContain(id)
+      })
+
+      it("markFailed tira da fila, reopen devolve com as tentativas zeradas e reopen de linha enviada não faz nada", async () => {
+        const repos = await setup()
+        const { metaConversions } = repos
+        const failed = (await pay(repos, await attributedPayment(repos))).pendingConversion!.id
+        const sent = (await pay(repos, await attributedPayment(repos))).pendingConversion!.id
+
+        await metaConversions.markFailed(failed, syncError("meta_capi"))
+        await metaConversions.markSent(sent, new Date())
+
+        expect(await metaConversions.listDue(inMinutes(1), BIG)).not.toContain(failed)
+        expect(await metaConversions.reopen(sent)).toBe(false)
+        expect(await metaConversions.reopen(UNKNOWN_ID)).toBe(false)
+
+        expect(await metaConversions.reopen(failed)).toBe(true)
+        expect(await metaConversions.listDue(inMinutes(1), BIG)).toContain(failed)
+        expect((await metaConversions.loadPayload(failed))!.attempts).toBe(0)
+      })
+
+      it("reopenAllFailed reabre todas as falhas e devolve quantas", async () => {
+        const repos = await setup()
+        const { metaConversions } = repos
+        const id = (await pay(repos, await attributedPayment(repos))).pendingConversion!.id
+        await metaConversions.markFailed(id, syncError("meta_capi"))
+
+        expect(await metaConversions.reopenAllFailed()).toBeGreaterThanOrEqual(1)
+        expect(await metaConversions.listDue(inMinutes(1), BIG)).toContain(id)
+      })
+    })
   })
 }

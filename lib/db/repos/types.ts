@@ -195,6 +195,11 @@ export type PaymentEventResult =
       pendingGeneration: { id: string; quizResponseId: string } | null
       /** Evento pago de uma cobrança sem envio do quiz ligado: nenhuma geração foi criada. */
       missingQuizResponse: boolean
+      /**
+       * Purchase da Meta a enviar depois da resposta: só no primeiro evento pago da cobrança e só se um
+       * envio dela tem atribuição. Nos demais casos é sempre null.
+       */
+      pendingConversion: { id: string } | null
     }
 
 export interface WebhookRepo {
@@ -287,6 +292,37 @@ export interface MetaAttributionRepo {
   purgeOlderThan(cutoff: Date, limit: number): Promise<number>
 }
 
+/** Tudo que o envio do Purchase precisa; montado na hora de enviar para não duplicar dado pessoal na fila. */
+export type MetaConversionPayload = {
+  id: string
+  paymentId: string
+  eventId: string
+  eventTime: Date
+  /** Tentativas já feitas, sem contar a que vai começar. */
+  attempts: number
+  amount: string
+  patient: { email: string; phone: string; name: string }
+  attribution: MetaAttributionInput
+}
+
+export interface MetaConversionRepo {
+  /** `pending` com `next_attempt_at <= now` e não reservadas, por `next_attempt_at` crescente. */
+  listDue(now: Date, limit: number): Promise<string[]>
+  /** Reserva a linha por 60 s se ela está `pending`, vencida e livre; `false` se outro processo a tem. */
+  claim(id: string, now: Date): Promise<boolean>
+  /** `null` se a conversão, a cobrança, o paciente ou a atribuição não existem mais. */
+  loadPayload(id: string): Promise<MetaConversionPayload | null>
+  /** Marca como enviada; soma uma tentativa e solta a reserva. */
+  markSent(id: string, now: Date): Promise<void>
+  /** Segue `pending` em `nextAttemptAt`; soma uma tentativa e solta a reserva. */
+  markRetry(id: string, nextAttemptAt: Date, lastError: LastError): Promise<void>
+  /** Marca como `failed`; soma uma tentativa e solta a reserva. */
+  markFailed(id: string, lastError: LastError): Promise<void>
+  /** Só age em `failed`: volta a `pending` agora, com as tentativas zeradas. */
+  reopen(id: string): Promise<boolean>
+  reopenAllFailed(): Promise<number>
+}
+
 export type Repos = {
   submissions: SubmissionRepo
   payments: PaymentRepo
@@ -297,6 +333,7 @@ export type Repos = {
   analytics: AnalyticsRepo
   appLogs: AppLogRepo
   metaAttributions: MetaAttributionRepo
+  metaConversions: MetaConversionRepo
 }
 
 /** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */
