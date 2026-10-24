@@ -1,9 +1,12 @@
 import { z } from "zod"
+import { parseSubmitMeta, type SubmitMetaInput } from "@/lib/meta/events"
 
 export type ParsedSubmission = {
   submissionId: string
   patient: { name: string; cpf: string; email: string; phone: string }
   answers: Record<string, unknown>
+  /** Atribuição da Meta, quando o navegador mandou e ela é válida. */
+  meta?: SubmitMetaInput
 }
 
 export function isValidCpf(raw: string): boolean {
@@ -70,6 +73,7 @@ export function parseSubmitRequest(
   }
 
   const { submissionId, answers } = parsed.data
+  const meta = parseSubmitMeta((body as { meta?: unknown }).meta)
   return {
     ok: true,
     value: {
@@ -82,6 +86,7 @@ export function parseSubmitRequest(
       },
       // Objeto original completo, sem as transformações de trim/lowercase.
       answers: (body as { answers: Record<string, unknown> }).answers,
+      ...(meta ? { meta } : {}),
     },
   }
 }
