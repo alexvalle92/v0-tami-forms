@@ -15,7 +15,8 @@ export type RunSummary = { payments: number; plans: number; reminders: number; n
  * Uma rodada do job: primeiro as cobranças vencidas (para que um link criado agora já seja enviado
  * na mesma rodada), depois as gerações de plano vencidas, em seguida o enfileiramento dos avisos de
  * vencimento do plano (só dentro da janela de horário) e por fim as notificações vencidas (as
- * `plan_ready` de uma geração concluída agora e os avisos enfileirados agora saem na mesma rodada).
+ * `plan_ready` de uma geração concluída agora e os avisos enfileirados agora saem na mesma rodada) e,
+ * se houver, a limpeza por retenção (o total apagado entra no log como `purged`, fora do `RunSummary`).
  * Itens em sequência; a exceção de um item é logada (mensagem segura, sem dados pessoais), conta em
  * `errors` e não interrompe os demais.
  */
@@ -27,6 +28,8 @@ export function createRunJobs(d: {
   generatePlan: GeneratePlan
   dispatchNotification: DispatchNotification
   enqueueExpiryReminders: () => Promise<number>
+  /** Limpeza por retenção (devolve o total apagado); opcional, roda por último e uma falha só conta em `errors`. */
+  purge?: () => Promise<number>
   log: Logger
   now: () => Date
   paymentDeadlineMs: number
@@ -85,7 +88,21 @@ export function createRunJobs(d: {
       }
     }
 
-    d.log.info("job.round.done", { ...summary, durationMs: d.now().getTime() - startedAt })
+    let purged = 0
+    if (d.purge) {
+      try {
+        purged = await d.purge()
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.purge.error", { message: safeErrorMessage(err) })
+      }
+    }
+
+    d.log.info("job.round.done", {
+      ...summary,
+      ...(d.purge ? { purged } : {}),
+      durationMs: d.now().getTime() - startedAt,
+    })
     return summary
   }
 }

@@ -9,6 +9,7 @@ import { getEnv, type Env } from "@/lib/env"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
 import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
+import { createPurgeObservability } from "@/lib/jobs/purge-observability"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
 import { createExclusiveRunner } from "@/lib/jobs/scheduler"
 import { createLogger, type Logger } from "@/lib/log"
@@ -149,6 +150,7 @@ function buildContainer(): Container {
     generatePlan,
     dispatchNotification,
     enqueueExpiryReminders,
+    purge: createPurgeObservability({ analytics: repos.analytics, appLogs: repos.appLogs, now }),
     log,
     now,
     paymentDeadlineMs: JOB_PAYMENT_DEADLINE_MS,
