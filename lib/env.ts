@@ -7,6 +7,12 @@ const booleanFlag = z
   .default("true")
   .transform((value) => value === "true")
 
+// Rastreamento da Meta: começa desligado, ao contrário dos outros interruptores.
+const metaFlag = z
+  .enum(["true", "false"])
+  .default("false")
+  .transform((value) => value === "true")
+
 const envSchema = z.object({
   DATABASE_URL: required,
   ASAAS_ENV: z.enum(["sandbox", "production"]),
@@ -35,6 +41,18 @@ const envSchema = z.object({
   ANTHROPIC_MODEL: z.string().min(1).default("claude-opus-5-5"),
   ACCESS_PASSWORD_SECRET: z.string().min(32),
   PLANA_APP_URL: z.string().url().default("https://plana.nutritamilivalle.com.br/"),
+  META_TRACKING_ENABLED: metaFlag,
+  META_PIXEL_ID: z.string().regex(/^\d+$/).optional(),
+  META_CAPI_TOKEN: required.optional(),
+  META_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v24.0"),
+  META_TEST_EVENT_CODE: required.optional(),
+}).superRefine((env, ctx) => {
+  if (!env.META_TRACKING_ENABLED) return
+  for (const name of ["META_PIXEL_ID", "META_CAPI_TOKEN"] as const) {
+    if (!env[name]) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: "obrigatória com o rastreamento da Meta ligado" })
+    }
+  }
 })
 
 export type Env = z.infer<typeof envSchema>

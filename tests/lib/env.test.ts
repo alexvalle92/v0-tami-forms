@@ -71,4 +71,34 @@ describe("parseEnv", () => {
   it("PLANA_APP_URL precisa ser URL", () => {
     expect(() => parseEnv({ ...valid, PLANA_APP_URL: "nao-e-url" })).toThrow("PLANA_APP_URL")
   })
+
+  it("deixa o rastreamento da Meta desligado por padrão, sem exigir id nem token", () => {
+    const env = parseEnv(valid)
+    expect(env.META_TRACKING_ENABLED).toBe(false)
+    expect(env.META_API_VERSION).toBe("v24.0")
+    expect(env.META_PIXEL_ID).toBeUndefined()
+  })
+
+  it("exige META_PIXEL_ID e META_CAPI_TOKEN com o rastreamento ligado", () => {
+    expect(() => parseEnv({ ...valid, META_TRACKING_ENABLED: "true" })).toThrow(
+      /META_PIXEL_ID.*META_CAPI_TOKEN|META_CAPI_TOKEN.*META_PIXEL_ID/,
+    )
+  })
+
+  it("aceita o rastreamento ligado com id só de dígitos e token", () => {
+    const env = parseEnv({
+      ...valid,
+      META_TRACKING_ENABLED: "true",
+      META_PIXEL_ID: "1234567890",
+      META_CAPI_TOKEN: "EAAB",
+      META_TEST_EVENT_CODE: "TEST123",
+    })
+    expect(env.META_TRACKING_ENABLED).toBe(true)
+    expect(env.META_TEST_EVENT_CODE).toBe("TEST123")
+  })
+
+  it("rejeita META_PIXEL_ID com letras e META_API_VERSION fora do formato vNN.N", () => {
+    expect(() => parseEnv({ ...valid, META_PIXEL_ID: "abc" })).toThrow(/META_PIXEL_ID/)
+    expect(() => parseEnv({ ...valid, META_API_VERSION: "24" })).toThrow(/META_API_VERSION/)
+  })
 })
