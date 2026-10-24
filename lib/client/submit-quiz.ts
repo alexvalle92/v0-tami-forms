@@ -2,6 +2,7 @@
 // (loading-screen) cuida do armazenamento do link de pagamento.
 
 import type { SubmitFailure } from "@/lib/analytics/events"
+import type { SubmitMetaInput } from "@/lib/meta/shared"
 
 export const GENERIC_SUBMIT_ERROR =
   "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
@@ -41,10 +42,12 @@ export function newSubmissionId(): string {
 export async function submitQuizRequest(args: {
   submissionId: string
   answers: Record<string, unknown>
+  /** Atribuição do anúncio (Meta); vai junto do corpo só quando existe. */
+  meta?: SubmitMetaInput
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }): Promise<SubmitQuizResult> {
-  const { submissionId, answers, fetchImpl = fetch, timeoutMs = 30000 } = args
+  const { submissionId, answers, meta, fetchImpl = fetch, timeoutMs = 30000 } = args
 
   // AbortController + setTimeout em vez de AbortSignal.timeout (ausente no Safari < 16).
   // O timer fica ativo até o corpo da resposta ser lido, para que um corpo travado também estoure.
@@ -58,7 +61,7 @@ export async function submitQuizRequest(args: {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ submissionId, answers }),
+      body: JSON.stringify(meta ? { submissionId, answers, meta } : { submissionId, answers }),
       signal: controller.signal,
     })
 

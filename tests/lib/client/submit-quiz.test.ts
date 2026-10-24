@@ -16,6 +16,29 @@ function run(fetchImpl: typeof fetch, extra: { timeoutMs?: number } = {}) {
   return submitQuizRequest({ submissionId, answers, fetchImpl, ...extra })
 }
 
+describe("submitQuizRequest: atribuição da Meta", () => {
+  const sentBody = (fetchImpl: ReturnType<typeof vi.fn>) =>
+    JSON.parse((fetchImpl.mock.calls[0][1] as { body: string }).body) as Record<string, unknown>
+
+  it("manda o meta junto de submissionId e answers", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ sucesso: true }))
+    const meta = { fbp: "fb.1.1.2", eventSourceUrl: "https://quiz.example.com/", externalId: submissionId }
+
+    await submitQuizRequest({ submissionId, answers, meta, fetchImpl: fetchImpl as unknown as typeof fetch })
+
+    expect(sentBody(fetchImpl)).toEqual({ submissionId, answers, meta })
+  })
+
+  it("sem meta, o corpo não tem a chave meta", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ sucesso: true }))
+
+    await submitQuizRequest({ submissionId, answers, fetchImpl: fetchImpl as unknown as typeof fetch })
+
+    expect(sentBody(fetchImpl)).toEqual({ submissionId, answers })
+    expect(sentBody(fetchImpl)).not.toHaveProperty("meta")
+  })
+})
+
 describe("submitQuizRequest", () => {
   it("sucesso com link de pagamento", async () => {
     const result = await run((async () =>

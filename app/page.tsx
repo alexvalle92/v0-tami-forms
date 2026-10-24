@@ -15,6 +15,7 @@ import { ErrorModal } from "@/components/error-modal"
 import { stepValidation } from "@/lib/quiz/step-validation"
 import { stepTransitionEvents } from "@/lib/quiz/step-events"
 import { stepSlug } from "@/lib/quiz/steps"
+import { getMeta } from "@/lib/client/meta"
 import { getTracker } from "@/lib/client/track"
 import {
   Moon,
@@ -80,6 +81,7 @@ export default function QuizPage() {
   const totalSteps = 29
 
   const tracker = useRef(getTracker()).current
+  const meta = useRef(getMeta()).current
   const stepRef = useRef<{ step: number; enteredAtMs: number } | null>(null)
   // as respostas são lidas por ref para o efeito das etapas depender só de currentStep
   const answersRef = useRef(answers)
@@ -204,8 +206,17 @@ export default function QuizPage() {
     for (const e of stepTransitionEvents(stepRef.current, currentStep, answersRef.current, nowMs)) {
       tracker.track(e.event === "step_answer" ? { ...e, durationMs: Math.min(e.durationMs, MAX_EVENT_MS) } : e)
     }
+    // Lead: saiu da etapa do e-mail (índice 23) para a seguinte, o que só acontece com o e-mail validado.
+    if (stepRef.current?.step === 23 && currentStep === 24) {
+      meta.event("Lead", { user: { email: answersRef.current.email } })
+    }
     stepRef.current = { step: currentStep, enteredAtMs: nowMs }
-  }, [currentStep, tracker])
+  }, [currentStep, tracker, meta])
+
+  // Meta: ViewContent ao abrir o quiz (uma vez por sessão; o id determinístico evita repetir em recarga).
+  useEffect(() => {
+    meta.event("ViewContent", {})
+  }, [meta])
 
   // Saída da página: um page_hide por período oculto, enviado com sendBeacon.
   useEffect(() => {
@@ -257,6 +268,9 @@ export default function QuizPage() {
   }
 
   const handleFinalRedirect = () => {
+    meta.event("InitiateCheckout", {
+      user: { email: answers.email, phone: answers.whatsapp, name: answers.nome_completo },
+    })
     const linkPagamento = sessionStorage.getItem("linkPagamento")
     tracker.track({ event: "checkout_click", step: 28, stepSlug: "checkout", hasPaymentLink: !!linkPagamento })
     tracker.flush({ beacon: true })

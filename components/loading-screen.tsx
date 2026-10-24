@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react"
 import { AlertTriangle, ArrowLeft, RefreshCw, MessageCircle } from "lucide-react"
 import { GENERIC_SUBMIT_ERROR, newSubmissionId, submitQuizRequest } from "@/lib/client/submit-quiz"
+import { getMeta } from "@/lib/client/meta"
 import { getTracker } from "@/lib/client/track"
 import type { SubmitOutcome } from "@/lib/analytics/events"
 
@@ -54,7 +55,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
       // armazenamento bloqueado: segue sem limpar
     }
 
-    const result = await submitQuizRequest({ submissionId, answers })
+    const result = await submitQuizRequest({ submissionId, answers, meta: getMeta().attributionForSubmit() })
 
     if (result.ok) {
       if (result.linkPagamento) {
