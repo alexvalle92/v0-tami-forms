@@ -83,6 +83,11 @@ Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e l
 | `ANTHROPIC_MODEL` | não | Modelo da IA. Padrão `claude-opus-5-5`. Para usar o padrão, **remova** a variável: `ANTHROPIC_MODEL=` em branco é inválido |
 | `ACCESS_PASSWORD_SECRET` | sim | Segredo de pelo menos 32 caracteres, aleatório. Dele sai a senha temporária de cada paciente. **Não troque depois** (veja abaixo) |
 | `PLANA_APP_URL` | não | Endereço do PlanA que vai nas mensagens. Padrão `https://plana.nutritamilivalle.com.br/` |
+| `META_TRACKING_ENABLED` | não | `true` liga o Pixel da Meta e a API de Conversões; `false` (padrão) desliga tudo. Veja a seção "Pixel da Meta e API de Conversões" |
+| `META_PIXEL_ID` | se `META_TRACKING_ENABLED=true` | Id do Pixel da Meta, só dígitos |
+| `META_CAPI_TOKEN` | se `META_TRACKING_ENABLED=true` | Token de acesso da API de Conversões |
+| `META_API_VERSION` | não | Versão da Graph API. Padrão `v24.0` |
+| `META_TEST_EVENT_CODE` | não | Código da aba "Testar eventos" da Meta. Só para testar; remova em produção |
 
 Para gerar um `JOBS_TOKEN`: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
@@ -146,6 +151,55 @@ Outros eventos, se marcados, são aceitos e ignorados. Cartão de crédito: o As
 2. Em `Menu do usuário > Integrações > Webhooks`, reative a fila da configuração interrompida. Os eventos guardados são reenviados. O app trata reenvios com segurança: o mesmo evento nunca gera dois planos nem duas mensagens.
 
 O app responde `200` mesmo para corpo ilegível, justamente para não pausar a fila à toa. Só responde `401` (token errado ou ausente) e `500` (falha do banco, quando pede reenvio).
+
+## Pixel da Meta e API de Conversões
+
+O quiz avisa a Meta de quem avança no funil, para a campanha otimizar por quem converte e não só por quem clica. Tudo é desligado por padrão (`META_TRACKING_ENABLED=false`).
+
+| Evento | Quando dispara | Por onde |
+|---|---|---|
+| `PageView` | Abriu qualquer página | Pixel (navegador) |
+| `ViewContent` | Abriu o quiz | Pixel + API de Conversões (mesmo `event_id`, a Meta deduplica) |
+| `Lead` | Informou o e-mail e avançou (etapa 24) | Pixel + API de Conversões |
+| `InitiateCheckout` | Clicou em "Garantir Meu Plano Alimentar Agora" | Pixel + API de Conversões, com o valor de `PAYMENT_AMOUNT` |
+| `Purchase` | Chegou o webhook de pagamento do Asaas | **Só pelo servidor**, com o valor da cobrança |
+
+O `Purchase` sai do servidor porque o pagamento acontece no domínio do Asaas e muita gente não volta para `/confirmationPayment`.
+
+**Variáveis** (também na tabela da seção 4):
+
+| Variável | Para que serve |
+|---|---|
+| `META_TRACKING_ENABLED` | `true` liga o Pixel, o espelho, a gravação da atribuição e o envio do `Purchase`. Padrão `false`. Vale com um reinício, sem novo build |
+| `META_PIXEL_ID` | Id do Pixel (só dígitos). Obrigatória se ligado |
+| `META_CAPI_TOKEN` | Token de acesso da API de Conversões. Obrigatória se ligado. Nunca vai para o log |
+| `META_API_VERSION` | Versão da Graph API. Padrão `v24.0`; confira a vigente no Gerenciador de Eventos |
+| `META_TEST_EVENT_CODE` | Código da aba "Testar eventos". Enquanto existir, todo envio do servidor vai como teste. **Remova em produção** |
+
+**Como funciona o `Purchase`.** O envio do quiz grava em `meta_attributions` o que a Meta usa para casar a compra com o clique (cookies `_fbp` e `_fbc`, o `fbclid` da URL, IP, User-Agent e a página). No primeiro evento de pagamento da cobrança, o webhook do Asaas coloca uma linha em `meta_conversions`, na mesma transação, e o envio é tentado logo depois da resposta ao Asaas. Se a Meta estiver fora do ar, o job de 2 minutos repete com espera crescente, até 8 tentativas ou 7 dias (o limite da Meta); depois disso a linha vira `failed` e o `ADMIN_ALERT_EMAIL` recebe o aviso. Cobrança sem atribuição não gera `Purchase`: renovações pedidas pelo PlanA (`/api/renewals`) e quem pagou depois de um quiz feito com o rastreamento desligado.
+
+**Dados pessoais.** E-mail, telefone e nome saem para a Meta com hash SHA-256; o CPF nunca sai. IP e User-Agent saem sem hash, como a Meta exige, e ficam guardados 90 dias. Não há banner de consentimento: `trackingAllowed()` em `lib/client/meta.ts` é o ponto onde um banner passaria a decidir se o Pixel carrega. Cabe a você decidir se a política de privacidade já cita a Meta.
+
+**Ativação:**
+
+1. No Gerenciador de Eventos da Meta, anote o id do Pixel, gere o token de acesso da API de Conversões e confira a versão vigente da Graph API.
+2. No GTM (`GTM-PPXNWRMB`), confira que **não existe tag da Meta**; se existir, pause antes de publicar, ou os eventos contam em dobro.
+3. No Easypanel, defina `META_TRACKING_ENABLED=true`, `META_PIXEL_ID`, `META_CAPI_TOKEN`, `META_API_VERSION` e `META_TEST_EVENT_CODE` (o código da aba "Testar eventos"). Reinicie: o boot aplica a migration `0006`, que cria as duas tabelas.
+4. Abra o quiz no celular por um link com `?fbclid=teste` e passe até o botão final. Em "Testar eventos", confira `PageView`, `ViewContent`, `Lead` e `InitiateCheckout`, cada um recebido pelo navegador e pelo servidor e marcado como desduplicado.
+5. Pague uma cobrança no sandbox do Asaas e confira o `Purchase` com o valor da cobrança, vindo do servidor, sem abrir `/confirmationPayment`.
+6. Remova `META_TEST_EVENT_CODE`, reinicie e configure a campanha para otimizar por `Purchase` (ou por `InitiateCheckout` enquanto o volume de compras for baixo demais para sair da fase de aprendizado).
+
+**Acompanhar o `Purchase`:**
+
+```sql
+SELECT id, payment_id, status, attempts, next_attempt_at,
+       JSON_UNQUOTE(JSON_EXTRACT(last_error, '$.message')) AS erro
+FROM meta_conversions
+WHERE status <> 'sent'
+ORDER BY created_at DESC;
+```
+
+Para reabrir uma conversão `failed`, veja "Rodar o job na mão e reabrir falhas".
 
 ## Observabilidade (funil e erros)
 
@@ -405,8 +459,9 @@ A lista de etapas (`vw_funnel_steps`) e a de chaves de resposta (`vw_session_ans
 
 - Funil (`funnel_events` e `funnel_sessions`): **365 dias**.
 - `app_logs`: **90 dias**.
+- `meta_attributions` (IP, User-Agent e cookies da Meta de cada envio do quiz): **90 dias**.
 
-A limpeza roda no fim de cada rodada do job (a cada 2 minutos), apagando até 1.000 linhas por tabela por rodada. Para mudar os prazos ou o tamanho do lote, edite `FUNNEL_RETENTION_DAYS`, `APP_LOG_RETENTION_DAYS` e `PURGE_BATCH` em `lib/jobs/purge-observability.ts`.
+A limpeza roda no fim de cada rodada do job (a cada 2 minutos), apagando até 1.000 linhas por tabela por rodada. Para mudar os prazos ou o tamanho do lote, edite `FUNNEL_RETENTION_DAYS`, `APP_LOG_RETENTION_DAYS`, `META_ATTRIBUTION_RETENTION_DAYS` e `PURGE_BATCH` em `lib/jobs/purge-observability.ts`.
 
 ## 6. Operação
 
@@ -472,7 +527,13 @@ curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Content-Type: application/json" \
   -d '{"notificationId":"ID_DA_MENSAGEM"}'
 
-# todas as falhas de uma vez (cobranças, gerações de plano e mensagens)
+# uma conversão da Meta (o id vem da consulta de meta_conversions)
+curl -X POST https://SEU-DOMINIO/api/jobs/retry \
+  -H "Authorization: Bearer SEU_JOBS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"metaConversionId":"ID_DA_CONVERSAO"}'
+
+# todas as falhas de uma vez (cobranças, gerações de plano, mensagens e conversões da Meta)
 curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Authorization: Bearer SEU_JOBS_TOKEN" \
   -H "Content-Type: application/json" \
@@ -496,7 +557,7 @@ curl -X POST https://SEU-DOMINIO/api/notifications/dispatch \
 
 1. Leia o `last_error` do item (consultas acima). Ele diz a etapa e o erro.
 2. Corrija a causa: chave do Asaas, chave da Anthropic, dado do paciente, SMTP, Evolution API.
-3. Chame `/api/jobs/retry` com o `id` do item, cobrança, mensagem ou geração de plano (ou `allFailed`, que reabre os três tipos).
+3. Chame `/api/jobs/retry` com o `id` do item, cobrança, mensagem ou geração de plano (ou `allFailed`, que reabre todos os tipos).
 
 Depois do retry, o app dispara uma rodada logo em seguida. Se já houver uma rodada em andamento, o reprocessamento espera a próxima: até 2 minutos. Com `JOBS_ENABLED=false`, espera até a próxima chamada manual de `/api/jobs/run`.
 
