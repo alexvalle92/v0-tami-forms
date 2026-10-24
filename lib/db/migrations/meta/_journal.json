@@ -36,6 +36,13 @@
       "when": 1792844393915,
       "tag": "0004_observability_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1792844913701,
+      "tag": "0005_observability_views",
+      "breakpoints": true
     }
   ]
 }

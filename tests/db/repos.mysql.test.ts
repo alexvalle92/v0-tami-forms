@@ -8,6 +8,7 @@ import { createDb, type Db } from "@/lib/db/client"
 import { runMigrations } from "@/lib/db/migrate"
 import { createMysqlRepos } from "@/lib/db/repos/mysql"
 import { mealPlans, notifications, patients, payments, quizResponses } from "@/lib/db/schema"
+import { ALLOWED_ANSWER_KEYS } from "@/lib/quiz/steps"
 import { defineRepoContract } from "./repos.contract"
 
 // Roda o contrato contra um MySQL 8 real. Sem TEST_DATABASE_URL o arquivo é pulado.
@@ -20,9 +21,10 @@ async function dropAllTables(pool: mysql.Pool) {
   try {
     await connection.query("SET FOREIGN_KEY_CHECKS=0")
     const [rows] = await connection.query<mysql.RowDataPacket[]>(
-      "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()",
+      "SELECT table_name AS name, table_type AS type FROM information_schema.tables WHERE table_schema = DATABASE()",
     )
-    for (const row of rows) await connection.query(`DROP TABLE \`${row.name}\``)
+    // As views do Metabase (migration 0005) não saem com DROP TABLE.
+    for (const row of rows) await connection.query(`DROP ${row.type === "VIEW" ? "VIEW" : "TABLE"} \`${row.name}\``)
   } finally {
     await connection.query("SET FOREIGN_KEY_CHECKS=1")
     connection.release()
@@ -153,7 +155,7 @@ describe.skipIf(!url)("repositórios MySQL", () => {
   beforeAll(async () => {
     ;({ db, pool } = createDb(url!))
     // Duas vezes: prova que as migrations são idempotentes. O banco chega vazio (os testes de
-    // migration acima apagam tudo), então a primeira aplica as cinco: daí o prazo maior.
+    // migration acima apagam tudo), então a primeira aplica as seis: daí o prazo maior.
     await runMigrations(db)
     await runMigrations(db)
   }, 60_000)
@@ -194,6 +196,142 @@ describe.skipIf(!url)("repositórios MySQL", () => {
   })
 
   defineRepoContract("mysql", async () => createMysqlRepos(db))
+
+  describe("views do Metabase (migration 0005)", () => {
+    const VIEWS = ["vw_funnel_steps", "vw_abandonment", "vw_session_answers", "vw_step_durations", "vw_api_errors"]
+
+    it.each(VIEWS)("%s responde a SELECT * ... LIMIT 1", async (view) => {
+      await pool.query(`SELECT * FROM \`${view}\` LIMIT 1`)
+    })
+
+    const insertSession = (
+      id: string,
+      over: { maxStep: number | null; lastStep: number | null; minutesAgo: number; checkout?: boolean; answers?: object },
+    ) =>
+      pool.query(
+        `INSERT INTO funnel_sessions (session_id, started_at, last_event_at, last_step, last_step_slug, max_step, checkout_clicked,
+           utm_source, utm_campaign, device_type, os, browser, answers)
+         VALUES (?, UTC_TIMESTAMP(3) - INTERVAL 1 DAY, UTC_TIMESTAMP(3) - INTERVAL ? MINUTE, ?, ?, ?, ?, 'instagram', 'camp', 'mobile', 'android', 'chrome', ?)`,
+        [id, over.minutesAgo, over.lastStep, over.lastStep === null ? null : `etapa${over.lastStep}`, over.maxStep, over.checkout ?? false, JSON.stringify(over.answers ?? {})],
+      )
+
+    it("vw_funnel_steps: sessões por etapa (max_step >= etapa) e % do início; max_step nulo não conta", async () => {
+      await insertSession("a", { maxStep: 2, lastStep: 2, minutesAgo: 120 })
+      await insertSession("b", { maxStep: 28, lastStep: 28, minutesAgo: 120, checkout: true })
+      await insertSession("c", { maxStep: 1, lastStep: 1, minutesAgo: 1 })
+      await insertSession("d", { maxStep: null, lastStep: null, minutesAgo: 120 })
+
+      const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM vw_funnel_steps ORDER BY step")
+      expect(rows).toHaveLength(29)
+      expect(rows[0]).toMatchObject({ step: 0, step_slug: "faixa_etaria" })
+      expect(rows[28]).toMatchObject({ step: 28, step_slug: "checkout" })
+      const sessionsByStep = rows.map((r) => Number(r.sessions))
+      expect(sessionsByStep.slice(0, 4)).toEqual([3, 3, 2, 1])
+      expect(new Set(sessionsByStep.slice(3))).toEqual(new Set([1]))
+      expect(Number(rows[0].pct_of_start)).toBe(100)
+      expect(Number(rows[2].pct_of_start)).toBe(66.7)
+      expect(Number(rows[28].pct_of_start)).toBe(33.3)
+    })
+
+    it("vw_funnel_steps: sem sessões, todas as etapas com 0 e % nulo (sem divisão por zero)", async () => {
+      const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM vw_funnel_steps")
+      expect(rows).toHaveLength(29)
+      expect(rows.every((r) => Number(r.sessions) === 0 && r.pct_of_start === null)).toBe(true)
+    })
+
+    it("vw_abandonment: só sessões paradas há mais de 30 min, sem checkout e com etapa", async () => {
+      await insertSession("antiga", { maxStep: 5, lastStep: 4, minutesAgo: 31 })
+      await insertSession("limite", { maxStep: 5, lastStep: 5, minutesAgo: 29 })
+      await insertSession("recente", { maxStep: 5, lastStep: 5, minutesAgo: 1 })
+      await insertSession("checkout", { maxStep: 28, lastStep: 28, minutesAgo: 600, checkout: true })
+      await insertSession("sem_etapa", { maxStep: null, lastStep: null, minutesAgo: 600 })
+
+      const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM vw_abandonment")
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({
+        session_id: "antiga",
+        abandon_step: 4,
+        abandon_step_slug: "etapa4",
+        utm_source: "instagram",
+        device_type: "mobile",
+        os: "android",
+        browser: "chrome",
+      })
+      expect(Object.keys(rows[0])).toEqual([
+        "session_id",
+        "abandon_step",
+        "abandon_step_slug",
+        "started_at",
+        "last_event_at",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "referrer_host",
+        "device_type",
+        "os",
+        "browser",
+      ])
+    })
+
+    it("vw_session_answers: uma coluna por chave; texto vira texto, array vira JSON, ausente vira nulo", async () => {
+      await insertSession("r", {
+        maxStep: 6,
+        lastStep: 6,
+        minutesAgo: 5,
+        checkout: true,
+        answers: { tipo_fisico: "ectomorfo", breakfast_foods: ["pao", "ovo"] },
+      })
+      const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM vw_session_answers")
+      expect(rows).toHaveLength(1)
+      const [row] = rows
+      expect(row).toMatchObject({ session_id: "r", max_step: 6, checkout_clicked: 1, utm_source: "instagram", tipo_fisico: "ectomorfo" })
+      expect(JSON.parse(row.breakfast_foods)).toEqual(["pao", "ovo"])
+      expect(row.sono).toBeNull()
+      expect(Object.keys(row)).toEqual([
+        "session_id",
+        "started_at",
+        "utm_source",
+        "utm_campaign",
+        "device_type",
+        "os",
+        "browser",
+        "max_step",
+        "checkout_clicked",
+        ...ALLOWED_ANSWER_KEYS,
+      ])
+    })
+
+    it("vw_step_durations: só step_answer, com durationMs numérico (nulo quando ausente)", async () => {
+      const insertEvent = (event: string, props: object) =>
+        pool.query(
+          "INSERT INTO funnel_events (session_id, event, step, step_slug, props, client_ts) VALUES ('s1', ?, 3, 'info_expectativa', ?, UTC_TIMESTAMP(3))",
+          [event, JSON.stringify(props)],
+        )
+      await insertEvent("step_answer", { durationMs: 1234 })
+      await insertEvent("step_answer", {})
+      await insertEvent("step_view", { durationMs: 99 })
+      const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT * FROM vw_step_durations ORDER BY duration_ms")
+      expect(rows.map((r) => (r.duration_ms === null ? null : Number(r.duration_ms)))).toEqual([null, 1234])
+      expect(rows[1]).toMatchObject({ session_id: "s1", step: 3, step_slug: "info_expectativa" })
+    })
+
+    it("vw_api_errors: agrupa por dia (UTC), area, event e level", async () => {
+      const insertLog = (ts: string, level: string, event: string) =>
+        pool.query("INSERT INTO app_logs (ts, level, event, area, fields) VALUES (?, ?, ?, ?, '{}')", [ts, level, event, event.split(".")[0]])
+      await insertLog("2026-10-20 23:59:59.500", "error", "asaas.request.failed")
+      await insertLog("2026-10-20 10:00:00.000", "error", "asaas.request.failed")
+      await insertLog("2026-10-20 11:00:00.000", "warn", "asaas.request.failed")
+      await insertLog("2026-10-21 00:00:00.000", "error", "asaas.request.failed")
+      const [rows] = await pool.query<mysql.RowDataPacket[]>(
+        "SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day, area, event, level, total FROM vw_api_errors ORDER BY day, level",
+      )
+      expect(rows.map((r) => [r.day, r.area, r.event, r.level, Number(r.total)])).toEqual([
+        ["2026-10-20", "asaas", "asaas.request.failed", "error", 2],
+        ["2026-10-20", "asaas", "asaas.request.failed", "warn", 1],
+        ["2026-10-21", "asaas", "asaas.request.failed", "error", 1],
+      ])
+    })
+  })
 
   describe("linhas gravadas (o que a interface pública não mostra)", () => {
     const newSub = (over: { submissionId?: string; cpf?: string; name?: string } = {}) => ({
@@ -290,7 +428,7 @@ describe.skipIf(!url)("repositórios MySQL", () => {
 
     it("runMigrations é idempotente: só as 16 tabelas dos dois apps e da observabilidade + a de controle do drizzle", async () => {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
-        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name",
+        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' ORDER BY table_name",
       )
       expect(rows.map((r) => r.name)).toEqual([
         "__drizzle_migrations",
@@ -314,7 +452,7 @@ describe.skipIf(!url)("repositórios MySQL", () => {
       const [migrations] = await pool.query<mysql.RowDataPacket[]>(
         "SELECT COUNT(*) AS n FROM __drizzle_migrations",
       )
-      expect(Number(migrations[0].n)).toBe(5)
+      expect(Number(migrations[0].n)).toBe(6)
     })
 
     it("aviso de vencimento: plano do admin e plano sem data de fim", async () => {
