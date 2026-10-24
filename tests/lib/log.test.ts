@@ -160,6 +160,22 @@ describe("createLogger: persist", () => {
     expect(write).toHaveBeenCalledTimes(1)
   })
 
+  it("se o redact lançar, escreve a linha logError, entrega { logError: true } e não lança", () => {
+    const write = vi.fn()
+    const persist = vi.fn()
+    const fields = {
+      get boom(): string {
+        throw new Error("getter quebrou")
+      },
+    }
+    expect(() => createLogger(write, persist).warn("g.x", fields)).not.toThrow()
+
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(write.mock.calls[0][0])).toMatchObject({ level: "warn", event: "g.x", logError: true })
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(persist.mock.calls[0][0]).toMatchObject({ level: "warn", event: "g.x", fields: { logError: true } })
+  })
+
   it("engole a exceção do persist e ainda escreve o stdout", () => {
     const write = vi.fn()
     const persist = vi.fn(() => {

@@ -38,9 +38,10 @@ export function createLogger(
   const emit = (level: LogLevel) => (event: string, fields?: Record<string, unknown>) => {
     const now = new Date()
     const ts = now.toISOString()
-    const masked = redact(fields ?? {})
+    let masked: Record<string, unknown> | null = null
     let line: string
     try {
+      masked = redact(fields ?? {})
       line = JSON.stringify({ ...masked, ts, level, event }, replacer)
     } catch {
       line = JSON.stringify({ ts, level, event, logError: true })
@@ -51,6 +52,7 @@ export function createLogger(
       try {
         let persisted: Record<string, unknown>
         try {
+          if (!masked) throw new Error("campos não mascarados")
           persisted = JSON.parse(JSON.stringify(masked, replacer))
         } catch {
           persisted = { logError: true }
