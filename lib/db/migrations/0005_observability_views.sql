@@ -2,7 +2,7 @@
 -- A lista de etapas (vw_funnel_steps) e a de chaves de resposta (vw_session_answers) repetem QUIZ_STEPS e
 -- ALLOWED_ANSWER_KEYS: o teste tests/lib/quiz/steps-migration.test.ts falha se divergirem. Quando entrar uma
 -- etapa nova, crie uma migration que recria as views (DROP VIEW + CREATE VIEW).
-CREATE VIEW `vw_funnel_steps` AS
+CREATE OR REPLACE VIEW `vw_funnel_steps` AS
 SELECT s.step AS step, s.step_slug AS step_slug,
   COUNT(f.session_id) AS sessions,
   ROUND(100 * COUNT(f.session_id) / NULLIF((SELECT COUNT(*) FROM `funnel_sessions` WHERE `max_step` >= 0), 0), 1) AS pct_of_start
@@ -39,7 +39,7 @@ FROM (
 ) s
 LEFT JOIN `funnel_sessions` f ON f.`max_step` >= s.step
 GROUP BY s.step, s.step_slug;--> statement-breakpoint
-CREATE VIEW `vw_abandonment` AS
+CREATE OR REPLACE VIEW `vw_abandonment` AS
 SELECT `session_id`, `last_step` AS abandon_step, `last_step_slug` AS abandon_step_slug,
   `started_at`, `last_event_at`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host`,
   `device_type`, `os`, `browser`
@@ -47,7 +47,7 @@ FROM `funnel_sessions`
 WHERE `checkout_clicked` = false
   AND `last_step` IS NOT NULL
   AND `last_event_at` < UTC_TIMESTAMP(3) - INTERVAL 30 MINUTE;--> statement-breakpoint
-CREATE VIEW `vw_session_answers` AS
+CREATE OR REPLACE VIEW `vw_session_answers` AS
 SELECT `session_id`, `started_at`, `utm_source`, `utm_campaign`, `device_type`, `os`, `browser`,
   `max_step`, `checkout_clicked`,
   JSON_UNQUOTE(JSON_EXTRACT(`answers`, '$.faixa_etaria')) AS `faixa_etaria`,
@@ -65,12 +65,12 @@ SELECT `session_id`, `started_at`, `utm_source`, `utm_campaign`, `device_type`, 
   JSON_UNQUOTE(JSON_EXTRACT(`answers`, '$.habitos')) AS `habitos`,
   JSON_UNQUOTE(JSON_EXTRACT(`answers`, '$.imc_faixa')) AS `imc_faixa`
 FROM `funnel_sessions`;--> statement-breakpoint
-CREATE VIEW `vw_step_durations` AS
+CREATE OR REPLACE VIEW `vw_step_durations` AS
 SELECT `session_id`, `created_at`, `step`, `step_slug`,
   CAST(JSON_EXTRACT(`props`, '$.durationMs') AS UNSIGNED) AS duration_ms
 FROM `funnel_events`
 WHERE `event` = 'step_answer';--> statement-breakpoint
-CREATE VIEW `vw_api_errors` AS
+CREATE OR REPLACE VIEW `vw_api_errors` AS
 SELECT DATE(`ts`) AS day, `area`, `event`, `level`, COUNT(*) AS total
 FROM `app_logs`
 GROUP BY DATE(`ts`), `area`, `event`, `level`;

@@ -25,8 +25,8 @@ describe("migration das views x QUIZ_STEPS", () => {
 
   it("vw_session_answers tem uma coluna por chave de ALLOWED_ANSWER_KEYS, na mesma ordem", () => {
     const sql = viewsMigration()
-    const start = sql.indexOf("CREATE VIEW `vw_session_answers`")
-    expect(start, "CREATE VIEW `vw_session_answers` não encontrado").toBeGreaterThanOrEqual(0)
+    const start = sql.indexOf("CREATE OR REPLACE VIEW `vw_session_answers`")
+    expect(start, "CREATE OR REPLACE VIEW `vw_session_answers` não encontrado").toBeGreaterThanOrEqual(0)
     const end = sql.indexOf("--> statement-breakpoint", start)
     const statement = sql.slice(start, end === -1 ? undefined : end)
     const keys = [...statement.matchAll(/'\$\.([a-z_]+)'/g)].map((m) => m[1])
