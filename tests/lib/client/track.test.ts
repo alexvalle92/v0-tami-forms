@@ -117,6 +117,66 @@ describe("createTracker: sessão", () => {
     expect(parseEventsBatch(bodies(fetchImpl)[0]).ok).toBe(true)
   })
 
+  it("viewport inválido (0, NaN, negativo, acima de 10.000) é omitido e o lote continua válido", () => {
+    const invalid = [
+      { w: 0, h: 0 },
+      { w: Number.NaN, h: 800 },
+      { w: 390, h: Number.NaN },
+      { w: -1, h: 800 },
+      { w: 10_001, h: 800 },
+      { w: Number.POSITIVE_INFINITY, h: 800 },
+    ]
+    for (const viewport of invalid) {
+      const fetchImpl = okFetch()
+      createTracker({ storage: memoryStorage(), fetchImpl, viewport })
+      vi.advanceTimersByTime(TRACK_FLUSH_DELAY_MS)
+      const [body] = bodies(fetchImpl)
+      expect(body.events[0]).not.toHaveProperty("viewport")
+      expect(parseEventsBatch(body).ok).toBe(true)
+    }
+  })
+
+  it("id guardado que não é UUID: gera outro, grava e conta como sessão nova com session_start", () => {
+    for (const stale of ["abc", "undefined", "3f1c2d4e-5b6a-4c7d-8e9f-0a1b2c3d4e5fXX", " "]) {
+      const storage = memoryStorage({ [TRACK_SESSION_KEY]: stale })
+      const fetchImpl = okFetch()
+      const t = createTracker({ storage, fetchImpl })
+
+      expect(t.sessionId).toMatch(UUID)
+      expect(storage.data.get(TRACK_SESSION_KEY)).toBe(t.sessionId)
+      vi.advanceTimersByTime(TRACK_FLUSH_DELAY_MS)
+      const [body] = bodies(fetchImpl)
+      expect(body.events.map((e) => e.event)).toEqual(["session_start"])
+      expect(parseEventsBatch(body).ok).toBe(true)
+    }
+  })
+
+  it("utm e referrerHost longos são cortados em 100 caracteres e o session_start é enviado", () => {
+    const fetchImpl = okFetch()
+    const long = "x".repeat(5000)
+    createTracker({
+      storage: memoryStorage(),
+      fetchImpl,
+      search: `?utm_source=${long}&utm_medium=${long}&utm_campaign=${long}&utm_content=${long}&utm_term=${long}`,
+      referrer: `https://${"h".repeat(150)}.com/`,
+      ownHost: "quiz.exemplo.com",
+    })
+    vi.advanceTimersByTime(TRACK_FLUSH_DELAY_MS)
+
+    const [body] = bodies(fetchImpl)
+    const start = body.events[0] as { utm: Record<string, string>; referrerHost: string }
+    expect(body.events).toHaveLength(1)
+    expect(start.utm).toEqual({
+      source: "x".repeat(100),
+      medium: "x".repeat(100),
+      campaign: "x".repeat(100),
+      content: "x".repeat(100),
+      term: "x".repeat(100),
+    })
+    expect(start.referrerHost).toHaveLength(100)
+    expect(parseEventsBatch(body).ok).toBe(true)
+  })
+
   it("storage com id: reaproveita e não manda session_start", () => {
     const storage = memoryStorage({ [TRACK_SESSION_KEY]: EXISTING_ID })
     const fetchImpl = okFetch()
@@ -468,5 +528,46 @@ describe("getTracker", () => {
       t.flush({ beacon: true })
     }).not.toThrow()
     expect(typeof t.sessionId).toBe("string")
+  })
+
+  async function browserSessionStart(innerWidth: number, innerHeight: number) {
+    vi.resetModules()
+    const fetchMock = okFetch()
+    const store = new Map<string, string>()
+    vi.stubGlobal("window", {
+      sessionStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) },
+      navigator: {},
+      fetch: fetchMock,
+      location: { search: "", host: "quiz.exemplo.com" },
+      document: { referrer: "" },
+      innerWidth,
+      innerHeight,
+    })
+    try {
+      const mod = await import("@/lib/client/track")
+      mod.getTracker()
+      vi.advanceTimersByTime(TRACK_FLUSH_DELAY_MS)
+      return bodies(fetchMock)[0]
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }
+
+  it("no navegador, innerWidth/innerHeight válidos entram no session_start", async () => {
+    const body = await browserSessionStart(390.4, 844.6)
+    expect(body.events[0].viewport).toEqual({ w: 390, h: 845 })
+    expect(parseEventsBatch(body).ok).toBe(true)
+  })
+
+  it("no navegador, innerWidth/innerHeight 0 ou NaN não geram viewport", async () => {
+    for (const [w, h] of [
+      [0, 0],
+      [Number.NaN, Number.NaN],
+      [0.2, 800],
+    ]) {
+      const body = await browserSessionStart(w, h)
+      expect(body.events[0]).not.toHaveProperty("viewport")
+      expect(parseEventsBatch(body).ok).toBe(true)
+    }
   })
 })

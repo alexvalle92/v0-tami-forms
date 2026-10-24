@@ -34,6 +34,12 @@ export type TrackerDeps = {
   endpoint?: string
 }
 
+// Limite do servidor para utm e referrerHost (spec 5.1); o viewport vai de 1 a 10.000.
+const MAX_TEXT = 100
+const MAX_VIEWPORT = 10_000
+// Mesmo formato que o servidor exige (z.string().uuid()): um id fora dele derrubaria o lote inteiro.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const UTM_PARAMS = [
   ["utm_source", "source"],
   ["utm_medium", "medium"],
@@ -48,7 +54,7 @@ function readUtm(search: string): Utm {
     const params = new URLSearchParams(search)
     for (const [param, key] of UTM_PARAMS) {
       const value = params.get(param)
-      if (value) utm[key] = value
+      if (value) utm[key] = value.slice(0, MAX_TEXT)
     }
   } catch {
     // sem utm
@@ -61,7 +67,7 @@ function readReferrerHost(referrer: string, ownHost: string): string | undefined
   try {
     const host = new URL(referrer).host
     if (!host || host === ownHost) return undefined
-    return host
+    return host.slice(0, MAX_TEXT)
   } catch {
     return undefined
   }
@@ -82,10 +88,17 @@ function utf8Length(s: string): number {
   return bytes
 }
 
+// O servidor rejeita o lote inteiro se o viewport for 0, NaN ou enorme (webview antes do layout).
+function validViewport(v: { w: number; h: number } | null): { w: number; h: number } | undefined {
+  if (!v) return undefined
+  const ok = (n: number) => Number.isFinite(n) && n >= 1 && n <= MAX_VIEWPORT
+  return ok(v.w) && ok(v.h) ? { w: v.w, h: v.h } : undefined
+}
+
 function readOrCreateSessionId(storage: TrackerDeps["storage"]): { id: string; created: boolean } {
   try {
     const stored = storage?.getItem(TRACK_SESSION_KEY)
-    if (stored) return { id: stored, created: false }
+    if (stored && UUID_RE.test(stored)) return { id: stored, created: false }
   } catch {
     // storage bloqueado: o id vive só na memória desta página
   }
@@ -211,7 +224,8 @@ export function createTracker(d: TrackerDeps = {}): Tracker {
     const start: FunnelEventInput = { event: "session_start", utm: readUtm(search) }
     const referrerHost = readReferrerHost(referrer, ownHost)
     if (referrerHost) start.referrerHost = referrerHost
-    if (viewport) start.viewport = { w: viewport.w, h: viewport.h }
+    const vp = validViewport(viewport)
+    if (vp) start.viewport = vp
     enqueue(start)
   }
 
