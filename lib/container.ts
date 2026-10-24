@@ -7,7 +7,7 @@ import { createMysqlRepos } from "@/lib/db/repos/mysql"
 import type { Channel, PaymentEventInput, Repos } from "@/lib/db/repos/types"
 import { getEnv, type Env } from "@/lib/env"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
-import { createMetaCapiClient } from "@/lib/meta/capi"
+import { createMetaCapiClient, type MetaCapiClient } from "@/lib/meta/capi"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
 import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
 import { createPurgeObservability } from "@/lib/jobs/purge-observability"
@@ -33,6 +33,7 @@ const JOB_LIMITS = { payments: 20, plans: 3, notifications: 50 }
 const META_CONVERSIONS_PER_ROUND = 20
 const SUBMIT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }
 const EVENTS_RATE_LIMIT = { limit: 120, windowMs: 60_000 }
+const META_EVENTS_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
 
 export type Container = {
   env: Env
@@ -54,12 +55,16 @@ export type Container = {
   noticeAdmin: NoticeAdmin
   /** Envia à Meta o Purchase de uma cobrança paga (fila `meta_conversions`); nunca lança e não faz nada com o rastreamento desligado. */
   sendMetaConversion: SendMetaConversion
+  /** Cliente da API de Conversões; `null` com o rastreamento da Meta desligado. */
+  metaCapi: MetaCapiClient | null
   /** Rodada exclusiva do job: o agendador e `POST /api/jobs/run` usam este mesmo runner. */
   runner: () => Promise<"ran" | "skipped">
   retryFailed: (t: RetryTarget) => Promise<{ reopened: number }>
   rateLimiter: RateLimiter
   /** Limite próprio de `POST /api/events`, separado do limite do envio do quiz. */
   eventsRateLimiter: RateLimiter
+  /** Limite próprio de `POST /api/meta/events` (espelho dos eventos do Pixel). */
+  metaEventsRateLimiter: RateLimiter
   ping: () => Promise<void>
 }
 
@@ -214,10 +219,12 @@ function buildContainer(): Container {
     runPlanGeneration,
     noticeAdmin,
     sendMetaConversion,
+    metaCapi,
     runner,
     retryFailed: createRetryFailed({ payments, notifications, planGenerations, metaConversions: repos.metaConversions }),
     rateLimiter: createRateLimiter(SUBMIT_RATE_LIMIT),
     eventsRateLimiter: createRateLimiter(EVENTS_RATE_LIMIT),
+    metaEventsRateLimiter: createRateLimiter(META_EVENTS_RATE_LIMIT),
     ping: async () => {
       await db.execute(sql`SELECT 1`)
     },

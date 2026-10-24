@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { getContainer } from "@/lib/container"
 
 // Monta o container de verdade com um env completo e inválido para a rede: o pool do mysql2 só conecta na
@@ -60,15 +60,29 @@ describe("getContainer (ligação das dependências do pós-pagamento)", () => {
     expect(c.repos.analytics.recordBatch).toBeTypeOf("function")
   })
 
-  it("expõe o envio do Purchase com o rastreamento da Meta desligado e ligado", () => {
-    expect(getContainer().sendMetaConversion).toBeTypeOf("function")
+  it("expõe o envio do Purchase com o rastreamento da Meta desligado e ligado", async () => {
+    const off = getContainer()
+    expect(off.sendMetaConversion).toBeTypeOf("function")
+    expect(off.metaCapi).toBeNull()
 
+    // O env é lido uma vez por módulo: recarrega o módulo para ler o env ligado.
+    vi.resetModules()
     delete globals.__tamiFormsContainer
     Object.assign(process.env, {
       META_TRACKING_ENABLED: "true",
       META_PIXEL_ID: "1234567890",
       META_CAPI_TOKEN: "EAAB-token",
     })
-    expect(getContainer().sendMetaConversion).toBeTypeOf("function")
+    const { getContainer: getFreshContainer } = await import("@/lib/container")
+    const on = getFreshContainer()
+    expect(on.sendMetaConversion).toBeTypeOf("function")
+    expect(on.metaCapi?.send).toBeTypeOf("function")
+  })
+
+  it("expõe um limite próprio para o espelho dos eventos da Meta", () => {
+    const c = getContainer()
+    expect(c.metaEventsRateLimiter).toBeDefined()
+    expect(c.metaEventsRateLimiter).not.toBe(c.eventsRateLimiter)
+    expect(c.metaEventsRateLimiter).not.toBe(c.rateLimiter)
   })
 })
