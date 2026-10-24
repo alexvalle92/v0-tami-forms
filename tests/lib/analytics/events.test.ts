@@ -39,7 +39,7 @@ describe("parseEventsBatch", () => {
   })
 
   it("rejeita sessionId que não é UUID", () => {
-    expect(parseEventsBatch(batch([{ event: "step_view", ts: TS, step: 0, stepSlug: "a" }], "abc")).ok).toBe(false)
+    expect(parseEventsBatch(batch([{ event: "step_view", ts: TS, step: 0, stepSlug: "faixa_etaria" }], "abc")).ok).toBe(false)
   })
 
   it("rejeita lote vazio e lote com mais de 25 eventos", () => {
@@ -55,18 +55,37 @@ describe("parseEventsBatch", () => {
   })
 
   it("valida step (inteiro de 0 a 28) e stepSlug (até 40)", () => {
+    expect(oneEvent({ event: "step_view", step: 28, stepSlug: "checkout" }).ok).toBe(true)
     const v = { event: "step_view", stepSlug: "faixa_etaria" }
-    expect(oneEvent({ ...v, step: 28 }).ok).toBe(true)
     expect(oneEvent({ ...v, step: 29 }).ok).toBe(false)
     expect(oneEvent({ ...v, step: -1 }).ok).toBe(false)
     expect(oneEvent({ ...v, step: 1.5 }).ok).toBe(false)
-    expect(oneEvent({ event: "step_view", step: 0, stepSlug: "a".repeat(40) }).ok).toBe(true)
     expect(oneEvent({ event: "step_view", step: 0, stepSlug: "a".repeat(41) }).ok).toBe(false)
   })
 
+  it("descarta o evento cujo stepSlug não é o slug canônico do step, e mantém o resto do lote", () => {
+    const good = { event: "step_view", ts: TS, step: 0, stepSlug: "faixa_etaria" }
+    const bad = { event: "step_view", ts: TS, step: 0, stepSlug: "email" }
+    const start = { event: "session_start", ts: TS, utm: {} }
+    const r = parseEventsBatch(batch([bad, good, start, { ...bad, event: "page_hide", msOnStep: 1 }]))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.events).toEqual([good, start])
+  })
+
+  it("lote só com eventos de slug não canônico é rejeitado, sem ecoar o valor recebido", () => {
+    const r = parseEventsBatch(
+      batch([{ event: "step_view", ts: TS, step: 0, stepSlug: "segredo-xyz" }]),
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.issues).toEqual([{ path: "events", message: expect.any(String) }])
+      expect(JSON.stringify(r.issues)).not.toContain("segredo-xyz")
+    }
+  })
+
   it("rejeita event, reason e outcome desconhecidos", () => {
-    expect(oneEvent({ event: "foo", step: 0, stepSlug: "a" }).ok).toBe(false)
-    expect(oneEvent({ event: "validation_error", step: 0, stepSlug: "a", reason: "outro" }).ok).toBe(false)
+    expect(oneEvent({ event: "foo", step: 0, stepSlug: "faixa_etaria" }).ok).toBe(false)
+    expect(oneEvent({ event: "validation_error", step: 0, stepSlug: "faixa_etaria", reason: "outro" }).ok).toBe(false)
     expect(
       oneEvent({ event: "submit_result", step: 27, stepSlug: "envio", outcome: "x", durationMs: 1, attempt: 1 }).ok,
     ).toBe(false)
@@ -144,7 +163,7 @@ describe("parseEventsBatch", () => {
   })
 
   it("issues trazem só caminho e mensagem, sem os valores recebidos", () => {
-    const r = oneEvent({ event: "validation_error", step: 0, stepSlug: "a", reason: "segredo-123" })
+    const r = oneEvent({ event: "validation_error", step: 0, stepSlug: "faixa_etaria", reason: "segredo-123" })
     expect(r.ok).toBe(false)
     if (!r.ok) {
       expect(r.issues.length).toBeGreaterThan(0)

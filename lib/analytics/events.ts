@@ -3,7 +3,7 @@
 // e o valor passar no filtro; as issues trazem só caminho e mensagem, nunca os valores recebidos.
 
 import { z } from "zod"
-import { LAST_STEP, answerKeyForSlug, sanitizeAnswer } from "@/lib/quiz/steps"
+import { LAST_STEP, answerKeyForSlug, sanitizeAnswer, stepSlug } from "@/lib/quiz/steps"
 import type { ValidationReason } from "@/lib/quiz/step-validation"
 
 export const EVENTS_MAX_BATCH = 25
@@ -94,7 +94,10 @@ const eventSchema = z.discriminatedUnion("event", [
 type ParsedEvent = z.infer<typeof eventSchema>
 
 // Remove o `answer` quando a etapa não tem `answerKey` ou o valor não passa no filtro.
-function cleanEvent(e: ParsedEvent): FunnelEvent {
+// Devolve null quando o `stepSlug` não é o slug canônico do `step` (o evento é descartado do lote).
+function cleanEvent(e: ParsedEvent): FunnelEvent | null {
+  if (e.event === "session_start") return e as FunnelEvent
+  if (e.stepSlug !== stepSlug(e.step)) return null
   if (e.event !== "step_answer") return e as FunnelEvent
   const { answer, ...rest } = e
   if (!answerKeyForSlug(e.stepSlug)) return rest
@@ -121,8 +124,11 @@ export function parseEventsBatch(
       })),
     }
   }
-  return {
-    ok: true,
-    value: { sessionId: parsed.data.sessionId, events: parsed.data.events.map(cleanEvent) },
-  }
+  const events = parsed.data.events.flatMap((e) => {
+    const clean = cleanEvent(e)
+    return clean ? [clean] : []
+  })
+  // Lote vazio não existe (regra 1..25): se nada sobrou, rejeita sem ecoar o que foi recebido.
+  if (events.length === 0) return { ok: false, issues: [{ path: "events", message: "nenhum evento válido" }] }
+  return { ok: true, value: { sessionId: parsed.data.sessionId, events } }
 }
