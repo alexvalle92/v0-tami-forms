@@ -97,8 +97,42 @@ describe("parseEnv", () => {
     expect(env.META_TEST_EVENT_CODE).toBe("TEST123")
   })
 
-  it("rejeita META_PIXEL_ID com letras e META_API_VERSION fora do formato vNN.N", () => {
-    expect(() => parseEnv({ ...valid, META_PIXEL_ID: "abc" })).toThrow(/META_PIXEL_ID/)
-    expect(() => parseEnv({ ...valid, META_API_VERSION: "24" })).toThrow(/META_API_VERSION/)
+  it("com o rastreamento ligado, rejeita META_PIXEL_ID com letras e META_API_VERSION fora do formato vNN.N", () => {
+    const on = { ...valid, META_TRACKING_ENABLED: "true", META_PIXEL_ID: "1234567890", META_CAPI_TOKEN: "EAAB" }
+    expect(() => parseEnv({ ...on, META_PIXEL_ID: "abc" })).toThrow(/META_PIXEL_ID/)
+    expect(() => parseEnv({ ...on, META_API_VERSION: "24" })).toThrow(/META_API_VERSION/)
+  })
+
+  it("com o rastreamento desligado, variáveis META_* em branco ou fora do formato não impedem o boot", () => {
+    const env = parseEnv({
+      ...valid,
+      META_TRACKING_ENABLED: "false",
+      META_PIXEL_ID: "numero-do-pixel",
+      META_CAPI_TOKEN: "",
+      META_API_VERSION: "",
+      META_TEST_EVENT_CODE: " ",
+    })
+    expect(env.META_TRACKING_ENABLED).toBe(false)
+    expect(env.META_API_VERSION).toBe("v24.0")
+  })
+
+  it("META_TRACKING_ENABLED em branco vale como desligado", () => {
+    expect(parseEnv({ ...valid, META_TRACKING_ENABLED: "" }).META_TRACKING_ENABLED).toBe(false)
+  })
+
+  it("com o rastreamento ligado, META_* em branco contam como ausentes", () => {
+    expect(() =>
+      parseEnv({ ...valid, META_TRACKING_ENABLED: "true", META_PIXEL_ID: "", META_CAPI_TOKEN: "EAAB" }),
+    ).toThrow(/META_PIXEL_ID/)
+    const env = parseEnv({
+      ...valid,
+      META_TRACKING_ENABLED: "true",
+      META_PIXEL_ID: "1234567890",
+      META_CAPI_TOKEN: "EAAB",
+      META_API_VERSION: "",
+      META_TEST_EVENT_CODE: "",
+    })
+    expect(env.META_API_VERSION).toBe("v24.0")
+    expect(env.META_TEST_EVENT_CODE).toBeUndefined()
   })
 })

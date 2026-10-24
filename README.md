@@ -55,7 +55,7 @@ O servidor abre em `http://localhost:5000` (a porta é sempre 5000). As migratio
 
 O modelo está em `.env.example`. Nenhuma variável começa com `NEXT_PUBLIC_`: todas ficam só no servidor.
 
-Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e lista o que está errado. Para usar o valor padrão, **remova** a variável; não deixe `NOME=` em branco.
+Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e lista o que está errado. Para usar o valor padrão, **remova** a variável; não deixe `NOME=` em branco. A exceção são as `META_*`: em branco contam como ausentes e, com `META_TRACKING_ENABLED` desligado, nem são conferidas.
 
 | Variável | Obrigatória | Para que serve |
 |---|---|---|
