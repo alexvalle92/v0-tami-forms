@@ -27,6 +27,7 @@ const SUBMIT_REQUEST_BUDGET_MS = 20_000
 const JOB_PAYMENT_DEADLINE_MS = 30_000
 const JOB_LIMITS = { payments: 20, plans: 3, notifications: 50 }
 const SUBMIT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }
+const EVENTS_RATE_LIMIT = { limit: 120, windowMs: 60_000 }
 
 export type Container = {
   env: Env
@@ -50,6 +51,8 @@ export type Container = {
   runner: () => Promise<"ran" | "skipped">
   retryFailed: (t: RetryTarget) => Promise<{ reopened: number }>
   rateLimiter: RateLimiter
+  /** Limite próprio de `POST /api/events`, separado do limite do envio do quiz. */
+  eventsRateLimiter: RateLimiter
   ping: () => Promise<void>
 }
 
@@ -169,6 +172,7 @@ function buildContainer(): Container {
     runner,
     retryFailed: createRetryFailed({ payments, notifications, planGenerations }),
     rateLimiter: createRateLimiter(SUBMIT_RATE_LIMIT),
+    eventsRateLimiter: createRateLimiter(EVENTS_RATE_LIMIT),
     ping: async () => {
       await db.execute(sql`SELECT 1`)
     },

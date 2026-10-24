@@ -52,4 +52,11 @@ describe("getContainer (ligação das dependências do pós-pagamento)", () => {
     expect(c.env.ASAAS_WEBHOOK_TOKEN).toBe("w".repeat(32))
     expect(c.env.ANTHROPIC_MODEL).toBe("claude-opus-5-5")
   })
+
+  it("expõe um limite próprio para os eventos do funil, separado do limite do envio", () => {
+    const c = getContainer()
+    expect(c.eventsRateLimiter).toBeDefined()
+    expect(c.eventsRateLimiter).not.toBe(c.rateLimiter)
+    expect(c.repos.analytics.recordBatch).toBeTypeOf("function")
+  })
 })
