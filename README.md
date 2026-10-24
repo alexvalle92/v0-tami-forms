@@ -203,6 +203,12 @@ Faça depois do primeiro deploy do app com as migrations `0004` e `0005` aplicad
 5. No Metabase, em `Admin > Bancos de dados > Adicionar banco`, escolha **MySQL**, informe o host interno, a porta `3306`, o banco `tami_forms` e o usuário `metabase_ro`. Em `Admin > Configurações > Localização`, deixe o fuso do relatório em `America/Sao_Paulo`. As datas das tabelas estão em UTC; os gráficos "por dia" (painéis 8 e 9) agrupam por dia UTC, então o dia vira às 21h de Brasília.
 6. Crie as 9 perguntas abaixo (`Novo > Pergunta SQL`, banco `tami_forms`) e monte um painel com elas. Nas perguntas com `{{periodo}}`, `{{utm_source}}`, `{{utm_campaign}}` ou `{{device_type}}`, abra a variável, escolha o tipo **Filtro de campo** e aponte para a coluna da tabela indicada em cada painel; depois ligue esses filtros aos filtros do painel (`Período`, `utm_source`, `utm_campaign`, `device_type`). Os trechos `[[AND ...]]` só entram na consulta quando o filtro é preenchido.
 
+**Se der erro de conexão.** O MySQL 8 cria usuários com `caching_sha2_password`, e o Metabase, numa conexão interna sem TLS, pode recusar com `Public Key Retrieval is not allowed`. Os comandos acima ficam como estão; escolha uma destas saídas (confira os nomes exatos na documentação do Metabase da sua versão):
+
+- **Banco de dados `tami_forms` (usuário `metabase_ro`):** no formulário de conexão, abra as opções avançadas e, no campo de opções adicionais do JDBC, coloque `allowPublicKeyRetrieval=true`.
+- **Banco interno do Metabase (usuário `metabase_app`):** se o serviço não subir com esse erro, troque as variáveis `MB_DB_*` separadas por uma só, `MB_DB_CONNECTION_URI=mysql://<host>:3306/metabase?user=metabase_app&password=<senha>&allowPublicKeyRetrieval=true` (forma de URI única descrita na documentação do Metabase; confira se a sua versão aceita esse formato).
+- **Só no MySQL 8.0:** em vez de mexer na conexão, troque o plugin do usuário, por exemplo `ALTER USER 'metabase_ro'@'%' IDENTIFIED WITH mysql_native_password BY '<senha forte>';` (idem para `metabase_app`). No MySQL 8.4 esse plugin vem desativado, então prefira as duas opções acima.
+
 ### Os 9 painéis
 
 Duas regras valem para todos: o filtro de campo do Metabase escreve o nome da tabela na frente da coluna, por isso as consultas **não usam apelido de tabela** nos pontos onde há `{{...}}`; e o MySQL não tem `MEDIAN`, por isso a mediana e o p90 do painel 3 usam `ROW_NUMBER()` e `COUNT()` por `step_slug`.
