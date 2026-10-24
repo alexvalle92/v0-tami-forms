@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from "react"
 import { AlertTriangle, ArrowLeft, RefreshCw, MessageCircle } from "lucide-react"
 import { GENERIC_SUBMIT_ERROR, newSubmissionId, submitQuizRequest } from "@/lib/client/submit-quiz"
+import { getTracker } from "@/lib/client/track"
+import type { SubmitOutcome } from "@/lib/analytics/events"
 
 interface LoadingScreenProps {
   onComplete: () => void
@@ -22,10 +24,29 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
   // um id por montagem, gerado uma única vez (inicializador lazy) e reaproveitado nas tentativas
   const [submissionId] = useState(() => newSubmissionId())
+  const attemptRef = useRef(0)
 
   const submitToWebhook = useCallback(async () => {
     webhookResultRef.current = "pending"
     webhookErrorMsgRef.current = ""
+
+    const startedAt = performance.now()
+    attemptRef.current += 1
+    const attempt = attemptRef.current
+    const trackResult = (outcome: SubmitOutcome) => {
+      try {
+        getTracker().track({
+          event: "submit_result",
+          step: 27,
+          stepSlug: "envio",
+          outcome,
+          durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+          attempt,
+        })
+      } catch {
+        // o rastreamento nunca muda o envio
+      }
+    }
 
     try {
       sessionStorage.removeItem("linkPagamento")
@@ -43,13 +64,16 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
           // sem o link no armazenamento o redirecionamento não funciona
           webhookResultRef.current = "error"
           webhookErrorMsgRef.current = GENERIC_SUBMIT_ERROR
+          trackResult("storage")
           return
         }
       }
       webhookResultRef.current = "success"
+      trackResult("ok")
     } else {
       webhookResultRef.current = "error"
       webhookErrorMsgRef.current = result.message
+      trackResult(result.failure)
     }
   }, [answers, submissionId])
 

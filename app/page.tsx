@@ -13,6 +13,9 @@ import { LoadingScreen } from "@/components/loading-screen"
 import { WeightLossChart } from "@/components/weight-loss-chart"
 import { ErrorModal } from "@/components/error-modal"
 import { stepValidation } from "@/lib/quiz/step-validation"
+import { stepTransitionEvents } from "@/lib/quiz/step-events"
+import { stepSlug } from "@/lib/quiz/steps"
+import { getTracker } from "@/lib/client/track"
 import {
   Moon,
   Heart,
@@ -63,6 +66,9 @@ import Fogo from "@/src/img/fogo.gif"
 import Nutri from "@/src/img/nutri.jpeg"
 import Agua from "@/src/img/agua.gif"
 
+// Teto de tempo que o servidor aceita num evento (24 h)
+const MAX_EVENT_MS = 86_400_000
+
 export default function QuizPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [answers, setAnswers] = useState<Record<string, any>>({})
@@ -72,6 +78,12 @@ export default function QuizPage() {
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" })
 
   const totalSteps = 29
+
+  const tracker = useRef(getTracker()).current
+  const stepRef = useRef<{ step: number; enteredAtMs: number } | null>(null)
+  // as respostas são lidas por ref para o efeito das etapas depender só de currentStep
+  const answersRef = useRef(answers)
+  answersRef.current = answers
 
   const emailInputRef = useRef<HTMLInputElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -137,6 +149,7 @@ export default function QuizPage() {
   const handleContinue = () => {
     const v = stepValidation(currentStep, answers)
     if (v) {
+      tracker.track({ event: "validation_error", step: currentStep, stepSlug: stepSlug(currentStep)!, reason: v.reason })
       setErrorModal({ isOpen: true, message: v.message })
       return
     }
@@ -182,9 +195,51 @@ export default function QuizPage() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }, [currentStep])
 
+  // Funil: cada mudança de etapa gera step_view (e step_answer/step_back da etapa anterior).
+  // Se a etapa não mudou (StrictMode roda o efeito duas vezes), não gera nada.
+  useEffect(() => {
+    if (stepRef.current?.step === currentStep) return
+    // milissegundos inteiros: o servidor rejeita durationMs fracionário
+    const nowMs = Math.round(performance.now())
+    for (const e of stepTransitionEvents(stepRef.current, currentStep, answersRef.current, nowMs)) {
+      tracker.track(e.event === "step_answer" ? { ...e, durationMs: Math.min(e.durationMs, MAX_EVENT_MS) } : e)
+    }
+    stepRef.current = { step: currentStep, enteredAtMs: nowMs }
+  }, [currentStep, tracker])
+
+  // Saída da página: um page_hide por período oculto, enviado com sendBeacon.
+  useEffect(() => {
+    let hideSent = false
+    const onHide = () => {
+      if (hideSent) return
+      hideSent = true
+      const cur = stepRef.current
+      const slug = cur ? stepSlug(cur.step) : undefined
+      if (!cur || slug === undefined) return
+      tracker.track({
+        event: "page_hide",
+        step: cur.step,
+        stepSlug: slug,
+        msOnStep: Math.min(Math.max(0, Math.round(performance.now()) - cur.enteredAtMs), MAX_EVENT_MS),
+      })
+      tracker.flush({ beacon: true })
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") onHide()
+      else hideSent = false
+    }
+    window.addEventListener("pagehide", onHide)
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => {
+      window.removeEventListener("pagehide", onHide)
+      document.removeEventListener("visibilitychange", onVisibility)
+    }
+  }, [tracker])
+
   const handleNext = () => {
     const v = stepValidation(currentStep, answers)
     if (v) {
+      tracker.track({ event: "validation_error", step: currentStep, stepSlug: stepSlug(currentStep)!, reason: v.reason })
       setErrorModal({ isOpen: true, message: v.message })
       return
     }
@@ -203,6 +258,8 @@ export default function QuizPage() {
 
   const handleFinalRedirect = () => {
     const linkPagamento = sessionStorage.getItem("linkPagamento")
+    tracker.track({ event: "checkout_click", step: 28, stepSlug: "checkout", hasPaymentLink: !!linkPagamento })
+    tracker.flush({ beacon: true })
     if (linkPagamento) {
       sessionStorage.removeItem("quizAnswers")
       window.location.href = linkPagamento

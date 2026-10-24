@@ -44,26 +44,31 @@ describe("submitQuizRequest", () => {
   it("200 com sucesso=false e mensagemErro devolve a mensagem", async () => {
     const result = await run((async () =>
       jsonResponse({ sucesso: false, mensagemErro: "X" })) as unknown as typeof fetch)
-    expect(result).toEqual({ ok: false, message: "X" })
+    expect(result).toEqual({ ok: false, message: "X", failure: "resposta_invalida" })
   })
 
-  it.each([400, 429, 500])("status %i devolve a mensagem genérica", async (status) => {
+  it.each([
+    [400, "http_4xx"],
+    [429, "http_4xx"],
+    [500, "http_5xx"],
+    [503, "http_5xx"],
+  ])("status %i devolve a mensagem genérica e failure %s", async (status, failure) => {
     const result = await run((async () =>
       jsonResponse({ sucesso: false, mensagemErro: "detalhe do servidor" }, status)) as unknown as typeof fetch)
-    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR })
+    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR, failure })
   })
 
-  it("falha de rede devolve a mensagem genérica", async () => {
+  it("falha de rede devolve a mensagem genérica e failure rede", async () => {
     const result = await run((async () => {
       throw new TypeError("Failed to fetch")
     }) as unknown as typeof fetch)
-    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR })
+    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR, failure: "rede" })
   })
 
-  it("JSON inválido devolve a mensagem genérica", async () => {
+  it("JSON inválido devolve a mensagem genérica e failure resposta_invalida", async () => {
     const result = await run((async () =>
       new Response("{nope", { status: 200, headers: { "Content-Type": "application/json" } })) as unknown as typeof fetch)
-    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR })
+    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR, failure: "resposta_invalida" })
   })
 
   it("timeout (fetch que nunca resolve) devolve a mensagem genérica e passa um AbortSignal", async () => {
@@ -75,7 +80,7 @@ describe("submitQuizRequest", () => {
       })
     }) as unknown as typeof fetch
     const result = await run(fetchImpl, { timeoutMs: 20 })
-    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR })
+    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR, failure: "timeout" })
     expect(received).toBeInstanceOf(AbortSignal)
   })
 
@@ -123,7 +128,7 @@ describe("submitQuizRequest: timeout com AbortController", () => {
       })
     }) as unknown as typeof fetch
     const result = await run(fetchImpl, { timeoutMs: 20 })
-    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR })
+    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR, failure: "timeout" })
     expect(received).toBeInstanceOf(AbortSignal)
     expect(received?.aborted).toBe(true)
   })
@@ -140,7 +145,7 @@ describe("submitQuizRequest: timeout com AbortController", () => {
       } as unknown as Response
     }) as unknown as typeof fetch
     const result = await run(fetchImpl, { timeoutMs: 20 })
-    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR })
+    expect(result).toEqual({ ok: false, message: GENERIC_SUBMIT_ERROR, failure: "timeout" })
   })
 
   it("não deixa timer pendente após sucesso nem após falha", async () => {
