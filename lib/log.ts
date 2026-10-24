@@ -4,7 +4,9 @@ export type Logger = {
   error(event: string, fields?: Record<string, unknown>): void
 }
 
-type Level = "info" | "warn" | "error"
+export type LogLevel = "info" | "warn" | "error"
+
+export type LogEntry = { ts: Date; level: LogLevel; event: string; fields: Record<string, unknown> }
 
 const SECRET_KEY = /token|authorization|apikey|api_key|password|secret/i
 
@@ -29,16 +31,35 @@ function replacer(_key: string, value: unknown): unknown {
   return value
 }
 
-export function createLogger(write: (line: string) => void = console.log): Logger {
-  const emit = (level: Level) => (event: string, fields?: Record<string, unknown>) => {
-    const ts = new Date().toISOString()
+export function createLogger(
+  write: (line: string) => void = console.log,
+  persist?: (entry: LogEntry) => void,
+): Logger {
+  const emit = (level: LogLevel) => (event: string, fields?: Record<string, unknown>) => {
+    const now = new Date()
+    const ts = now.toISOString()
+    const masked = redact(fields ?? {})
     let line: string
     try {
-      line = JSON.stringify({ ...redact(fields ?? {}), ts, level, event }, replacer)
+      line = JSON.stringify({ ...masked, ts, level, event }, replacer)
     } catch {
       line = JSON.stringify({ ts, level, event, logError: true })
     }
     write(line)
+    if (persist) {
+      // Mesma conversão do stdout (Error, bigint, circular); falha do persist nunca chega ao chamador.
+      try {
+        let persisted: Record<string, unknown>
+        try {
+          persisted = JSON.parse(JSON.stringify(masked, replacer))
+        } catch {
+          persisted = { logError: true }
+        }
+        persist({ ts: now, level, event, fields: persisted })
+      } catch {
+        // ignorado de propósito
+      }
+    }
   }
   return { info: emit("info"), warn: emit("warn"), error: emit("error") }
 }

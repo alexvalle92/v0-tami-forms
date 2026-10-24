@@ -114,3 +114,59 @@ describe("createLogger: redação de campos sensíveis", () => {
     expect(line.ok).toBe("visível")
   })
 })
+
+describe("createLogger: persist", () => {
+  it("entrega ao persist a entrada com campos já mascarados e mantém o stdout igual", () => {
+    const write = vi.fn()
+    const persist = vi.fn()
+    createLogger(write, persist).warn("x.y", { cpf: "05687104950", n: 1 })
+
+    expect(persist).toHaveBeenCalledTimes(1)
+    const entry = persist.mock.calls[0][0]
+    expect(entry).toMatchObject({ level: "warn", event: "x.y", fields: { cpf: "***.***.*49-50", n: 1 } })
+    expect(entry.ts).toBeInstanceOf(Date)
+
+    expect(write).toHaveBeenCalledTimes(1)
+    const line = JSON.parse(write.mock.calls[0][0])
+    expect(line).toMatchObject({ level: "warn", event: "x.y", cpf: "***.***.*49-50", n: 1 })
+    expect(line.ts).toBe(entry.ts.toISOString())
+  })
+
+  it("não inclui ts, level e event nos campos entregues", () => {
+    const persist = vi.fn()
+    createLogger(vi.fn(), persist).info("real", { a: 1 })
+    expect(persist.mock.calls[0][0].fields).toEqual({ a: 1 })
+  })
+
+  it("converte Error e bigint como no stdout, sem lançar, e escreve o stdout uma vez", () => {
+    const write = vi.fn()
+    const persist = vi.fn()
+    createLogger(write, persist).error("e.x", { err: new Error("boom"), n: BigInt(10) })
+
+    const { fields } = persist.mock.calls[0][0]
+    expect(fields.err).toEqual({ name: "Error", message: "boom", stack: expect.any(String) })
+    expect(fields.n).toBe("10")
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+
+  it("entrega { logError: true } com objeto circular, sem lançar", () => {
+    const write = vi.fn()
+    const persist = vi.fn()
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    createLogger(write, persist).info("circ", { circular })
+
+    expect(persist.mock.calls[0][0].fields).toEqual({ logError: true })
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+
+  it("engole a exceção do persist e ainda escreve o stdout", () => {
+    const write = vi.fn()
+    const persist = vi.fn(() => {
+      throw new Error("persist quebrou")
+    })
+    expect(() => createLogger(write, persist).error("e.y", { a: 1 })).not.toThrow()
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(write.mock.calls[0][0])).toMatchObject({ event: "e.y", a: 1 })
+  })
+})

@@ -12,6 +12,7 @@ import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
 import { createExclusiveRunner } from "@/lib/jobs/scheduler"
 import { createLogger, type Logger } from "@/lib/log"
+import { createLogPersister } from "@/lib/log-persist"
 import { createAnthropicGenerator } from "@/lib/meal-plan/anthropic-generator"
 import { createSmtpEmailSender, type EmailSender } from "@/lib/notify/email"
 import { createEvolutionWhatsAppSender, type WhatsAppSender } from "@/lib/notify/whatsapp"
@@ -69,9 +70,10 @@ export function enabledChannels(env: Pick<Env, "NOTIFY_EMAIL_ENABLED" | "NOTIFY_
 
 function buildContainer(): Container {
   const env = getEnv()
-  const log = createLogger()
   const db = getDb()
   const repos = createMysqlRepos(db)
+  const logPersister = createLogPersister({ repo: repos.appLogs, write: console.log })
+  const log = createLogger(console.log, logPersister.push)
   const { payments, notifications, submissions, webhooks, planGenerations } = repos
   const now = () => new Date()
   const channels = enabledChannels(env)
