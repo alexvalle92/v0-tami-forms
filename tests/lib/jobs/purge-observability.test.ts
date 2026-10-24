@@ -38,25 +38,39 @@ describe("createPurgeObservability", () => {
     expect(appLogs.purgeOlderThan).toHaveBeenCalledWith(expect.any(Date), 10)
   })
 
-  it("rejeita se a limpeza do funil falha", async () => {
+  it("rejeita se a limpeza do funil falha, mas ainda tenta apagar os logs", async () => {
     const analytics = {
       purgeOlderThan: vi.fn(async (_c: Date, _l: number): Promise<number> => {
-        throw new Error("db down")
+        throw new Error("funil fora")
       }),
     }
-    const appLogs = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 0) }
+    const appLogs = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 3) }
 
-    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("db down")
+    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("funil fora")
+    expect(appLogs.purgeOlderThan).toHaveBeenCalledTimes(1)
   })
 
-  it("rejeita se a limpeza dos logs falha", async () => {
-    const analytics = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 0) }
+  it("rejeita se a limpeza dos logs falha, mas o funil foi tentado", async () => {
+    const analytics = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 4) }
     const appLogs = {
       purgeOlderThan: vi.fn(async (_c: Date, _l: number): Promise<number> => {
-        throw new Error("db down")
+        throw new Error("logs fora")
       }),
     }
 
-    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("db down")
+    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("logs fora")
+    expect(analytics.purgeOlderThan).toHaveBeenCalledTimes(1)
+  })
+
+  it("quando as duas falham, rejeita com o primeiro motivo (funil)", async () => {
+    const boom = (m: string) =>
+      vi.fn(async (_c: Date, _l: number): Promise<number> => {
+        throw new Error(m)
+      })
+    const analytics = { purgeOlderThan: boom("funil fora") }
+    const appLogs = { purgeOlderThan: boom("logs fora") }
+
+    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("funil fora")
+    expect(appLogs.purgeOlderThan).toHaveBeenCalledTimes(1)
   })
 })
