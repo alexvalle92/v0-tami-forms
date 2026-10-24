@@ -147,6 +147,259 @@ Outros eventos, se marcados, são aceitos e ignorados. Cartão de crédito: o As
 
 O app responde `200` mesmo para corpo ilegível, justamente para não pausar a fila à toa. Só responde `401` (token errado ou ausente) e `500` (falha do banco, quando pede reenvio).
 
+## Observabilidade (funil e erros)
+
+O app grava o caminho de quem preenche o quiz e os erros das integrações no próprio MySQL, e o **Metabase** (gratuito, no Easypanel) mostra isso em painéis, sem escrever SQL no dia a dia.
+
+### O que é gravado e o que nunca é gravado
+
+- **Funil do quiz** (`funnel_sessions` e `funnel_events`): um id aleatório por aba (`sessionStorage`, sem vínculo com o paciente), a etapa vista, o tempo em cada etapa, os erros de validação, o resultado do envio, o clique no checkout, a origem (UTM e só o host do referrer), o aparelho (tipo, sistema e navegador, tirados do User-Agent) e as respostas não sensíveis da lista permitida (faixa etária, sexo biológico, tipo físico, refeições, sono, água etc.; o IMC entra só como faixa).
+- **Erros do backend** (`app_logs`): todo `warn` e `error` do logger (Asaas, e-mail, WhatsApp, Anthropic, webhook, envio do quiz) e quatro eventos de sucesso (`submit.done`, `webhook.asaas.received`, `plan.generation.done`, `notification.dispatch.sent`), para calcular a taxa de falha. É o mesmo texto que já vai para o stdout, já mascarado.
+- **Nunca é gravado:** nome, CPF, e-mail, WhatsApp, peso, altura, meta e IMC numérico; o IP (só o rate limit em memória o usa); o User-Agent bruto.
+- O usuário `metabase_ro` só lê as 3 tabelas e as 5 views abaixo. Ele **não** enxerga `patients`, `payments`, `quiz_responses` nem `notifications`.
+
+### Metabase no Easypanel
+
+Faça depois do primeiro deploy do app com as migrations `0004` e `0005` aplicadas (o `GRANT` falha em tabela que ainda não existe). Os comandos SQL rodam como `root`, no console do serviço MySQL do Easypanel.
+
+1. **Banco interno do Metabase e o usuário dele** (o Metabase guarda aqui as perguntas e os painéis, separado do `tami_forms`):
+
+   ```sql
+   CREATE DATABASE metabase CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+   CREATE USER 'metabase_app'@'%' IDENTIFIED BY '<senha forte>';
+   GRANT ALL PRIVILEGES ON metabase.* TO 'metabase_app'@'%';
+   ```
+
+2. **Usuário de leitura** (é com ele que o Metabase consulta os dados do app; só `SELECT`, e só nestas tabelas e views):
+
+   ```sql
+   CREATE USER 'metabase_ro'@'%' IDENTIFIED BY '<senha forte>';
+   GRANT SELECT ON tami_forms.funnel_sessions TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.funnel_events TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.app_logs TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_funnel_steps TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_abandonment TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_session_answers TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_step_durations TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_api_errors TO 'metabase_ro'@'%';
+   ```
+
+   Se o banco do app não se chamar `tami_forms`, troque o nome nas 8 linhas. Os `GRANT` valem pelo nome: continuam valendo quando uma migration recria uma view.
+
+3. **Serviço novo** pelo template **Metabase** do Easypanel, com estas variáveis de ambiente:
+
+   | Variável | Valor |
+   |---|---|
+   | `MB_DB_TYPE` | `mysql` |
+   | `MB_DB_HOST` | host interno do serviço MySQL (o nome do serviço, como no `DATABASE_URL`) |
+   | `MB_DB_PORT` | `3306` |
+   | `MB_DB_DBNAME` | `metabase` |
+   | `MB_DB_USER` | `metabase_app` |
+   | `MB_DB_PASS` | a senha do `metabase_app` |
+   | `JAVA_OPTS` | `-Xmx1g` |
+
+   Defina o limite de memória do serviço em **1,5 GB** (o servidor tem 8 GB, a maior parte livre).
+4. **Domínio próprio** (por exemplo `painel.nutritamilivalle.com.br`) no proxy do Easypanel. No primeiro acesso, crie o usuário admin.
+5. No Metabase, em `Admin > Bancos de dados > Adicionar banco`, escolha **MySQL**, informe o host interno, a porta `3306`, o banco `tami_forms` e o usuário `metabase_ro`. Em `Admin > Configurações > Localização`, deixe o fuso do relatório em `America/Sao_Paulo`. As datas das tabelas estão em UTC; os gráficos "por dia" (painéis 8 e 9) agrupam por dia UTC, então o dia vira às 21h de Brasília.
+6. Crie as 9 perguntas abaixo (`Novo > Pergunta SQL`, banco `tami_forms`) e monte um painel com elas. Nas perguntas com `{{periodo}}`, `{{utm_source}}`, `{{utm_campaign}}` ou `{{device_type}}`, abra a variável, escolha o tipo **Filtro de campo** e aponte para a coluna da tabela indicada em cada painel; depois ligue esses filtros aos filtros do painel (`Período`, `utm_source`, `utm_campaign`, `device_type`). Os trechos `[[AND ...]]` só entram na consulta quando o filtro é preenchido.
+
+### Os 9 painéis
+
+Duas regras valem para todos: o filtro de campo do Metabase escreve o nome da tabela na frente da coluna, por isso as consultas **não usam apelido de tabela** nos pontos onde há `{{...}}`; e o MySQL não tem `MEDIAN`, por isso a mediana e o p90 do painel 3 usam `ROW_NUMBER()` e `COUNT()` por `step_slug`.
+
+#### 1. Funil por etapa
+
+Objetivo: ver quantas sessões chegaram a cada etapa e quanto cai de uma etapa para a seguinte. Filtros de campo: `periodo` em `funnel_sessions.started_at`, `utm_source`, `utm_campaign` e `device_type` nas colunas de mesmo nome de `funnel_sessions`. Visualização: **Funil** (etapa = `step_slug`, medida = `sessoes`); a tabela mostra também `pct_do_inicio` e `pct_queda`.
+
+```sql
+SELECT vw_funnel_steps.step,
+       vw_funnel_steps.step_slug,
+       COUNT(funnel_sessions.session_id) AS sessoes,
+       ROUND(100 * COUNT(funnel_sessions.session_id)
+             / NULLIF(FIRST_VALUE(COUNT(funnel_sessions.session_id)) OVER (ORDER BY vw_funnel_steps.step), 0), 1) AS pct_do_inicio,
+       ROUND(100 * (1 - COUNT(funnel_sessions.session_id)
+             / NULLIF(LAG(COUNT(funnel_sessions.session_id)) OVER (ORDER BY vw_funnel_steps.step), 0)), 1) AS pct_queda
+FROM vw_funnel_steps
+LEFT JOIN funnel_sessions
+       ON funnel_sessions.max_step >= vw_funnel_steps.step
+       [[AND {{periodo}}]]
+       [[AND {{utm_source}}]]
+       [[AND {{utm_campaign}}]]
+       [[AND {{device_type}}]]
+GROUP BY vw_funnel_steps.step, vw_funnel_steps.step_slug
+ORDER BY vw_funnel_steps.step;
+```
+
+Sem filtros, o resultado é o mesmo de `SELECT step, step_slug, sessions, pct_of_start FROM vw_funnel_steps ORDER BY step`.
+
+#### 2. Onde abandonam
+
+Objetivo: descobrir em que etapa ficam as sessões que não chegaram ao checkout e pararam há mais de 30 minutos. Filtros de campo: `periodo` em `vw_abandonment.started_at`; `utm_source`, `utm_campaign` e `device_type` nas colunas de `vw_abandonment`. Visualização: **Barras**, etapa no eixo X (`abandon_step_slug`) e `sessoes` no Y.
+
+```sql
+SELECT abandon_step, abandon_step_slug, COUNT(*) AS sessoes
+FROM vw_abandonment
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{utm_source}}]]
+  [[AND {{utm_campaign}}]]
+  [[AND {{device_type}}]]
+GROUP BY abandon_step, abandon_step_slug
+ORDER BY abandon_step;
+```
+
+#### 3. Tempo por etapa
+
+Objetivo: achar as etapas em que as pessoas demoram mais, pela mediana e pelo percentil 90 (o p90 mostra o "lento" que a mediana esconde). Filtro de campo: `periodo` em `vw_step_durations.created_at`. Visualização: **Barras** com `mediana_s` e `p90_s` por `step_slug`, ou tabela.
+
+```sql
+WITH ordenado AS (
+  SELECT step,
+         step_slug,
+         duration_ms,
+         ROW_NUMBER() OVER (PARTITION BY step_slug ORDER BY duration_ms) AS posicao,
+         COUNT(*)     OVER (PARTITION BY step_slug)                      AS total
+  FROM vw_step_durations
+  WHERE duration_ms IS NOT NULL
+    [[AND {{periodo}}]]
+)
+SELECT step,
+       step_slug,
+       MAX(total) AS respostas,
+       ROUND(AVG(CASE WHEN posicao IN (FLOOR((total + 1) / 2), CEIL((total + 1) / 2)) THEN duration_ms END) / 1000, 1) AS mediana_s,
+       ROUND(MIN(CASE WHEN posicao >= CEIL(0.9 * total) THEN duration_ms END) / 1000, 1) AS p90_s
+FROM ordenado
+GROUP BY step, step_slug
+ORDER BY step;
+```
+
+#### 4. Erros de validação
+
+Objetivo: ver em que etapa e por qual motivo (`vazio`, `email_invalido`, `telefone_invalido`, `cpf_invalido`) as pessoas esbarram na validação. Filtro de campo: `periodo` em `funnel_events.created_at`. Visualização: **Barras empilhadas**, `step_slug` no eixo X e `motivo` como série.
+
+```sql
+SELECT step,
+       step_slug,
+       JSON_UNQUOTE(JSON_EXTRACT(props, '$.reason')) AS motivo,
+       COUNT(*) AS total
+FROM funnel_events
+WHERE event = 'validation_error'
+  [[AND {{periodo}}]]
+GROUP BY step, step_slug, motivo
+ORDER BY total DESC;
+```
+
+#### 5. Conversão por origem
+
+Objetivo: comparar a origem do tráfego pela parte das sessões que chega ao clique no checkout. Sem UTM, a origem mostra o host do referrer (`ref:...`) ou `(direto)`. Filtros de campo: `periodo` em `funnel_sessions.started_at` e `device_type` em `funnel_sessions.device_type`. Visualização: **Tabela** ordenada por `sessoes` (ou barras com `pct_checkout`).
+
+```sql
+SELECT COALESCE(utm_source, CONCAT('ref:', referrer_host), '(direto)') AS origem,
+       COALESCE(utm_campaign, '(sem campanha)') AS campanha,
+       COUNT(*) AS sessoes,
+       SUM(checkout_clicked) AS checkouts,
+       ROUND(100 * SUM(checkout_clicked) / COUNT(*), 1) AS pct_checkout
+FROM funnel_sessions
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{device_type}}]]
+GROUP BY origem, campanha
+ORDER BY sessoes DESC;
+```
+
+#### 6. Conversão por aparelho
+
+Objetivo: ver se o quiz converte pior em algum aparelho, sistema ou navegador (inclusive os navegadores internos do Instagram e do Facebook). Filtros de campo: `periodo` em `funnel_sessions.started_at`, `utm_source` e `utm_campaign` em `funnel_sessions`. Visualização: **Tabela** (ou barras de `pct_checkout` por `device_type`).
+
+```sql
+SELECT device_type,
+       os,
+       browser,
+       COUNT(*) AS sessoes,
+       SUM(checkout_clicked) AS checkouts,
+       ROUND(100 * SUM(checkout_clicked) / COUNT(*), 1) AS pct_checkout
+FROM funnel_sessions
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{utm_source}}]]
+  [[AND {{utm_campaign}}]]
+GROUP BY device_type, os, browser
+ORDER BY sessoes DESC;
+```
+
+#### 7. Respostas × abandono
+
+Objetivo: cruzar uma resposta do quiz com a etapa em que a pessoa abandonou (o exemplo usa `tipo_fisico`; troque `vw_session_answers.tipo_fisico` por qualquer outra coluna da view: `faixa_etaria`, `sexo_biologico`, `peso_comportamento`, `sono`, `agua`, `imc_faixa` etc.). Só entram sessões abandonadas. Filtros de campo: `periodo` em `vw_session_answers.started_at`; `utm_source`, `utm_campaign` e `device_type` em `vw_session_answers`. Visualização: **Barras empilhadas**, `abandon_step_slug` no eixo X e `resposta` como série.
+
+```sql
+SELECT vw_abandonment.abandon_step,
+       vw_abandonment.abandon_step_slug,
+       COALESCE(vw_session_answers.tipo_fisico, '(sem resposta)') AS resposta,
+       COUNT(*) AS sessoes
+FROM vw_session_answers
+JOIN vw_abandonment ON vw_abandonment.session_id = vw_session_answers.session_id
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{utm_source}}]]
+  [[AND {{utm_campaign}}]]
+  [[AND {{device_type}}]]
+GROUP BY vw_abandonment.abandon_step, vw_abandonment.abandon_step_slug, resposta
+ORDER BY vw_abandonment.abandon_step, sessoes DESC;
+```
+
+#### 8. Falhas de envio no navegador
+
+Objetivo: saber quantas tentativas de envio (etapa `envio`) deram certo e quantas falharam, e de que tipo (`http_4xx`, `http_5xx`, `timeout`, `rede`, `resposta_invalida`, `storage`), dia a dia. Filtro de campo: `periodo` em `funnel_events.created_at`. Visualização: **Barras empilhadas** por `dia`, com `resultado` como série.
+
+```sql
+SELECT DATE(created_at) AS dia,
+       JSON_UNQUOTE(JSON_EXTRACT(props, '$.outcome')) AS resultado,
+       COUNT(*) AS total
+FROM funnel_events
+WHERE event = 'submit_result'
+  [[AND {{periodo}}]]
+GROUP BY dia, resultado
+ORDER BY dia, resultado;
+```
+
+#### 9. Saúde das integrações
+
+Objetivo: acompanhar os erros do servidor por área (a parte do nome do evento antes do primeiro ponto: `asaas`, `webhook`, `submit`, `plan`, `notification`, `payment` etc.) e por dia, com os sucessos ao lado. Só quatro eventos de sucesso são gravados (`submit`, `webhook`, `plan` e `notification`); nas demais áreas a coluna `sucessos` fica em 0. Filtro de campo: `periodo` em `vw_api_errors.day`. Visualização: **Linhas** (ou barras) com `erros` e `sucessos` por `day`, uma série por `area`.
+
+```sql
+SELECT day,
+       area,
+       SUM(CASE WHEN level IN ('warn', 'error') THEN total ELSE 0 END) AS erros,
+       SUM(CASE WHEN level = 'info' THEN total ELSE 0 END) AS sucessos
+FROM vw_api_errors
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+GROUP BY day, area
+ORDER BY day, area;
+```
+
+Para ver quais eventos estão falhando (uma tabela de apoio ao lado do painel 9, mesmo filtro `periodo`):
+
+```sql
+SELECT area, event, level, SUM(total) AS total
+FROM vw_api_errors
+WHERE level IN ('warn', 'error')
+  [[AND {{periodo}}]]
+GROUP BY area, event, level
+ORDER BY total DESC;
+```
+
+### Quando uma etapa do quiz mudar
+
+A lista de etapas (`vw_funnel_steps`) e a de chaves de resposta (`vw_session_answers`) estão **copiadas** dentro da migration `0005_observability_views.sql`, a partir de `QUIZ_STEPS` e `ALLOWED_ANSWER_KEYS` (`lib/quiz/steps.ts`). Ao entrar, sair ou renomear uma etapa, ou ao incluir uma chave de resposta, crie uma **nova migration** que recria as views (`DROP VIEW` + `CREATE VIEW`). Enquanto isso não for feito, o teste `tests/lib/quiz/steps-migration.test.ts` falha. Etapa nova ganha um slug novo e as outras mantêm o seu; assim a comparação ao longo do tempo continua válida.
+
+### Retenção
+
+- Funil (`funnel_events` e `funnel_sessions`): **365 dias**.
+- `app_logs`: **90 dias**.
+
+A limpeza roda no fim de cada rodada do job (a cada 2 minutos), apagando até 1.000 linhas por tabela por rodada. Para mudar os prazos ou o tamanho do lote, edite `FUNNEL_RETENTION_DAYS`, `APP_LOG_RETENTION_DAYS` e `PURGE_BATCH` em `lib/jobs/purge-observability.ts`.
+
 ## 6. Operação
 
 ### O job de fundo
