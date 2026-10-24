@@ -151,13 +151,44 @@ describe("createSendMetaConversion", () => {
     expect(t.log.lines.map((l) => [l.level, l.event])).toEqual([["error", "meta.purchase.failed"]])
   })
 
-  it("passados 7 dias do pagamento, não tenta mais", async () => {
+  it("conversão já fora da janela de 7 dias nem chega à Meta: vira failed, com aviso no log e sem e-mail ao admin", async () => {
     const t = setup({
       payload: payload({ eventTime: new Date(NOW.getTime() - META_MAX_EVENT_AGE_MS - 60_000) }),
+    })
+    await t.send(ID)
+
+    expect(t.sent).toEqual([])
+    expect(t.conversions.markSent).not.toHaveBeenCalled()
+    expect(t.conversions.markRetry).not.toHaveBeenCalled()
+    expect(t.conversions.markFailed).toHaveBeenCalledWith(
+      ID,
+      expect.objectContaining({ step: "meta_capi", message: expect.stringContaining("janela") }),
+    )
+    expect(t.alertAdmin).not.toHaveBeenCalled()
+    expect(t.log.lines).toEqual([
+      { level: "warn", event: "meta.purchase.expired", fields: { conversionId: ID, paymentId: "pay-1" } },
+    ])
+  })
+
+  it("reaberta em lote muito tempo depois, a conversão antiga não gera novo alerta nem nova chamada", async () => {
+    const t = setup({
+      payload: payload({ attempts: 0, eventTime: new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000) }),
+    })
+    await t.send(ID)
+    await t.send(ID)
+
+    expect(t.sent).toEqual([])
+    expect(t.alertAdmin).not.toHaveBeenCalled()
+  })
+
+  it("se a próxima tentativa já cairia fora da janela, falha agora e avisa o admin", async () => {
+    const t = setup({
+      payload: payload({ eventTime: new Date(NOW.getTime() - META_MAX_EVENT_AGE_MS + 10_000) }),
       result: { kind: "retryable", message: "rede: ECONNRESET" },
     })
     await t.send(ID)
 
+    expect(t.sent).toHaveLength(1)
     expect(t.conversions.markRetry).not.toHaveBeenCalled()
     expect(t.conversions.markFailed).toHaveBeenCalledTimes(1)
     expect(t.alertAdmin).toHaveBeenCalledTimes(1)

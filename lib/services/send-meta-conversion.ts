@@ -70,10 +70,12 @@ export function createSendMetaConversion(d: {
       ...(failure.status !== undefined ? { status: failure.status } : {}),
       message: failure.message,
     }
-    const expired = ctx.eventTime !== null && now.getTime() - ctx.eventTime.getTime() > META_MAX_EVENT_AGE_MS
+    const nextAttemptAt = new Date(now.getTime() + jobBackoffMs(attempt))
+    // A próxima tentativa já cairia fora da janela da Meta: falha agora, com aviso, e não numa rodada sem alerta.
+    const expired = ctx.eventTime !== null && nextAttemptAt.getTime() - ctx.eventTime.getTime() > META_MAX_EVENT_AGE_MS
 
     if (failure.retryable && attempt < MAX_META_CONVERSION_ATTEMPTS && !expired) {
-      await d.conversions.markRetry(id, new Date(now.getTime() + jobBackoffMs(attempt)), lastError)
+      await d.conversions.markRetry(id, nextAttemptAt, lastError)
       d.log.warn("meta.purchase.retry", ref)
       return
     }
@@ -99,6 +101,20 @@ export function createSendMetaConversion(d: {
         eventTime: payload.eventTime,
         paymentId: payload.paymentId,
         patientName: payload.patient.name,
+      }
+
+      // Fora da janela de 7 dias (reabertura em lote, ou rastreamento religado tarde): a Meta só rejeitaria.
+      // Fecha a linha sem chamar a Meta e sem e-mail, para uma reabertura não gerar alerta por linha antiga.
+      if (d.now().getTime() - payload.eventTime.getTime() > META_MAX_EVENT_AGE_MS) {
+        const now = d.now()
+        await d.conversions.markFailed(id, {
+          step: "meta_capi",
+          message: "fora da janela de 7 dias da Meta",
+          attempt: payload.attempts + 1,
+          at: now.toISOString(),
+        })
+        d.log.warn("meta.purchase.expired", { conversionId: id, paymentId: payload.paymentId })
+        return
       }
 
       const result = await d.capi.send([purchaseEvent(payload)])

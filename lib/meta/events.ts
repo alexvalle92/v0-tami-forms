@@ -15,11 +15,15 @@ export * from "./shared"
 
 const UUID = z.string().uuid()
 
+// URL de anúncio com UTMs dinâmicas passa de 500 caracteres com facilidade: rejeitar derrubaria o evento
+// justamente do público que veio do anúncio. Aceita até 2.000 e guarda os primeiros 500 (o tamanho das colunas).
+const MAX_URL_KEPT = 500
 const httpUrl = z
   .string()
-  .max(500)
+  .max(2000)
   .url()
   .refine((v) => /^https?:\/\//i.test(v))
+  .transform((v) => v.slice(0, MAX_URL_KEPT))
 
 // Opcional que, se inválido, é tratado como ausente (mesmo padrão do `optionalText` do webhook do Asaas).
 const lenient = <T extends z.ZodTypeAny>(schema: T) => schema.optional().catch(undefined)

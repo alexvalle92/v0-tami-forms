@@ -21,12 +21,20 @@ describe("parseBrowserMetaEvent", () => {
     ["prefixo do eventId não bate com o evento", { ...base, eventId: `vc:${UUID}` }],
     ["eventId sem UUID", { ...base, eventId: "lead:abc" }],
     ["URL que não é http(s)", { ...base, eventSourceUrl: "javascript:alert(1)" }],
-    ["URL com 501 caracteres", { ...base, eventSourceUrl: `https://a.b/${"x".repeat(501 - 12)}` }],
+    ["URL com mais de 2.000 caracteres", { ...base, eventSourceUrl: `https://a.b/${"x".repeat(2001 - 12)}` }],
     ["sem eventSourceUrl", { eventName: "Lead", eventId: `lead:${UUID}` }],
     ["corpo que não é objeto", "Lead"],
     ["corpo nulo", null],
   ])("rejeita: %s", (_, body) => {
     expect(parseBrowserMetaEvent(body)).toBeNull()
+  })
+
+  it("URL de anúncio longa (UTMs dinâmicas) é cortada em 500 caracteres e não derruba o evento", () => {
+    const long = `https://quiz.example.com/?utm_content=${"x".repeat(900)}`
+    const result = parseBrowserMetaEvent({ ...base, eventSourceUrl: long })
+
+    expect(result?.eventSourceUrl).toBe(long.slice(0, 500))
+    expect(result?.eventName).toBe("Lead")
   })
 
   it("aceita os campos opcionais válidos", () => {
@@ -67,6 +75,11 @@ describe("parseSubmitMeta", () => {
   it("devolve undefined quando nenhum campo é válido", () => {
     expect(parseSubmitMeta({})).toBeUndefined()
     expect(parseSubmitMeta({ fbp: "x".repeat(2000), externalId: "não-uuid" })).toBeUndefined()
+  })
+
+  it("URL longa no meta do envio é cortada em 500 e mantida", () => {
+    const long = `https://quiz.example.com/?utm_term=${"y".repeat(700)}`
+    expect(parseSubmitMeta({ eventSourceUrl: long })).toStrictEqual({ eventSourceUrl: long.slice(0, 500) })
   })
 
   it("mantém só os campos válidos", () => {
