@@ -3,23 +3,55 @@ import {
   APP_LOG_RETENTION_DAYS,
   createPurgeObservability,
   FUNNEL_RETENTION_DAYS,
+  META_ATTRIBUTION_RETENTION_DAYS,
   PURGE_BATCH,
 } from "@/lib/jobs/purge-observability"
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const NOW = new Date("2026-10-24T12:00:00.000Z")
 
+/** Repositório da atribuição que não apaga nada: os testes antigos não tratam da Meta. */
+const noMeta = () => ({ purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 0) })
+
 describe("createPurgeObservability", () => {
   it("usa as constantes de retenção do spec", () => {
     expect(FUNNEL_RETENTION_DAYS).toBe(365)
     expect(APP_LOG_RETENTION_DAYS).toBe(90)
     expect(PURGE_BATCH).toBe(1000)
+    expect(META_ATTRIBUTION_RETENTION_DAYS).toBe(90)
+  })
+
+  it("apaga também a atribuição da Meta com mais de 90 dias e soma ao total", async () => {
+    const analytics = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 5) }
+    const appLogs = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 2) }
+    const metaAttributions = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 4) }
+
+    expect(await createPurgeObservability({ analytics, appLogs, metaAttributions, now: () => NOW })()).toBe(11)
+
+    expect(metaAttributions.purgeOlderThan).toHaveBeenCalledTimes(1)
+    expect(metaAttributions.purgeOlderThan).toHaveBeenCalledWith(new Date(NOW.getTime() - 90 * DAY_MS), 1000)
+  })
+
+  it("se a limpeza da atribuição falha, o funil e os logs ainda são apagados e a falha sobe depois", async () => {
+    const analytics = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 5) }
+    const appLogs = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 2) }
+    const metaAttributions = {
+      purgeOlderThan: vi.fn(async (_c: Date, _l: number): Promise<number> => {
+        throw new Error("meta fora")
+      }),
+    }
+
+    await expect(
+      createPurgeObservability({ analytics, appLogs, metaAttributions, now: () => NOW })(),
+    ).rejects.toThrow("meta fora")
+    expect(analytics.purgeOlderThan).toHaveBeenCalledTimes(1)
+    expect(appLogs.purgeOlderThan).toHaveBeenCalledTimes(1)
   })
 
   it("apaga o funil com mais de 365 dias e os logs com mais de 90, em lotes de 1.000, e soma", async () => {
     const analytics = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 5) }
     const appLogs = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 2) }
-    const purge = createPurgeObservability({ analytics, appLogs, now: () => NOW })
+    const purge = createPurgeObservability({ analytics, appLogs, metaAttributions: noMeta(), now: () => NOW })
 
     expect(await purge()).toBe(7)
 
@@ -32,7 +64,7 @@ describe("createPurgeObservability", () => {
   it("aceita um limite de lote diferente", async () => {
     const analytics = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 0) }
     const appLogs = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 0) }
-    await createPurgeObservability({ analytics, appLogs, now: () => NOW, limit: 10 })()
+    await createPurgeObservability({ analytics, appLogs, metaAttributions: noMeta(), now: () => NOW, limit: 10 })()
 
     expect(analytics.purgeOlderThan).toHaveBeenCalledWith(expect.any(Date), 10)
     expect(appLogs.purgeOlderThan).toHaveBeenCalledWith(expect.any(Date), 10)
@@ -46,7 +78,7 @@ describe("createPurgeObservability", () => {
     }
     const appLogs = { purgeOlderThan: vi.fn(async (_c: Date, _l: number) => 3) }
 
-    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("funil fora")
+    await expect(createPurgeObservability({ analytics, appLogs, metaAttributions: noMeta(), now: () => NOW })()).rejects.toThrow("funil fora")
     expect(appLogs.purgeOlderThan).toHaveBeenCalledTimes(1)
   })
 
@@ -58,7 +90,7 @@ describe("createPurgeObservability", () => {
       }),
     }
 
-    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("logs fora")
+    await expect(createPurgeObservability({ analytics, appLogs, metaAttributions: noMeta(), now: () => NOW })()).rejects.toThrow("logs fora")
     expect(analytics.purgeOlderThan).toHaveBeenCalledTimes(1)
   })
 
@@ -70,7 +102,7 @@ describe("createPurgeObservability", () => {
     const analytics = { purgeOlderThan: boom("funil fora") }
     const appLogs = { purgeOlderThan: boom("logs fora") }
 
-    await expect(createPurgeObservability({ analytics, appLogs, now: () => NOW })()).rejects.toThrow("funil fora")
+    await expect(createPurgeObservability({ analytics, appLogs, metaAttributions: noMeta(), now: () => NOW })()).rejects.toThrow("funil fora")
     expect(appLogs.purgeOlderThan).toHaveBeenCalledTimes(1)
   })
 })

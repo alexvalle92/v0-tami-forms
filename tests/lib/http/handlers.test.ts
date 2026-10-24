@@ -403,6 +403,23 @@ describe("jobs/retry handler", () => {
     expect(calls.deferred).toHaveLength(1)
   })
 
+  it('POST /api/jobs/retry aceita { "metaConversionId": "…" }', async () => {
+    const { handler, calls } = setupRetry(1)
+    const res = await handler(jobsReq("retry", { auth, body: '{"metaConversionId":"mc-1"}' }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, reopened: 1 })
+    expect(calls.retryFailed).toEqual([{ metaConversionId: "mc-1" }])
+  })
+
+  it("{ metaConversionId } com id vazio ou junto de outro alvo → 400", async () => {
+    const { handler, calls } = setupRetry()
+    for (const body of ['{"metaConversionId":""}', '{"metaConversionId":"mc-1","paymentId":"x"}']) {
+      const res = await handler(jobsReq("retry", { auth, body }))
+      expect(res.status).toBe(400)
+    }
+    expect(calls.retryFailed).toEqual([])
+  })
+
   it("{ planGenerationId } com id vazio ou junto de outro alvo → 400", async () => {
     const { handler, calls } = setupRetry()
     for (const body of ['{"planGenerationId":""}', '{"planGenerationId":"g-1","paymentId":"x"}']) {

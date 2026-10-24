@@ -8,6 +8,8 @@ export type HandledEvent = {
   pendingGeneration: { id: string; quizResponseId: string } | null
   /** Aviso ao admin a enviar depois da resposta (reversão, ou pagamento sem envio do quiz). */
   notice: AdminNotice | null
+  /** Purchase da Meta a enviar depois da resposta. Só no primeiro evento pago de uma cobrança com atribuição. */
+  pendingConversion: { id: string } | null
 }
 
 /**
@@ -28,12 +30,12 @@ export function createHandleAsaasEvent(d: {
     switch (result.outcome) {
       case "duplicate":
         d.log.info("webhook.asaas.duplicate", fields)
-        return { outcome: "duplicate", pendingGeneration: null, notice: null }
+        return { outcome: "duplicate", pendingGeneration: null, notice: null, pendingConversion: null }
 
       case "ignored": {
         const level = result.reason === "asaas_id_mismatch" ? "warn" : "info"
         d.log[level]("webhook.asaas.ignored", { ...fields, reason: result.reason })
-        return { outcome: "ignored", pendingGeneration: null, notice: null }
+        return { outcome: "ignored", pendingGeneration: null, notice: null, pendingConversion: null }
       }
 
       case "processed": {
@@ -51,7 +53,12 @@ export function createHandleAsaasEvent(d: {
         } else if (e.group === "paid" && result.missingQuizResponse) {
           notice = { kind: "payment_without_quiz", ...base }
         }
-        return { outcome: "processed", pendingGeneration: result.pendingGeneration, notice }
+        return {
+          outcome: "processed",
+          pendingGeneration: result.pendingGeneration,
+          notice,
+          pendingConversion: result.pendingConversion,
+        }
       }
     }
   }

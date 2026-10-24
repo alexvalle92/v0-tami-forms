@@ -81,7 +81,7 @@ describe("createHandleAsaasEvent", () => {
 
     const r = await handle(e)
 
-    expect(r).toEqual({ outcome: "duplicate", pendingGeneration: null, notice: null })
+    expect(r).toEqual({ outcome: "duplicate", pendingGeneration: null, notice: null, pendingConversion: null })
     expect(log.lines).toEqual([
       {
         level: "info",
@@ -96,7 +96,7 @@ describe("createHandleAsaasEvent", () => {
 
     const r = await handle(event({ externalReference: "00000000-0000-4000-8000-000000000000" }))
 
-    expect(r).toEqual({ outcome: "ignored", pendingGeneration: null, notice: null })
+    expect(r).toEqual({ outcome: "ignored", pendingGeneration: null, notice: null, pendingConversion: null })
     expect(log.lines).toHaveLength(1)
     expect(log.lines[0]).toMatchObject({
       level: "info",
@@ -151,7 +151,7 @@ describe("createHandleAsaasEvent", () => {
       event({ event: "PAYMENT_OVERDUE", group: "pre_payment", status: "OVERDUE", externalReference: ref.paymentId }),
     )
 
-    expect(r).toEqual({ outcome: "processed", pendingGeneration: null, notice: null })
+    expect(r).toEqual({ outcome: "processed", pendingGeneration: null, notice: null, pendingConversion: null })
   })
 
   it("pago sem envio do quiz: aviso payment_without_quiz e nenhuma geração", async () => {
@@ -178,6 +178,23 @@ describe("createHandleAsaasEvent", () => {
       event: "PAYMENT_RECEIVED",
       asaasPaymentId: "pay_1",
     })
+  })
+
+  it("primeiro pagamento de cobrança com atribuição devolve a conversão da Meta a enviar", async () => {
+    const { repos, ref, handle } = await setup()
+    await repos.metaAttributions.save(
+      ref.quizResponseId,
+      { externalId: null, fbp: "fb.1.1.2", fbc: null, clientIp: "1.2.3.4", userAgent: "UA", eventSourceUrl: null },
+      NOW,
+    )
+
+    const r = await handle(event({ externalReference: ref.paymentId }))
+
+    expect(r.pendingConversion).toEqual({ id: expect.any(String) })
+    expect(repos.state.metaConversions.get(r.pendingConversion!.id)?.paymentId).toBe(ref.paymentId)
+
+    const again = await handle(event({ eventId: "evt_2", event: "PAYMENT_CONFIRMED", externalReference: ref.paymentId }))
+    expect(again.pendingConversion).toBeNull()
   })
 
   it("erro do repositório é propagado", async () => {

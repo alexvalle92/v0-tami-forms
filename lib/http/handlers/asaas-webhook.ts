@@ -6,6 +6,7 @@ import type { Logger } from "@/lib/log"
 import type { NoticeAdmin } from "@/lib/services/alert-admin"
 import type { HandledEvent } from "@/lib/services/handle-asaas-event"
 import { safeErrorMessage } from "@/lib/services/last-error"
+import type { SendMetaConversion } from "@/lib/services/send-meta-conversion"
 
 export const WEBHOOK_MAX_BODY_BYTES = 256 * 1024
 
@@ -18,13 +19,15 @@ const notOk = (status: number) => Response.json({ ok: false }, { status })
  *  - Corpo ilegível, grande demais ou fora do formato: 200 (reenviar não resolveria, e 15 falhas
  *    seguidas fazem o Asaas pausar a fila da conta).
  *  - Falha ao tratar o evento: 500, o único caso em que o app pede reenvio.
- * Depois da resposta: roda a geração do plano e envia o aviso ao admin. Nunca loga o token nem o corpo.
+ * Depois da resposta: roda a geração do plano, envia o aviso ao admin e o Purchase à Meta. Uma falha
+ * da Meta nunca vira 500 para o Asaas. Nunca loga o token nem o corpo.
  */
 export function createAsaasWebhookHandler(d: {
   token: string
   handleEvent: (e: PaymentEventInput) => Promise<HandledEvent>
   runPlanGeneration: (generationId: string) => Promise<void>
   noticeAdmin: NoticeAdmin
+  sendMetaConversion: SendMetaConversion
   defer: (fn: () => Promise<void>) => void
   log: Logger
 }): (req: Request) => Promise<Response> {
@@ -56,7 +59,7 @@ export function createAsaasWebhookHandler(d: {
       return notOk(500)
     }
 
-    const { pendingGeneration, notice } = handled
+    const { pendingGeneration, notice, pendingConversion } = handled
     if (pendingGeneration) {
       const generationId = pendingGeneration.id
       d.defer(async () => {
@@ -73,6 +76,16 @@ export function createAsaasWebhookHandler(d: {
           await d.noticeAdmin(notice)
         } catch (err) {
           d.log.error("webhook.asaas.notice_failed", { ...ref, message: safeErrorMessage(err) })
+        }
+      })
+    }
+    if (pendingConversion) {
+      const conversionId = pendingConversion.id
+      d.defer(async () => {
+        try {
+          await d.sendMetaConversion(conversionId)
+        } catch (err) {
+          d.log.error("webhook.asaas.conversion_failed", { ...ref, message: safeErrorMessage(err) })
         }
       })
     }

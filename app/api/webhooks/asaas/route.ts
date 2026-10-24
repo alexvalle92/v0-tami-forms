@@ -12,6 +12,7 @@ export async function POST(req: Request): Promise<Response> {
     handleEvent: c.handleAsaasEvent,
     runPlanGeneration: c.runPlanGeneration,
     noticeAdmin: c.noticeAdmin,
+    sendMetaConversion: c.sendMetaConversion,
     defer: (fn) => after(fn),
     log: c.log,
   })(req)

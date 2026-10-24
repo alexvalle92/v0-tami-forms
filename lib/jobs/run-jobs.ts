@@ -1,22 +1,39 @@
-import type { NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
+import type { MetaConversionRepo, NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
 import type { Logger } from "@/lib/log"
 import type { DispatchNotification } from "@/lib/services/dispatch-notification"
 import type { GeneratePlan } from "@/lib/services/generate-plan"
 import { safeErrorMessage } from "@/lib/services/last-error"
+import type { SendMetaConversion } from "@/lib/services/send-meta-conversion"
 import type { SyncPayment } from "@/lib/services/sync-payment"
 
 /**
  * `payments`, `plans` e `notifications` contam os itens tentados (qualquer desfecho); `reminders`, os
- * avisos de vencimento enfileirados na rodada; `errors`, as exceções.
+ * avisos de vencimento enfileirados na rodada; `errors`, as exceções. `conversions` (Purchase da Meta
+ * tentados) só existe quando a rodada recebe `meta` ligado.
  */
-export type RunSummary = { payments: number; plans: number; reminders: number; notifications: number; errors: number }
+export type RunSummary = {
+  payments: number
+  plans: number
+  reminders: number
+  notifications: number
+  errors: number
+  conversions?: number
+}
+
+/** Fila do Purchase da Meta. Com `enabled` falso a rodada nem lista: as linhas esperam o religamento. */
+export type RunJobsMeta = {
+  enabled: boolean
+  conversions: Pick<MetaConversionRepo, "listDue">
+  send: SendMetaConversion
+  limit: number
+}
 
 /**
  * Uma rodada do job: primeiro as cobranças vencidas (para que um link criado agora já seja enviado
  * na mesma rodada), depois as gerações de plano vencidas, em seguida o enfileiramento dos avisos de
  * vencimento do plano (só dentro da janela de horário) e por fim as notificações vencidas (as
- * `plan_ready` de uma geração concluída agora e os avisos enfileirados agora saem na mesma rodada) e,
- * se houver, a limpeza por retenção (o total apagado entra no log como `purged`, fora do `RunSummary`).
+ * `plan_ready` de uma geração concluída agora e os avisos enfileirados agora saem na mesma rodada), o
+ * Purchase da Meta vencido (se `meta` estiver ligado) e, se houver, a limpeza por retenção (o total apagado entra no log como `purged`, fora do `RunSummary`).
  * Itens em sequência; a exceção de um item é logada (mensagem segura, sem dados pessoais), conta em
  * `errors` e não interrompe os demais.
  */
@@ -30,6 +47,8 @@ export function createRunJobs(d: {
   enqueueExpiryReminders: () => Promise<number>
   /** Limpeza por retenção (devolve o total apagado); opcional, roda por último e uma falha só conta em `errors`. */
   purge?: () => Promise<number>
+  /** Fila do Purchase da Meta; opcional, roda depois das notificações e antes da limpeza. */
+  meta?: RunJobsMeta
   log: Logger
   now: () => Date
   paymentDeadlineMs: number
@@ -85,6 +104,26 @@ export function createRunJobs(d: {
       } catch (err) {
         summary.errors++
         d.log.error("job.notification.error", { notificationId, message: safeErrorMessage(err) })
+      }
+    }
+
+    if (d.meta?.enabled) {
+      summary.conversions = 0
+      let conversionIds: string[] = []
+      try {
+        conversionIds = await d.meta.conversions.listDue(d.now(), d.meta.limit)
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.conversions.list_failed", { message: safeErrorMessage(err) })
+      }
+      for (const conversionId of conversionIds) {
+        summary.conversions++
+        try {
+          await d.meta.send(conversionId)
+        } catch (err) {
+          summary.errors++
+          d.log.error("job.conversion.error", { conversionId, message: safeErrorMessage(err) })
+        }
       }
     }
 

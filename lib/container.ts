@@ -30,6 +30,7 @@ import { createSyncPayment, type SyncPayment } from "@/lib/services/sync-payment
 const SUBMIT_REQUEST_BUDGET_MS = 20_000
 const JOB_PAYMENT_DEADLINE_MS = 30_000
 const JOB_LIMITS = { payments: 20, plans: 3, notifications: 50 }
+const META_CONVERSIONS_PER_ROUND = 20
 const SUBMIT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }
 const EVENTS_RATE_LIMIT = { limit: 120, windowMs: 60_000 }
 
@@ -178,7 +179,18 @@ function buildContainer(): Container {
     generatePlan,
     dispatchNotification,
     enqueueExpiryReminders,
-    purge: createPurgeObservability({ analytics: repos.analytics, appLogs: repos.appLogs, now }),
+    purge: createPurgeObservability({
+      analytics: repos.analytics,
+      appLogs: repos.appLogs,
+      metaAttributions: repos.metaAttributions,
+      now,
+    }),
+    meta: {
+      enabled: env.META_TRACKING_ENABLED,
+      conversions: repos.metaConversions,
+      send: sendMetaConversion,
+      limit: META_CONVERSIONS_PER_ROUND,
+    },
     log,
     now,
     paymentDeadlineMs: JOB_PAYMENT_DEADLINE_MS,
@@ -203,7 +215,7 @@ function buildContainer(): Container {
     noticeAdmin,
     sendMetaConversion,
     runner,
-    retryFailed: createRetryFailed({ payments, notifications, planGenerations }),
+    retryFailed: createRetryFailed({ payments, notifications, planGenerations, metaConversions: repos.metaConversions }),
     rateLimiter: createRateLimiter(SUBMIT_RATE_LIMIT),
     eventsRateLimiter: createRateLimiter(EVENTS_RATE_LIMIT),
     ping: async () => {
