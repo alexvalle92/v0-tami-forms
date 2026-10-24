@@ -12,6 +12,7 @@ import { CpfInput } from "@/components/cpf-input"
 import { LoadingScreen } from "@/components/loading-screen"
 import { WeightLossChart } from "@/components/weight-loss-chart"
 import { ErrorModal } from "@/components/error-modal"
+import { stepValidation } from "@/lib/quiz/step-validation"
 import {
   Moon,
   Heart,
@@ -103,37 +104,6 @@ export default function QuizPage() {
     setCurrentStep(27) // Jump to loading screen (step after CPF)
   }
 
-  const validateCPF = (cpf: string): boolean => {
-    // Remove formatting
-    const cleanCPF = cpf.replace(/\D/g, "")
-
-    // Check if has 11 digits
-    if (cleanCPF.length !== 11) return false
-
-    // Check if all digits are the same
-    if (/^(\d)\1+$/.test(cleanCPF)) return false
-
-    // Validate first check digit
-    let sum = 0
-    for (let i = 0; i < 9; i++) {
-      sum += Number.parseInt(cleanCPF.charAt(i)) * (10 - i)
-    }
-    let checkDigit = 11 - (sum % 11)
-    if (checkDigit === 10 || checkDigit === 11) checkDigit = 0
-    if (checkDigit !== Number.parseInt(cleanCPF.charAt(9))) return false
-
-    // Validate second check digit
-    sum = 0
-    for (let i = 0; i < 10; i++) {
-      sum += Number.parseInt(cleanCPF.charAt(i)) * (11 - i)
-    }
-    checkDigit = 11 - (sum % 11)
-    if (checkDigit === 10 || checkDigit === 11) checkDigit = 0
-    if (checkDigit !== Number.parseInt(cleanCPF.charAt(10))) return false
-
-    return true
-  }
-
   const updateAnswer = (key: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [key]: value }))
   }
@@ -165,68 +135,12 @@ export default function QuizPage() {
   }
 
   const handleContinue = () => {
-    if (canProceed()) {
-      nextStep()
-    } else {
-      let errorMessage = "Por favor, responda a pergunta antes de continuar."
-
-      switch (currentStep) {
-        case 23: // Email
-          if (!answers.email) {
-            errorMessage = "Por favor, informe seu e-mail para continuar."
-          } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)) {
-            errorMessage = "Por favor, insira um e-mail válido (exemplo: seuemail@exemplo.com)"
-          }
-          break
-        case 24: // Phone
-          if (!answers.whatsapp) {
-            errorMessage = "Por favor, informe seu número de WhatsApp."
-          } else if (answers.whatsapp.replace(/\D/g, "").length < 10) {
-            errorMessage = "Por favor, insira um telefone válido com DDD (exemplo: (11) 98765-4321)"
-          }
-          break
-        case 25: // Name
-          errorMessage = "Por favor, informe seu nome completo para continuar."
-          break
-        case 26: // CPF
-          if (!answers.cpf) {
-            errorMessage = "Por favor, informe seu CPF para continuar."
-          } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
-            errorMessage = "Por favor, insira um CPF válido com 11 dígitos."
-          } else if (!validateCPF(answers.cpf)) {
-            errorMessage = "CPF inválido. Por favor, verifique os dados e tente novamente."
-          }
-          break
-        case 18: // Height
-          errorMessage = "Por favor, selecione sua altura antes de continuar."
-          break
-        case 19: // Weight
-          errorMessage = "Por favor, informe seu peso atual para continuar."
-          break
-        case 20: // Goal Weight
-          errorMessage = "Por favor, defina sua meta de peso para continuar."
-          break
-        case 15: // Habits
-          errorMessage = "Por favor, selecione pelo menos uma opção de hábito alimentar."
-          break
-        case 6: // Breakfast
-          errorMessage = "Por favor, selecione pelo menos uma opção para o seu café da manhã."
-          break
-        case 7: // Lunch
-          errorMessage = "Por favor, selecione pelo menos uma opção para o seu almoço."
-          break
-        case 9: // Dinner
-          errorMessage = "Por favor, selecione pelo menos uma opção para o seu jantar."
-          break
-        default:
-          errorMessage = "Por favor, selecione uma opção antes de continuar."
-      }
-
-      setErrorModal({
-        isOpen: true,
-        message: errorMessage,
-      })
+    const v = stepValidation(currentStep, answers)
+    if (v) {
+      setErrorModal({ isOpen: true, message: v.message })
+      return
     }
+    nextStep()
   }
 
   useEffect(() => {
@@ -268,132 +182,10 @@ export default function QuizPage() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }, [currentStep])
 
-  const canProceed = () => {
-    switch (currentStep) {
-      case 0:
-        return !!answers.faixa_etaria
-      case 1:
-        return !!answers.sexo_biologico
-      case 2:
-        return !!answers.tipo_fisico
-      case 3:
-        return true
-      case 4:
-        return !!answers.peso_comportamento
-      case 6:
-        return !!answers.breakfast_foods && answers.breakfast_foods.length > 0
-      case 7:
-        return !!answers.almoco && answers.almoco.length > 0
-      case 8:
-        return !!answers.lanche_tarde
-      case 9: // Updated step for dinner
-        return !!answers.jantar && answers.jantar.length > 0
-      case 10:
-        return !!answers.sobremesa
-      case 12:
-        return !!answers.rotina_dia
-      case 13:
-        return !!answers.sono
-      case 14:
-        return !!answers.agua
-      case 15:
-        return answers.habitos && answers.habitos.length > 0
-      case 16: // Changed from 15 to 16, motivation question removed
-        return true
-      // Updated step indices for height, weight, and goal weight
-      case 18: // Changed from 17
-        return !!answers.altura_cm
-      case 19: // Changed from 18
-        return !!answers.peso_kg
-      case 20: // Changed from 19
-        return !!answers.meta_peso_30d
-      // Updated step indices for email, phone, name, CPF
-      case 23: // Changed from 22
-        return !!answers.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)
-      case 24: // Changed from 23
-        return !!answers.whatsapp && answers.whatsapp.replace(/\D/g, "").length >= 10
-      case 25: // Changed from 24
-        return !!answers.nome_completo && answers.nome_completo.trim().length > 0
-      case 26: // Changed from 25
-        return !!answers.cpf && answers.cpf.replace(/\D/g, "").length === 11 && validateCPF(answers.cpf)
-      case 28:
-        return true
-      default:
-        return true
-    }
-  }
-
   const handleNext = () => {
-    if (!canProceed()) {
-      let errorMessage = "Por favor, responda a pergunta antes de continuar."
-
-      switch (currentStep) {
-        // Updated step index for email error message
-        case 23: // Changed from 22
-          if (!answers.email) {
-            errorMessage = "Por favor, informe seu e-mail para continuar."
-          } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answers.email)) {
-            errorMessage = "Por favor, insira um e-mail válido (exemplo: seuemail@exemplo.com)"
-          }
-          break
-        // Updated step index for phone error message
-        case 24: // Changed from 23
-          if (!answers.whatsapp) {
-            errorMessage = "Por favor, informe seu número de WhatsApp."
-          } else if (answers.whatsapp.replace(/\D/g, "").length < 10) {
-            errorMessage = "Por favor, insira um telefone válido com DDD (exemplo: (11) 98765-4321)"
-          }
-          break
-        // Updated step index for name error message
-        case 25: // Changed from 24
-          errorMessage = "Por favor, informe seu nome completo para continuar."
-          break
-        // Updated step index for CPF error message
-        case 26: // Changed from 25
-          if (!answers.cpf) {
-            errorMessage = "Por favor, informe seu CPF para continuar."
-          } else if (answers.cpf.replace(/\D/g, "").length !== 11) {
-            errorMessage = "Por favor, insira um CPF válido com 11 dígitos."
-          } else if (!validateCPF(answers.cpf)) {
-            errorMessage = "CPF inválido. Por favor, verifique os dados e tente novamente."
-          }
-          break
-        // Updated step index for height error message
-        case 18: // Changed from 17
-          errorMessage = "Por favor, selecione sua altura antes de continuar."
-          break
-        // Updated step index for weight error message
-        case 19: // Changed from 18
-          errorMessage = "Por favor, informe seu peso atual para continuar."
-          break
-        // Updated step index for goal weight error message
-        case 20: // Changed from 19
-          errorMessage = "Por favor, defina sua meta de peso para continuar."
-          break
-        // Updated step index for habits error message
-        case 15:
-          errorMessage = "Por favor, selecione pelo menos uma opção de hábito alimentar."
-          break
-        // Updated step index for breakfast food error message
-        case 6:
-          errorMessage = "Por favor, selecione pelo menos uma opção para o seu café da manhã."
-          break
-        // Updated step index for lunch food error message
-        case 7:
-          errorMessage = "Por favor, selecione pelo menos uma opção para o seu almoço."
-          break
-        // Updated step index for dinner error message
-        case 9:
-          errorMessage = "Por favor, selecione pelo menos uma opção para o seu jantar."
-          break
-        default:
-          errorMessage = "Por favor, selecione uma opção antes de continuar."
-      }
-
-      setErrorModal({
-        isOpen: true,
-        message: errorMessage,
-      })
+    const v = stepValidation(currentStep, answers)
+    if (v) {
+      setErrorModal({ isOpen: true, message: v.message })
       return
     }
     nextStep()
