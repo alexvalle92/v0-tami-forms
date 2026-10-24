@@ -3,6 +3,7 @@
 // (tests/db/repos.contract.ts). Todas as datas são `Date` (UTC).
 
 import type { RenewalCharge } from "@/lib/renewal/rules"
+import type { Utm } from "@/lib/analytics/events"
 
 export type Channel = "email" | "whatsapp"
 
@@ -283,4 +284,28 @@ export type PlanData = {
   meals: { name: string; time: string; foods: string; calories: string }[]
   calories: number
   observations: string
+}
+
+export type FunnelSessionPatch = {
+  sessionId: string
+  device: { deviceType: string; os: string; browser: string }
+  /** Presente quando o lote tem `session_start`. */
+  start?: { utm: Utm; referrerHost: string | null; viewportW: number | null; viewportH: number | null }
+  /** Último `step_view` do lote. */
+  lastStep?: { step: number; slug: string }
+  /** Maior `step` entre os `step_view` do lote. */
+  maxStep?: { step: number; slug: string }
+  checkoutClicked: boolean
+  /** answerKey → valor, só chaves permitidas. */
+  answers: Record<string, string | string[]>
+}
+
+export type FunnelEventRow = {
+  sessionId: string
+  event: string
+  step: number | null
+  stepSlug: string | null
+  props: Record<string, unknown>
+  clientTs: Date
+  createdAt: Date
 }
