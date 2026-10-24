@@ -386,3 +386,54 @@ export const appLogs = mysqlTable(
   },
   (t) => [index("app_logs_ts_idx").on(t.ts), index("app_logs_area_level_ts_idx").on(t.area, t.level, t.ts)],
 )
+
+// ---------------------------------------------------------------------------
+// Meta (spec 2026-10-24-meta-pixel-capi, §8). Só este app grava.
+// ---------------------------------------------------------------------------
+
+// Atribuição de um envio do quiz ao anúncio: o que o Purchase do servidor usa para casar com o clique.
+// Contém IP e User-Agent, por isso o purge apaga a linha com 90 dias.
+export const metaAttributions = mysqlTable(
+  "meta_attributions",
+  {
+    quizResponseId: char("quiz_response_id", { length: 36 })
+      .primaryKey()
+      .references(() => quizResponses.id),
+    externalId: char("external_id", { length: 36 }),
+    fbp: varchar("fbp", { length: 500 }),
+    fbc: varchar("fbc", { length: 500 }),
+    clientIp: varchar("client_ip", { length: 45 }),
+    userAgent: varchar("user_agent", { length: 500 }),
+    eventSourceUrl: varchar("event_source_url", { length: 500 }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("meta_attributions_created_at_idx").on(t.createdAt)],
+)
+
+// Fila do Purchase: uma linha por cobrança paga com atribuição. Não guarda dado pessoal, e o envio a
+// monta de payments, patients e meta_attributions. Sem chave estrangeira para quiz_responses, de
+// propósito: o purge da atribuição não pode depender desta tabela.
+export const metaConversions = mysqlTable(
+  "meta_conversions",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    paymentId: char("payment_id", { length: 36 })
+      .notNull()
+      .references(() => payments.id),
+    quizResponseId: char("quiz_response_id", { length: 36 }).notNull(),
+    eventId: varchar("event_id", { length: 80 }).notNull(),
+    eventTime: dateTime("event_time").notNull(),
+    status: mysqlEnum("status", ["pending", "sent", "failed"]).notNull(),
+    attempts: int("attempts").notNull().default(0),
+    nextAttemptAt: dateTime("next_attempt_at").notNull(),
+    lockedUntil: dateTime("locked_until"),
+    lastError: json("last_error"),
+    sentAt: dateTime("sent_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("meta_conversions_payment_id_unique").on(t.paymentId),
+    index("meta_conversions_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
+  ],
+)

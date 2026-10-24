@@ -9,6 +9,8 @@ import type {
   LastError,
   MealPlanRepo,
   MealPlanView,
+  MetaAttributionInput,
+  MetaAttributionRepo,
   NewSubmission,
   NotificationKind,
   NotificationRepo,
@@ -158,7 +160,10 @@ export type MemoryState = {
   funnelSessions: ReadonlyMap<string, Readonly<FunnelSessionRow>>
   funnelEvents: readonly Readonly<FunnelEventRow>[]
   appLogs: readonly Readonly<AppLogRow>[]
+  metaAttributions: ReadonlyMap<string, Readonly<MetaAttributionRow>>
 }
+
+export type MetaAttributionRow = MetaAttributionInput & { quizResponseId: string; createdAt: Date }
 
 /** Atalhos de teste para estados que nenhuma interface pública do `v0-tami-forms` cria (o PlanA os cria no banco). */
 export type MemorySeed = {
@@ -179,6 +184,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
   const funnelSessions = new Map<string, FunnelSessionRow>()
   const funnelEvents: FunnelEventRow[] = []
   const appLogRows: AppLogRow[] = []
+  const metaAttributionRows = new Map<string, MetaAttributionRow>()
 
   const patientByCpf = (cpf: string) => [...patients.values()].find((p) => p.cpf === cpf)
 
@@ -976,6 +982,22 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     },
   }
 
+  const metaAttributionsRepo: MetaAttributionRepo = {
+    async save(quizResponseId, a, now) {
+      if (metaAttributionRows.has(quizResponseId)) return
+      metaAttributionRows.set(quizResponseId, { ...a, quizResponseId, createdAt: new Date(now) })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const old = [...metaAttributionRows.values()]
+        .filter((r) => r.createdAt.getTime() < cutoff.getTime())
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .slice(0, limit)
+      for (const r of old) metaAttributionRows.delete(r.quizResponseId)
+      return old.length
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -985,6 +1007,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     mealPlans: mealPlansRepo,
     analytics: analyticsRepo,
     appLogs: appLogsRepo,
+    metaAttributions: metaAttributionsRepo,
     state: {
       patients,
       payments,
@@ -995,6 +1018,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       funnelSessions,
       funnelEvents,
       appLogs: appLogRows,
+      metaAttributions: metaAttributionRows,
     },
     seed: {
       passwordReset({ patientId, channel, link }) {

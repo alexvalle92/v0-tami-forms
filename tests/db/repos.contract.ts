@@ -4,6 +4,7 @@ import type {
   Channel,
   FunnelEventRow,
   FunnelSessionPatch,
+  MetaAttributionInput,
   NewSubmission,
   NotificationView,
   PaymentEventGroup,
@@ -1861,6 +1862,44 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       it("insertMany([]) não lança", async () => {
         const { appLogs } = await setup()
         await expect(appLogs.insertMany([])).resolves.toBeUndefined()
+      })
+    })
+
+    describe("45. atribuição da Meta: MetaAttributionRepo", () => {
+      const DAY = 86_400_000
+      const attribution: MetaAttributionInput = {
+        externalId: randomUUID(),
+        fbp: "fb.1.1700000000000.123",
+        fbc: null,
+        clientIp: "1.2.3.4",
+        userAgent: "UA",
+        eventSourceUrl: "https://quiz.example.com/",
+      }
+
+      it("save duas vezes para o mesmo envio não lança", async () => {
+        const { submissions, metaAttributions } = await setup()
+        const ref = expectRef(await submissions.create(newSub()))
+
+        await metaAttributions.save(ref.quizResponseId, attribution, new Date())
+        await expect(
+          metaAttributions.save(ref.quizResponseId, { ...attribution, clientIp: "9.9.9.9" }, new Date()),
+        ).resolves.toBeUndefined()
+      })
+
+      it("o purge apaga as antigas, respeita o limite e mantém as novas", async () => {
+        const { submissions, metaAttributions } = await setup()
+        const old = new Date(Date.now() - 91 * DAY)
+        for (let i = 0; i < 3; i++) {
+          const ref = expectRef(await submissions.create(newSub()))
+          await metaAttributions.save(ref.quizResponseId, attribution, old)
+        }
+        const fresh = expectRef(await submissions.create(newSub()))
+        await metaAttributions.save(fresh.quizResponseId, attribution, new Date())
+        const cutoff = new Date(Date.now() - 90 * DAY)
+
+        expect(await metaAttributions.purgeOlderThan(cutoff, 2)).toBe(2)
+        expect(await metaAttributions.purgeOlderThan(cutoff, 1000)).toBe(1)
+        expect(await metaAttributions.purgeOlderThan(cutoff, 1000)).toBe(0)
       })
     })
   })

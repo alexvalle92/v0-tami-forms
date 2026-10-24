@@ -270,6 +270,23 @@ export interface MealPlanRepo {
   listByPatient(patientId: string): Promise<MealPlanView[]>
 }
 
+/** O que o envio do quiz guarda para o `Purchase` do servidor casar com o clique no anúncio (spec Meta §8). */
+export type MetaAttributionInput = {
+  externalId: string | null
+  fbp: string | null
+  fbc: string | null
+  clientIp: string | null
+  userAgent: string | null
+  eventSourceUrl: string | null
+}
+
+export interface MetaAttributionRepo {
+  /** INSERT IGNORE: a primeira gravação do envio vale (reenvio com o mesmo submissionId não troca). */
+  save(quizResponseId: string, a: MetaAttributionInput, now: Date): Promise<void>
+  /** Apaga até `limit` linhas com `created_at < cutoff`; devolve quantas. */
+  purgeOlderThan(cutoff: Date, limit: number): Promise<number>
+}
+
 export type Repos = {
   submissions: SubmissionRepo
   payments: PaymentRepo
@@ -279,6 +296,7 @@ export type Repos = {
   mealPlans: MealPlanRepo
   analytics: AnalyticsRepo
   appLogs: AppLogRepo
+  metaAttributions: MetaAttributionRepo
 }
 
 /** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */

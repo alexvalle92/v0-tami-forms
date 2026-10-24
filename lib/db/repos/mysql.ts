@@ -9,6 +9,7 @@ import {
   funnelEvents,
   funnelSessions,
   mealPlans,
+  metaAttributions,
   notifications,
   patients,
   payments,
@@ -24,6 +25,7 @@ import type {
   FunnelSessionView,
   MealPlanRepo,
   MealPlanView,
+  MetaAttributionRepo,
   NewSubmission,
   NotificationKind,
   NotificationRepo,
@@ -1232,6 +1234,19 @@ export function createMysqlRepos(db: Db): Repos {
     },
   }
 
+  const metaAttributionsRepo: MetaAttributionRepo = {
+    async save(quizResponseId, a, now) {
+      await db.insert(metaAttributions).ignore().values({ quizResponseId, ...a, createdAt: now })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const result = await db.execute(
+        sql`DELETE FROM ${metaAttributions} WHERE ${metaAttributions.createdAt} < ${sql.param(cutoff, metaAttributions.createdAt)} ORDER BY ${metaAttributions.createdAt} LIMIT ${limit}`,
+      )
+      return affected(result)
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -1241,5 +1256,6 @@ export function createMysqlRepos(db: Db): Repos {
     mealPlans: mealPlansRepo,
     analytics: analyticsRepo,
     appLogs: appLogsRepo,
+    metaAttributions: metaAttributionsRepo,
   }
 }

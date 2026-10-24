@@ -155,7 +155,7 @@ describe.skipIf(!url)("repositórios MySQL", () => {
   beforeAll(async () => {
     ;({ db, pool } = createDb(url!))
     // Duas vezes: prova que as migrations são idempotentes. O banco chega vazio (os testes de
-    // migration acima apagam tudo), então a primeira aplica as seis: daí o prazo maior.
+    // migration acima apagam tudo), então a primeira aplica as sete: daí o prazo maior.
     await runMigrations(db)
     await runMigrations(db)
   }, 60_000)
@@ -182,6 +182,8 @@ describe.skipIf(!url)("repositórios MySQL", () => {
         "funnel_sessions",
         "funnel_events",
         "app_logs",
+        "meta_attributions",
+        "meta_conversions",
       ]) {
         await connection.query(`TRUNCATE TABLE ${table}`)
       }
