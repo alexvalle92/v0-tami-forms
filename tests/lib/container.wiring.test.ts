@@ -59,4 +59,16 @@ describe("getContainer (ligação das dependências do pós-pagamento)", () => {
     expect(c.eventsRateLimiter).not.toBe(c.rateLimiter)
     expect(c.repos.analytics.recordBatch).toBeTypeOf("function")
   })
+
+  it("expõe o envio do Purchase com o rastreamento da Meta desligado e ligado", () => {
+    expect(getContainer().sendMetaConversion).toBeTypeOf("function")
+
+    delete globals.__tamiFormsContainer
+    Object.assign(process.env, {
+      META_TRACKING_ENABLED: "true",
+      META_PIXEL_ID: "1234567890",
+      META_CAPI_TOKEN: "EAAB-token",
+    })
+    expect(getContainer().sendMetaConversion).toBeTypeOf("function")
+  })
 })

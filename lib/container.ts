@@ -7,6 +7,7 @@ import { createMysqlRepos } from "@/lib/db/repos/mysql"
 import type { Channel, PaymentEventInput, Repos } from "@/lib/db/repos/types"
 import { getEnv, type Env } from "@/lib/env"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
+import { createMetaCapiClient } from "@/lib/meta/capi"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
 import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
 import { createPurgeObservability } from "@/lib/jobs/purge-observability"
@@ -22,6 +23,7 @@ import { createDispatchForQuizResponse } from "@/lib/services/dispatch-for-quiz-
 import { createDispatchNotification, type DispatchNotification } from "@/lib/services/dispatch-notification"
 import { createGeneratePlan, createRunPlanGeneration } from "@/lib/services/generate-plan"
 import { createHandleAsaasEvent, type HandledEvent } from "@/lib/services/handle-asaas-event"
+import { createSendMetaConversion, type SendMetaConversion } from "@/lib/services/send-meta-conversion"
 import { createSubmitQuiz, type SubmitQuiz } from "@/lib/services/submit-quiz"
 import { createSyncPayment, type SyncPayment } from "@/lib/services/sync-payment"
 
@@ -49,6 +51,8 @@ export type Container = {
   runPlanGeneration: (generationId: string) => Promise<void>
   /** Aviso ao admin de estorno/chargeback ou de pagamento sem envio do quiz; nunca lança. */
   noticeAdmin: NoticeAdmin
+  /** Envia à Meta o Purchase de uma cobrança paga (fila `meta_conversions`); nunca lança e não faz nada com o rastreamento desligado. */
+  sendMetaConversion: SendMetaConversion
   /** Rodada exclusiva do job: o agendador e `POST /api/jobs/run` usam este mesmo runner. */
   runner: () => Promise<"ran" | "skipped">
   retryFailed: (t: RetryTarget) => Promise<{ reopened: number }>
@@ -140,6 +144,24 @@ function buildContainer(): Container {
   })
   const runPlanGeneration = createRunPlanGeneration({ generatePlan, dispatchForQuizResponse, log })
   const handleAsaasEvent = createHandleAsaasEvent({ webhooks, log, now })
+  // Sem a chave ligada (e o env garante id e token quando ligada) não há cliente: a CAPI nunca é chamada.
+  const metaCapi =
+    env.META_TRACKING_ENABLED && env.META_PIXEL_ID && env.META_CAPI_TOKEN
+      ? createMetaCapiClient({
+          pixelId: env.META_PIXEL_ID,
+          token: env.META_CAPI_TOKEN,
+          apiVersion: env.META_API_VERSION,
+          testEventCode: env.META_TEST_EVENT_CODE,
+        })
+      : null
+  const sendMetaConversion = createSendMetaConversion({
+    conversions: repos.metaConversions,
+    capi: metaCapi,
+    enabled: env.META_TRACKING_ENABLED,
+    alertAdmin,
+    log,
+    now,
+  })
 
   const enqueueExpiryReminders = createEnqueueExpiryReminders({ notifications, channels, now, log })
   const runJobs = createRunJobs({
@@ -173,6 +195,7 @@ function buildContainer(): Container {
     handleAsaasEvent,
     runPlanGeneration,
     noticeAdmin,
+    sendMetaConversion,
     runner,
     retryFailed: createRetryFailed({ payments, notifications, planGenerations }),
     rateLimiter: createRateLimiter(SUBMIT_RATE_LIMIT),
