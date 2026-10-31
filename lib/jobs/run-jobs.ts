@@ -9,7 +9,8 @@ import type { SyncPayment } from "@/lib/services/sync-payment"
 /**
  * `payments`, `plans` e `notifications` contam os itens tentados (qualquer desfecho); `reminders`, os
  * avisos de vencimento enfileirados na rodada; `errors`, as exceções. `conversions` (Purchase da Meta
- * tentados) só existe quando a rodada recebe `meta` ligado.
+ * tentados) só existe quando a rodada recebe `meta` ligado; `discounts` (cobranças que entraram na etapa do
+ * desconto, qualquer desfecho) só existe quando a rodada recebe `discounts`.
  */
 export type RunSummary = {
   payments: number
@@ -18,6 +19,7 @@ export type RunSummary = {
   notifications: number
   errors: number
   conversions?: number
+  discounts?: number
 }
 
 /** Fila do Purchase da Meta. Com `enabled` falso a rodada nem lista: as linhas esperam o religamento. */
@@ -31,8 +33,9 @@ export type RunJobsMeta = {
 /**
  * Uma rodada do job: primeiro as cobranças vencidas (para que um link criado agora já seja enviado
  * na mesma rodada), depois as gerações de plano vencidas, em seguida o enfileiramento dos avisos de
- * vencimento do plano (só dentro da janela de horário) e por fim as notificações vencidas (as
- * `plan_ready` de uma geração concluída agora e os avisos enfileirados agora saem na mesma rodada), o
+ * vencimento do plano (só dentro da janela de horário), o desconto nas cobranças de ontem (se `discounts`
+ * estiver configurado; também só na janela) e por fim as notificações vencidas (as `plan_ready` de uma
+ * geração concluída agora, os avisos enfileirados agora e as `payment_discount` criadas agora saem na mesma rodada), o
  * Purchase da Meta vencido (se `meta` estiver ligado) e, se houver, a limpeza por retenção (o total apagado entra no log como `purged`, fora do `RunSummary`).
  * Itens em sequência; a exceção de um item é logada (mensagem segura, sem dados pessoais), conta em
  * `errors` e não interrompe os demais.
@@ -45,6 +48,8 @@ export function createRunJobs(d: {
   generatePlan: GeneratePlan
   dispatchNotification: DispatchNotification
   enqueueExpiryReminders: () => Promise<number>
+  /** Desconto nas cobranças de ontem (devolve as tentadas); opcional, roda antes das notificações e uma falha só conta em `errors`. */
+  discounts?: () => Promise<number>
   /** Limpeza por retenção (devolve o total apagado); opcional, roda por último e uma falha só conta em `errors`. */
   purge?: () => Promise<number>
   /** Fila do Purchase da Meta; opcional, roda depois das notificações e antes da limpeza. */
@@ -95,6 +100,16 @@ export function createRunJobs(d: {
     } catch (err) {
       summary.errors++
       d.log.error("job.reminders.error", { message: safeErrorMessage(err) })
+    }
+
+    if (d.discounts) {
+      summary.discounts = 0
+      try {
+        summary.discounts = await d.discounts()
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.discounts.error", { message: safeErrorMessage(err) })
+      }
     }
 
     for (const notificationId of await list("notifications")) {

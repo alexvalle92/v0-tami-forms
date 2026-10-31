@@ -21,6 +21,16 @@ export async function boot(): Promise<void> {
     const env = getEnv()
     await runMigrations(getDb())
 
+    // Em centavos, como o resto do desconto: "29.90" e 29.9 não se comparam como ponto flutuante.
+    const cents = (value: string) => Math.round(Number(value) * 100)
+    if (env.PAYMENT_DISCOUNT_ENABLED && cents(env.PAYMENT_DISCOUNT_AMOUNT) >= cents(env.PAYMENT_AMOUNT)) {
+      // Não é erro: só avisa que nenhuma cobrança nova fica elegível (o desconto não pode aumentar o preço).
+      log.warn("discount.config.no_effect", {
+        discountAmount: env.PAYMENT_DISCOUNT_AMOUNT,
+        amount: env.PAYMENT_AMOUNT,
+      })
+    }
+
     let schedulerStarted = false
     if (env.JOBS_ENABLED && !globalForScheduler.__tamiFormsScheduler) {
       const c = getContainer()
@@ -31,6 +41,7 @@ export async function boot(): Promise<void> {
     log.info("boot.done", {
       asaasEnv: env.ASAAS_ENV,
       jobsEnabled: env.JOBS_ENABLED,
+      discountEnabled: env.PAYMENT_DISCOUNT_ENABLED,
       schedulerStarted,
       channels: getContainer().channels,
     })

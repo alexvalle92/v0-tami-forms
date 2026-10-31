@@ -79,6 +79,23 @@ describe("getContainer (ligação das dependências do pós-pagamento)", () => {
     expect(on.metaCapi?.send).toBeTypeOf("function")
   })
 
+  it("monta a rodada com o desconto na cobrança desligado (padrão) e ligado", async () => {
+    expect(getContainer().runner).toBeTypeOf("function")
+
+    // O env é lido uma vez por módulo: recarrega o módulo para ler o env ligado.
+    vi.resetModules()
+    delete globals.__tamiFormsContainer
+    Object.assign(process.env, {
+      PAYMENT_DISCOUNT_ENABLED: "true",
+      PAYMENT_DISCOUNT_AMOUNT: "29.90",
+      PAYMENT_DISCOUNT_DUE_DAYS: "5",
+    })
+    const { getContainer: getFreshContainer } = await import("@/lib/container")
+    const on = getFreshContainer()
+    expect(on.env.PAYMENT_DISCOUNT_ENABLED).toBe(true)
+    expect(on.runner).toBeTypeOf("function")
+  })
+
   it("expõe um limite próprio para o espelho dos eventos da Meta", () => {
     const c = getContainer()
     expect(c.metaEventsRateLimiter).toBeDefined()

@@ -84,6 +84,8 @@ type Overrides = {
   /** Passo dos avisos de vencimento; por padrão não enfileira nada. */
   reminders?: (r: ReturnType<typeof createMemoryRepos>) => () => Promise<number>
   now?: () => Date
+  /** Etapa do desconto na cobrança; por padrão a rodada não recebe `discounts`. */
+  discounts?: () => Promise<number>
   /** Limpeza por retenção; por padrão a rodada não recebe `purge`. */
   purge?: () => Promise<number>
   /** Fila do Purchase da Meta; por padrão a rodada não recebe `meta`. */
@@ -153,6 +155,7 @@ async function setup(patientCount = 1, o: Overrides = {}) {
     now,
     paymentDeadlineMs: 30_000,
     limits: LIMITS,
+    ...(o.discounts ? { discounts: o.discounts } : {}),
     ...(o.purge ? { purge: o.purge } : {}),
     ...(o.meta ? { meta: o.meta } : {}),
   })
@@ -555,6 +558,56 @@ describe("createRunJobs", () => {
     expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 1 })
     expect(s.log.error).toHaveBeenCalledWith("job.reminders.error", { message: "db down" })
     expect([...s.repos.state.notifications.values()].map((n) => n.status)).toEqual(["sent", "sent"])
+  })
+
+  describe("desconto na cobrança", () => {
+    it("discounts roda depois dos avisos e antes das notificações", async () => {
+      const order: string[] = []
+      const s = await setup(1, {
+        reminders: () => async () => {
+          order.push("reminders")
+          return 0
+        },
+        discounts: async () => {
+          order.push("discounts")
+          return 3
+        },
+        notifications: (r) => ({
+          ...r.notifications,
+          listDue: async (at, limit) => {
+            order.push("listDue")
+            return r.notifications.listDue(at, limit)
+          },
+        }),
+      })
+
+      const summary = await s.runJobs()
+
+      expect(order).toEqual(["reminders", "discounts", "listDue"])
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 0, discounts: 3 })
+    })
+
+    it("sem discounts, o resumo não tem a chave", async () => {
+      const s = await setup(1)
+
+      const summary = await s.runJobs()
+
+      expect(summary).not.toHaveProperty("discounts")
+    })
+
+    it("discounts que lança conta em errors e a rodada segue", async () => {
+      const s = await setup(1, {
+        discounts: async () => {
+          throw new Error("db down")
+        },
+      })
+
+      const summary = await s.runJobs()
+
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 1, discounts: 0 })
+      expect(s.log.error).toHaveBeenCalledWith("job.discounts.error", { message: "db down" })
+      expect([...s.repos.state.notifications.values()].map((n) => n.status)).toEqual(["sent", "sent"])
+    })
   })
 
   describe("fila do Purchase da Meta", () => {

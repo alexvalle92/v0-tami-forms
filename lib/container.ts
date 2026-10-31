@@ -9,6 +9,7 @@ import { getEnv, type Env } from "@/lib/env"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
 import { createMetaCapiClient, type MetaCapiClient } from "@/lib/meta/capi"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
+import { createApplyPaymentDiscounts } from "@/lib/jobs/payment-discounts"
 import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
 import { createPurgeObservability } from "@/lib/jobs/purge-observability"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
@@ -19,6 +20,7 @@ import { createAnthropicGenerator } from "@/lib/meal-plan/anthropic-generator"
 import { createSmtpEmailSender, type EmailSender } from "@/lib/notify/email"
 import { createEvolutionWhatsAppSender, type WhatsAppSender } from "@/lib/notify/whatsapp"
 import { createAlertAdmin, createNoticeAdmin, type NoticeAdmin } from "@/lib/services/alert-admin"
+import { createApplyPaymentDiscount } from "@/lib/services/apply-payment-discount"
 import { createDispatchForQuizResponse } from "@/lib/services/dispatch-for-quiz-response"
 import { createDispatchNotification, type DispatchNotification } from "@/lib/services/dispatch-notification"
 import { createGeneratePlan, createRunPlanGeneration } from "@/lib/services/generate-plan"
@@ -31,6 +33,7 @@ const SUBMIT_REQUEST_BUDGET_MS = 20_000
 const JOB_PAYMENT_DEADLINE_MS = 30_000
 const JOB_LIMITS = { payments: 20, plans: 3, notifications: 50 }
 const META_CONVERSIONS_PER_ROUND = 20
+const DISCOUNTS_PER_ROUND = 50
 const SUBMIT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }
 const EVENTS_RATE_LIMIT = { limit: 120, windowMs: 60_000 }
 const META_EVENTS_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
@@ -176,6 +179,24 @@ function buildContainer(): Container {
   })
 
   const enqueueExpiryReminders = createEnqueueExpiryReminders({ notifications, channels, now, log })
+  // Desligada, a etapa nem entra na rodada (e as outras duas variáveis do desconto são ignoradas).
+  const applyPaymentDiscounts = env.PAYMENT_DISCOUNT_ENABLED
+    ? createApplyPaymentDiscounts({
+        payments,
+        applyDiscount: createApplyPaymentDiscount({
+          payments,
+          asaas,
+          log,
+          now,
+          config: { amount: env.PAYMENT_DISCOUNT_AMOUNT, dueDays: env.PAYMENT_DISCOUNT_DUE_DAYS, channels },
+        }),
+        discountAmount: env.PAYMENT_DISCOUNT_AMOUNT,
+        limit: DISCOUNTS_PER_ROUND,
+        deadlineMs: JOB_PAYMENT_DEADLINE_MS,
+        now,
+        log,
+      })
+    : undefined
   const runJobs = createRunJobs({
     payments,
     planGenerations,
@@ -184,6 +205,7 @@ function buildContainer(): Container {
     generatePlan,
     dispatchNotification,
     enqueueExpiryReminders,
+    discounts: applyPaymentDiscounts,
     purge: createPurgeObservability({
       analytics: repos.analytics,
       appLogs: repos.appLogs,

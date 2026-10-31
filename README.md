@@ -83,6 +83,9 @@ Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e l
 | `ANTHROPIC_MODEL` | não | Modelo da IA. Padrão `claude-opus-5-5`. Para usar o padrão, **remova** a variável: `ANTHROPIC_MODEL=` em branco é inválido |
 | `ACCESS_PASSWORD_SECRET` | sim | Segredo de pelo menos 32 caracteres, aleatório. Dele sai a senha temporária de cada paciente. **Não troque depois** (veja abaixo) |
 | `PLANA_APP_URL` | não | Endereço do PlanA que vai nas mensagens. Padrão `https://plana.nutritamilivalle.com.br/` |
+| `PAYMENT_DISCOUNT_ENABLED` | não | `true` liga o desconto automático na cobrança não paga; `false` (padrão) desliga. Veja "Desconto automático na cobrança não paga" |
+| `PAYMENT_DISCOUNT_AMOUNT` | não | Valor com desconto, com ponto e até 2 casas. Padrão `29.90`. Ignorado com o desconto desligado |
+| `PAYMENT_DISCOUNT_DUE_DAYS` | não | Dias de validade da condição especial, contados a partir do dia em que o desconto é aplicado. Padrão `5`. Ignorado com o desconto desligado |
 | `META_TRACKING_ENABLED` | não | `true` liga o Pixel da Meta e a API de Conversões; `false` (padrão) desliga tudo. Veja a seção "Pixel da Meta e API de Conversões" |
 | `META_PIXEL_ID` | se `META_TRACKING_ENABLED=true` | Id do Pixel da Meta, só dígitos |
 | `META_CAPI_TOKEN` | se `META_TRACKING_ENABLED=true` | Token de acesso da API de Conversões |
@@ -472,11 +475,37 @@ A cada 2 minutos o app executa uma rodada que:
 - termina as cobranças que o Asaas não conseguiu criar antes (até 20 por rodada);
 - gera os planos alimentares que ficaram pendentes (até 3 por rodada). Normalmente o plano sai logo depois do pagamento; esta etapa é a rede de segurança para quando a geração falhou ou o app reiniciou no meio;
 - enfileira os avisos de vencimento do plano (ver "Integração com o PlanA"). Esta etapa só age entre **9h e 20h de São Paulo**: fora desse horário a rodada a ignora e a primeira rodada dentro da janela cria os avisos do dia (nunca duplica);
-- envia os e-mails e WhatsApps pendentes (até 50 por rodada). Os das etapas anteriores, inclusive os avisos de vencimento, já saem na mesma rodada.
+- com `PAYMENT_DISCOUNT_ENABLED=true`, aplica o desconto nas cobranças de ontem que ainda não foram pagas (até 50 por rodada, só entre **9h e 20h de São Paulo**; ver "Desconto automático na cobrança não paga");
+- envia os e-mails e WhatsApps pendentes (até 50 por rodada). Os das etapas anteriores, inclusive os avisos de vencimento e os do desconto, já saem na mesma rodada.
 
 Quando uma tentativa falha, a espera cresce: 2, 4, 8, 16 e 32 minutos; depois, 60 minutos entre tentativas. O limite é de **8 tentativas** por cobrança, **5** por geração de plano (esperas de 2, 4, 8 e 16 minutos) e **5** por mensagem. Esgotado o limite, o item vira falha definitiva e um e-mail é enviado para `ADMIN_ALERT_EMAIL`.
 
 Erros que não adiantam repetir (por exemplo, o Asaas recusar os dados) viram falha definitiva logo na primeira vez.
+
+### Desconto automático na cobrança não paga
+
+No dia seguinte à criação da cobrança, a partir das 9h (São Paulo), o app baixa o valor da cobrança ainda em aberto para `PAYMENT_DISCOUNT_AMOUNT` (padrão R$ 29,90), estende o vencimento para hoje + `PAYMENT_DISCOUNT_DUE_DAYS` (padrão 5 dias) e avisa o paciente por e-mail e WhatsApp: "condição especial, de R$ 39,90 para R$ 29,90, vale até dd/mm/aaaa". O link de pagamento é o mesmo.
+
+Regras:
+
+- **Quais cobranças:** as criadas **ontem** (dia de São Paulo), de 1º quiz ou renovação, que ainda estão em aberto no Asaas (pendentes ou vencidas, sem pagamento) e com valor **maior** que o do desconto. O desconto nunca aumenta o preço.
+- **Janela:** a etapa só age das **9h às 20h** de São Paulo. A primeira rodada da janela aplica; se o servidor estiver fora do ar às 9h, aplica quando voltar. Depois das 20h as cobranças de ontem perdem a oferta, e as de anteontem não são recuperadas.
+- **Uma vez por paciente:** quem já recebeu o desconto em alguma cobrança não recebe de novo. Quem pagou o valor cheio antes continua elegível nas próximas cobranças.
+- **Uma vez por cobrança:** uma cobrança já avaliada (com desconto ou descartada) nunca é alterada de novo.
+- **Cobrança paga:** o status é conferido no Asaas imediatamente antes da alteração; paga, estornada ou excluída não é tocada e não recebe mensagem.
+- **Valor registrado:** o valor da cobrança no banco passa a ser o valor com desconto, então o Purchase da Meta e o Metabase registram o que foi realmente cobrado. O valor anterior fica em `payments.original_amount`.
+- **Falha passageira do Asaas:** a rodada seguinte, ainda dentro da janela, tenta de novo. Falha definitiva (erro 4xx) descarta a cobrança.
+
+Como ligar:
+
+1. Faça o deploy com `PAYMENT_DISCOUNT_ENABLED=false` (a migration das colunas novas de `payments` roda no boot).
+2. **No PlanA**, rode `pnpm db:sync-schema` para copiar o schema novo: `payments` ganhou `discount_status`, `discount_applied_at` e `original_amount`.
+3. No Easypanel, defina `PAYMENT_DISCOUNT_ENABLED=true` (e, se quiser mudar, `PAYMENT_DISCOUNT_AMOUNT` e `PAYMENT_DISCOUNT_DUE_DAYS`) e reinicie.
+4. No dia seguinte, depois das 9h, confira `discount.applied` nos logs, uma cobrança no painel do Asaas (valor e vencimento) e a chegada do e-mail e do WhatsApp.
+
+Para desligar: `PAYMENT_DISCOUNT_ENABLED=false` e reiniciar. As cobranças já alteradas continuam com o desconto.
+
+Se `PAYMENT_DISCOUNT_AMOUNT` for maior ou igual a `PAYMENT_AMOUNT`, o app sobe normalmente, mas nenhuma cobrança nova fica elegível; o boot registra o aviso `discount.config.no_effect`.
 
 ### Ver as falhas
 
