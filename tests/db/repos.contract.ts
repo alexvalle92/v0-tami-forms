@@ -2275,6 +2275,30 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         expect(rows.every((n) => n.quizResponseId === second.quizResponseId)).toBe(true)
       })
 
+      it("a mensagem relida traz os dados do desconto", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos)
+        await repos.notifications.enqueuePaymentLink({ paymentId: ref.paymentId }, ["email"])
+        const [linkId] = await repos.notifications.listPendingIdsForQuizResponse(ref.quizResponseId)
+
+        await repos.payments.applyDiscount(ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        const rows = await discountRows(repos, ref.quizResponseId)
+        expect(rows).toHaveLength(2)
+        for (const n of rows) {
+          expect(n.paymentDiscount).toEqual({
+            paymentStatus: "PENDING",
+            paidAt: null,
+            discountStatus: "applied",
+            amount: "29.90",
+            originalAmount: "39.90",
+            dueDate: "2026-11-05",
+          })
+        }
+        const link = await repos.notifications.get(linkId)
+        expect(link).toMatchObject({ kind: "payment_link", paymentDiscount: null })
+      })
+
       it("applyDiscount e markDiscountSkipped soltam o lock", async () => {
         const repos = await setup()
         const a = await syncedPayment(repos)

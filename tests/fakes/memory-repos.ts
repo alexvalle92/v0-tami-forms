@@ -608,6 +608,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       if (!n) return null
       const patient = patients.get(n.patientId)!
       const plan = n.mealPlanId === null ? undefined : mealPlans.get(n.mealPlanId)
+      const payment = n.paymentId === null ? undefined : payments.get(n.paymentId)
       const view: NotificationView = {
         id: n.id,
         quizResponseId: n.quizResponseId,
@@ -626,6 +627,17 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         mealPlan: plan
           ? { id: plan.id, endDate: plan.endDate, status: plan.status, renewalCharge: renewalChargeOf(plan) }
           : null,
+        paymentDiscount:
+          n.kind === "payment_discount" && payment
+            ? {
+                paymentStatus: payment.status,
+                paidAt: payment.paidAt,
+                discountStatus: payment.discountStatus,
+                amount: payment.amount,
+                originalAmount: payment.originalAmount,
+                dueDate: payment.dueDate,
+              }
+            : null,
       }
       return view
     },

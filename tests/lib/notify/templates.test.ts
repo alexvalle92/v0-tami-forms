@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest"
 import {
   FIRST_ACCESS_TITLE,
   PASSWORD_RESET_TITLE,
+  PAYMENT_DISCOUNT_TITLE,
   PAYMENT_LINK_TITLE,
   PLAN_EXPIRING_TITLES,
   PLAN_READY_TITLE,
   RENEWAL_PAYMENT_LINK_TITLE,
+  formatBRL,
   renderFirstAccess,
   renderPasswordReset,
+  renderPaymentDiscount,
   renderPaymentLink,
   renderPlanExpiring,
   renderPlanReady,
@@ -335,6 +338,67 @@ describe("renderRenewalPaymentLink", () => {
     expect(parts).toHaveLength(3)
     expect(parts[0].startsWith(`*${RENEWAL_PAYMENT_LINK_TITLE}*\n`)).toBe(true)
     expect(parts[1]).toContain(LINK)
+    for (const p of parts) expect(p).not.toMatch(/<\/?(br|strong)>|&lt;|&gt;/)
+  })
+})
+
+describe("formatBRL", () => {
+  it("vírgula decimal, sempre com duas casas e sem separador de milhar", () => {
+    expect(formatBRL("29.90")).toBe("R$ 29,90")
+    expect(formatBRL("100")).toBe("R$ 100,00")
+    expect(formatBRL("1234.5")).toBe("R$ 1234,50")
+  })
+
+  it("texto que não é valor decimal lança", () => {
+    expect(() => formatBRL("abc")).toThrow()
+  })
+})
+
+describe("renderPaymentDiscount", () => {
+  const base = {
+    name: "Maria",
+    link: "https://asaas.test/i/1",
+    originalAmount: "39.90",
+    amount: "29.90",
+    dueDate: "2026-11-05",
+    returning: false,
+  }
+
+  it("1º quiz: assunto com os dois valores e texto da condição especial", () => {
+    const r = renderPaymentDiscount(base)
+    expect(r.subject).toBe("🎁 Condição especial: seu plano de R$ 39,90 por R$ 29,90")
+    expect(PAYMENT_DISCOUNT_TITLE("R$ 39,90", "R$ 29,90")).toBe(r.subject)
+    expect(r.html).toBe(
+      "Olá Maria! 👋 <br>Seu <strong>Plano Alimentar Personalizado</strong> já está pronto e só falta o pagamento para liberar. <br><br>" +
+        "Preparamos uma <strong>condição especial</strong> para você começar agora: o valor baixou de <strong>R$ 39,90 para R$ 29,90</strong>. <br><br>" +
+        "Essa condição vale até <strong>05/11/2026</strong>. O link de pagamento é o mesmo de antes: <br>https://asaas.test/i/1 <br><br>" +
+        "Assim que o pagamento for confirmado, você recebe os dados de acesso ao seu plano. 💚",
+    )
+    expect(r.text).not.toMatch(/<\/?(br|strong)>/)
+  })
+
+  it("renovação: último parágrafo fala do PlanA e da senha que o paciente já usa", () => {
+    const r = renderPaymentDiscount({ ...base, returning: true })
+    expect(
+      r.html.endsWith(
+        "Assim que o pagamento for confirmado, seu novo plano aparece no PlanA. É só entrar com seu CPF e a senha que você já usa. 💚",
+      ),
+    ).toBe(true)
+    expect(r.html).not.toContain("dados de acesso")
+  })
+
+  it("nome com HTML é escapado no html e volta literal no texto", () => {
+    const r = renderPaymentDiscount({ ...base, name: "<b>Maria</b>" })
+    expect(r.html).toContain("Olá &lt;b&gt;Maria&lt;/b&gt;!")
+    expect(r.text).toContain("Olá <b>Maria</b>!")
+  })
+
+  it("toWhatsAppParts gera 4 partes, a primeira com o título em negrito", () => {
+    const r = renderPaymentDiscount(base)
+    const parts = toWhatsAppParts(r.subject, r.html)
+    expect(parts).toHaveLength(4)
+    expect(parts[0].startsWith(`*${r.subject}*\n`)).toBe(true)
+    expect(parts[2]).toContain("https://asaas.test/i/1")
     for (const p of parts) expect(p).not.toMatch(/<\/?(br|strong)>|&lt;|&gt;/)
   })
 })

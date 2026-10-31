@@ -147,6 +147,18 @@ export type NotificationView = {
     status: string
     renewalCharge: RenewalCharge | null
   } | null
+  /**
+   * Estado da cobrança lido na hora, só no `payment_discount` (nulo nas demais): o envio confere se a condição
+   * especial ainda vale e monta o texto com os valores gravados.
+   */
+  paymentDiscount: {
+    paymentStatus: string
+    paidAt: Date | null
+    discountStatus: DiscountStatus | null
+    amount: string
+    originalAmount: string | null
+    dueDate: string | null
+  } | null
 }
 
 export interface NotificationRepo {

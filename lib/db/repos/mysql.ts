@@ -646,6 +646,12 @@ export function createMysqlRepos(db: Db): Repos {
           patientName: patients.name,
           patientPasswordHash: patients.passwordHash,
           paymentUrl: payments.paymentUrl,
+          paymentStatus: payments.status,
+          paymentPaidAt: payments.paidAt,
+          paymentDiscountStatus: payments.discountStatus,
+          paymentAmount: payments.amount,
+          paymentOriginalAmount: payments.originalAmount,
+          paymentDueDate: payments.dueDate,
           payload: notifications.payload,
           mealPlanId: mealPlans.id,
           mealPlanEndDate: mealPlans.endDate,
@@ -659,7 +665,19 @@ export function createMysqlRepos(db: Db): Repos {
         .where(eq(notifications.id, id))
         .limit(1)
       if (!row) return null
-      const { mealPlanId, mealPlanEndDate, mealPlanStatus, mealPlanCreatedAt, ...rest } = row
+      const {
+        mealPlanId,
+        mealPlanEndDate,
+        mealPlanStatus,
+        mealPlanCreatedAt,
+        paymentStatus,
+        paymentPaidAt,
+        paymentDiscountStatus,
+        paymentAmount,
+        paymentOriginalAmount,
+        paymentDueDate,
+        ...rest
+      } = row
       const mealPlan =
         mealPlanId === null || mealPlanStatus === null || mealPlanCreatedAt === null
           ? null
@@ -675,6 +693,18 @@ export function createMysqlRepos(db: Db): Repos {
         // `kind` é VARCHAR no banco; só este repositório grava, sempre com um NotificationKind.
         kind: row.kind as NotificationKind,
         mealPlan,
+        // Só o `payment_discount` precisa do estado da cobrança; sem cobrança (leftJoin vazio) fica nulo.
+        paymentDiscount:
+          row.kind === "payment_discount" && paymentStatus !== null && paymentAmount !== null
+            ? {
+                paymentStatus,
+                paidAt: paymentPaidAt,
+                discountStatus: paymentDiscountStatus,
+                amount: paymentAmount,
+                originalAmount: paymentOriginalAmount,
+                dueDate: paymentDueDate,
+              }
+            : null,
       }
       return view
     },
