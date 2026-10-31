@@ -75,6 +75,13 @@ export const payments = mysqlTable(
     paidAt: dateTime("paid_at"),
     paymentDate: date("payment_date", { mode: "string" }),
     lastEvent: varchar("last_event", { length: 64 }),
+    // Desconto automático na cobrança não paga; nulo = ainda não avaliada. O tipo fica inline porque
+    // este arquivo é copiado para o PlanA e não pode importar de lib/db/repos/types.ts.
+    discountStatus: varchar("discount_status", { length: 16 }).$type<"applied" | "skipped">(),
+    // Quando a oferta foi aplicada ou descartada (UTC).
+    discountAppliedAt: dateTime("discount_applied_at"),
+    // Valor antes do desconto; só preenchido com `applied`.
+    originalAmount: decimal("original_amount", { precision: 10, scale: 2 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -82,6 +89,8 @@ export const payments = mysqlTable(
     uniqueIndex("payments_asaas_id_unique").on(t.asaasId),
     index("payments_status_next_sync_at_idx").on(t.status, t.nextSyncAt),
     index("payments_patient_id_idx").on(t.patientId),
+    index("payments_discount_status_patient_idx").on(t.discountStatus, t.patientId),
+    index("payments_created_at_idx").on(t.createdAt),
   ],
 )
 

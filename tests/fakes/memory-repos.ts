@@ -4,6 +4,7 @@ import type {
   AppLogRepo,
   AppLogRow,
   Channel,
+  DiscountStatus,
   FunnelEventRow,
   FunnelSessionView,
   LastError,
@@ -66,6 +67,9 @@ export type PaymentRow = {
   /** YYYY-MM-DD */
   paymentDate: string | null
   lastEvent: string | null
+  discountStatus: DiscountStatus | null
+  discountAppliedAt: Date | null
+  originalAmount: string | null
   /** Decide a cobrança de renovação de um plano (a criada depois dele, §4). */
   createdAt: Date
 }
@@ -279,6 +283,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
           paidAt: null,
           paymentDate: null,
           lastEvent: null,
+          discountStatus: null,
+          discountAppliedAt: null,
+          originalAmount: null,
           createdAt: now,
         }
         payments.set(payment.id, payment)
@@ -311,6 +318,8 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         paymentUrl: p.paymentUrl,
         syncAttempts: p.syncAttempts,
         paidAt: p.paidAt,
+        discountStatus: p.discountStatus,
+        originalAmount: p.originalAmount,
         patient: {
           id: patient.id,
           name: patient.name,
@@ -399,6 +408,70 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         count++
       }
       return count
+    },
+
+    // Mesma regra do SQL: filtros primeiro, depois uma por paciente (a de created_at mais recente).
+    async listDiscountEligible(d) {
+      const limit = Math.round(Number(d.discountAmount) * 100)
+      const appliedPatients = new Set(
+        [...payments.values()].filter((p) => p.discountStatus === "applied").map((p) => p.patientId),
+      )
+      const latest = new Map<string, PaymentRow>()
+      for (const p of payments.values()) {
+        if (
+          p.createdAt.getTime() < d.fromUtc.getTime() ||
+          p.createdAt.getTime() >= d.toUtc.getTime() ||
+          (p.status !== "PENDING" && p.status !== "OVERDUE") ||
+          p.asaasId === null ||
+          p.paidAt !== null ||
+          p.discountStatus !== null ||
+          Math.round(Number(p.amount) * 100) <= limit ||
+          appliedPatients.has(p.patientId)
+        ) {
+          continue
+        }
+        const best = latest.get(p.patientId)
+        // Empate no instante: vale a inserida depois (o MySQL desempata por id; aqui não há como saber).
+        if (!best || p.createdAt.getTime() >= best.createdAt.getTime()) latest.set(p.patientId, p)
+      }
+      return [...latest.values()]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .slice(0, d.limit)
+        .map((p) => p.id)
+    },
+
+    async hasAppliedDiscount(patientId) {
+      return [...payments.values()].some((p) => p.patientId === patientId && p.discountStatus === "applied")
+    },
+
+    // Sem `await`: tudo acontece de forma atômica, como a transação do MySQL.
+    async applyDiscount(id, d) {
+      const p = payments.get(id)
+      if (!p) return { notificationsEnqueued: 0 }
+      p.amount = d.amount
+      p.originalAmount = d.originalAmount
+      p.dueDate = d.dueDate
+      p.discountStatus = "applied"
+      p.discountAppliedAt = d.at
+      p.lockedUntil = null
+
+      // Quiz mais recente da cobrança (o Map preserva a ordem de inserção).
+      const quiz = [...quizResponses.values()].filter((q) => q.paymentId === id).pop()
+      if (!quiz) return { notificationsEnqueued: 0 }
+      const patient = patients.get(quiz.patientId)!
+      const before = notifications.size
+      for (const channel of d.channels) {
+        enqueueNotification({ id: quiz.id, paymentId: id }, patient, channel, "payment_discount", d.at)
+      }
+      return { notificationsEnqueued: notifications.size - before }
+    },
+
+    async markDiscountSkipped(id, at) {
+      const p = payments.get(id)
+      if (!p) return
+      p.discountStatus = "skipped"
+      p.discountAppliedAt = at
+      p.lockedUntil = null
     },
   }
 

@@ -50,6 +50,13 @@
       "when": 1792868830121,
       "tag": "0006_meta_tracking",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1793488083380,
+      "tag": "0007_payment_discount",
+      "breakpoints": true
     }
   ]
 }

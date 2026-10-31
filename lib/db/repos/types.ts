@@ -38,6 +38,9 @@ export interface SubmissionRepo {
   create(s: NewSubmission): Promise<SubmissionRef | "duplicate">
 }
 
+/** Desfecho da avaliação do desconto numa cobrança; nulo = ainda não avaliada. */
+export type DiscountStatus = "applied" | "skipped"
+
 export type PaymentView = {
   id: string
   patientId: string
@@ -48,6 +51,9 @@ export type PaymentView = {
   syncAttempts: number
   /** Primeiro evento de pagamento do Asaas; nulo enquanto não paga. */
   paidAt: Date | null
+  discountStatus: DiscountStatus | null
+  /** Valor antes do desconto; só preenchido com `discountStatus = "applied"`. */
+  originalAmount: string | null
   patient: {
     id: string
     name: string
@@ -88,10 +94,24 @@ export interface PaymentRepo {
   reopen(id: string): Promise<boolean>
   /** Reabre todas as `ASAAS_FAILED`; devolve quantas. */
   reopenAllFailed(): Promise<number>
+  /** Cobranças elegíveis ao desconto (spec §6): uma por paciente, por `created_at` crescente. */
+  listDiscountEligible(d: { fromUtc: Date; toUtc: Date; discountAmount: string; limit: number }): Promise<string[]>
+  /** O paciente tem alguma cobrança com desconto aplicado? */
+  hasAppliedDiscount(patientId: string): Promise<boolean>
+  /**
+   * Uma transação: grava o desconto, solta o lock e enfileira `payment_discount` no quiz mais recente
+   * da cobrança. Devolve quantas mensagens entraram (0 se já estavam na fila).
+   */
+  applyDiscount(
+    id: string,
+    d: { amount: string; originalAmount: string; dueDate: string; at: Date; channels: Channel[] },
+  ): Promise<{ notificationsEnqueued: number }>
+  /** `discount_status = 'skipped'`, `discount_applied_at = at`; solta o lock. */
+  markDiscountSkipped(id: string, at: Date): Promise<void>
 }
 
 export type NotificationKind =
-  | "payment_link" | "plan_ready" | "password_reset"
+  | "payment_link" | "plan_ready" | "password_reset" | "payment_discount"
   | "plan_expiring_d5" | "plan_expiring_d2" | "plan_expiring_d0"
 
 export type NotificationView = {

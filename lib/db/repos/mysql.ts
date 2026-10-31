@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm"
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, notExists, or, sql } from "drizzle-orm"
+import { alias } from "drizzle-orm/mysql-core"
 import type { Db } from "@/lib/db/client"
 import { daysLeft, expiryStage, renewalState, WARN_DAYS, type RenewalCharge } from "@/lib/renewal/rules"
 import { addDaysISO } from "@/lib/time"
@@ -283,6 +284,8 @@ export function createMysqlRepos(db: Db): Repos {
           paymentUrl: payments.paymentUrl,
           syncAttempts: payments.syncAttempts,
           paidAt: payments.paidAt,
+          discountStatus: payments.discountStatus,
+          originalAmount: payments.originalAmount,
           patient: {
             id: patients.id,
             name: patients.name,
@@ -387,6 +390,118 @@ export function createMysqlRepos(db: Db): Repos {
         .set(reopenPaymentSet(new Date()))
         .where(eq(payments.status, "ASAAS_FAILED"))
       return affected(result)
+    },
+
+    async listDiscountEligible(d) {
+      // Primeiro os filtros do spec §6; a janela ROW_NUMBER roda depois do WHERE, então a "uma por
+      // paciente" vale entre as elegíveis (a de created_at mais recente). O valor é comparado como
+      // DECIMAL, nunca como texto.
+      const other = alias(payments, "o")
+      const ranked = db
+        .select({
+          id: payments.id,
+          createdAt: payments.createdAt,
+          rn: sql<number>`ROW_NUMBER() OVER (PARTITION BY ${payments.patientId} ORDER BY ${payments.createdAt} DESC, ${payments.id} DESC)`.as(
+            "rn",
+          ),
+        })
+        .from(payments)
+        .where(
+          and(
+            gte(payments.createdAt, d.fromUtc),
+            lt(payments.createdAt, d.toUtc),
+            inArray(payments.status, ["PENDING", "OVERDUE"]),
+            sql`${payments.asaasId} IS NOT NULL`,
+            isNull(payments.paidAt),
+            isNull(payments.discountStatus),
+            sql`${payments.amount} > CAST(${d.discountAmount} AS DECIMAL(10,2))`,
+            notExists(
+              db
+                .select({ one: sql`1` })
+                .from(other)
+                .where(and(eq(other.patientId, payments.patientId), eq(other.discountStatus, "applied"))),
+            ),
+          ),
+        )
+        .as("ranked")
+      const rows = await db
+        .select({ id: ranked.id })
+        .from(ranked)
+        .where(eq(ranked.rn, 1))
+        .orderBy(asc(ranked.createdAt), asc(ranked.id))
+        .limit(d.limit)
+      return rows.map((r) => r.id)
+    },
+
+    async hasAppliedDiscount(patientId) {
+      const [row] = await db
+        .select({ id: payments.id })
+        .from(payments)
+        .where(and(eq(payments.patientId, patientId), eq(payments.discountStatus, "applied")))
+        .limit(1)
+      return row !== undefined
+    },
+
+    async applyDiscount(id, d) {
+      // Cobrança e mensagens na mesma transação: ou o desconto e o aviso entram juntos, ou nenhum
+      // (e a rodada seguinte, que começa pelo GET no Asaas, refaz tudo sem duplicar).
+      return withTxRetry(() =>
+        db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              amount: d.amount,
+              originalAmount: d.originalAmount,
+              dueDate: d.dueDate,
+              discountStatus: "applied",
+              discountAppliedAt: d.at,
+              lockedUntil: null,
+              updatedAt: d.at,
+            })
+            .where(eq(payments.id, id))
+
+          // Cobrança de vários quizzes: a mensagem vai só no envio mais recente.
+          const [target] = await tx
+            .select({
+              quizResponseId: quizResponses.id,
+              patientId: patients.id,
+              email: patients.email,
+              phone: patients.phone,
+            })
+            .from(quizResponses)
+            .innerJoin(patients, eq(patients.id, quizResponses.patientId))
+            .where(eq(quizResponses.paymentId, id))
+            .orderBy(desc(quizResponses.createdAt), desc(quizResponses.id))
+            .limit(1)
+          if (!target) return { notificationsEnqueued: 0 }
+
+          const rows = addressed(d.channels, target).map(({ channel, recipient }) => ({
+            id: randomUUID(),
+            patientId: target.patientId,
+            quizResponseId: target.quizResponseId,
+            paymentId: id,
+            channel,
+            kind: "payment_discount",
+            recipient,
+            status: "pending" as const,
+            partsSent: 0,
+            attempts: 0,
+            nextAttemptAt: d.at,
+            createdAt: d.at,
+            updatedAt: d.at,
+          }))
+          if (rows.length === 0) return { notificationsEnqueued: 0 }
+          // UNIQUE (quiz_response_id, channel, kind): mensagens já enfileiradas são ignoradas.
+          return { notificationsEnqueued: affected(await tx.insert(notifications).ignore().values(rows)) }
+        }),
+      )
+    },
+
+    async markDiscountSkipped(id, at) {
+      await db
+        .update(payments)
+        .set({ discountStatus: "skipped", discountAppliedAt: at, lockedUntil: null, updatedAt: at })
+        .where(eq(payments.id, id))
     },
   }
 

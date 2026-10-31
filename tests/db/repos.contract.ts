@@ -2102,5 +2102,192 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         expect(await metaConversions.listDue(inMinutes(1), BIG)).toContain(id)
       })
     })
+
+    describe("47. desconto na cobrança", () => {
+      // Janela em volta do relógio real: as cobranças criadas agora caem dentro dela.
+      const win = { fromUtc: inMinutes(-10), toUtc: inMinutes(10), discountAmount: "29.90", limit: BIG }
+      const discount = { amount: "29.90", originalAmount: "39.90", dueDate: "2026-11-05" }
+
+      /** As mensagens `payment_discount` dos envios, pendentes na fila. */
+      async function discountRows(repos: Repos, ...quizResponseIds: string[]): Promise<NotificationView[]> {
+        const ids = (
+          await Promise.all(quizResponseIds.map((q) => repos.notifications.listPendingIdsForQuizResponse(q)))
+        ).flat()
+        const views = await Promise.all(ids.map((id) => repos.notifications.get(id)))
+        return views.filter((n): n is NotificationView => n !== null && n.kind === "payment_discount")
+      }
+
+      /** Duas cobranças do mesmo paciente: a 1ª vencida em 06/10, a 2ª criada depois dela. */
+      async function twoPayments(repos: Repos) {
+        const cpf = randomCpf()
+        const first = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        await repos.payments.markSynced(first.paymentId, synced("PENDING", "2026-10-06"))
+        await sleep(5)
+        const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        expect(second.paymentId).not.toBe(first.paymentId)
+        await repos.payments.markSynced(second.paymentId, synced("PENDING", "2026-10-14"))
+        return { first, second }
+      }
+
+      it("lista a PENDING sincronizada dentro da janela", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        expect(await repos.payments.listDiscountEligible(win)).toContain(p.ref.paymentId)
+      })
+
+      it("fora da janela não entra", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        const future = { ...win, fromUtc: inMinutes(10), toUtc: inMinutes(20) }
+        const past = { ...win, fromUtc: inMinutes(-20), toUtc: inMinutes(-10) }
+        expect(await repos.payments.listDiscountEligible(future)).not.toContain(p.ref.paymentId)
+        expect(await repos.payments.listDiscountEligible(past)).not.toContain(p.ref.paymentId)
+      })
+
+      it("fica fora: PENDING_ASAAS, paga, ASAAS_FAILED, já avaliada", async () => {
+        const repos = await setup()
+        const created = expectRef(await repos.submissions.create(newSub()))
+        const paid = await syncedPayment(repos)
+        await repos.webhooks.applyPaymentEvent(ev("paid", on(paid)), new Date())
+        const failed = expectRef(await repos.submissions.create(newSub()))
+        await repos.payments.markSyncFailure(failed.paymentId, {
+          attempts: 5,
+          nextSyncAt: null,
+          failed: true,
+          error: syncError("create_payment"),
+        })
+        const skipped = await syncedPayment(repos)
+        await repos.payments.markDiscountSkipped(skipped.ref.paymentId, new Date())
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        for (const id of [created.paymentId, paid.ref.paymentId, failed.paymentId, skipped.ref.paymentId]) {
+          expect(ids).not.toContain(id)
+        }
+      })
+
+      it("OVERDUE entra", async () => {
+        const repos = await setup()
+        const ref = expectRef(await repos.submissions.create(newSub()))
+        await repos.payments.markSynced(ref.paymentId, synced("OVERDUE", "2026-10-01"))
+        expect(await repos.payments.listDiscountEligible(win)).toContain(ref.paymentId)
+      })
+
+      it("valor comparado como número", async () => {
+        const repos = await setup()
+        const big = await syncedPayment(repos, { amount: "100.00" })
+        const same = await syncedPayment(repos, { amount: "29.90" })
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        expect(ids).toContain(big.ref.paymentId)
+        expect(ids).not.toContain(same.ref.paymentId)
+
+        const lower = await repos.payments.listDiscountEligible({ ...win, discountAmount: "29.89" })
+        expect(lower).toContain(same.ref.paymentId)
+      })
+
+      it("uma por paciente: só a mais recente", async () => {
+        const repos = await setup()
+        const { first, second } = await twoPayments(repos)
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        expect(ids).toContain(second.paymentId)
+        expect(ids).not.toContain(first.paymentId)
+      })
+
+      it("a lista sai por created_at crescente e respeita o limite", async () => {
+        const repos = await setup()
+        const a = await syncedPayment(repos)
+        await sleep(5)
+        const b = await syncedPayment(repos)
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        expect(ids.indexOf(a.ref.paymentId)).toBeGreaterThanOrEqual(0)
+        expect(ids.indexOf(a.ref.paymentId)).toBeLessThan(ids.indexOf(b.ref.paymentId))
+        expect(await repos.payments.listDiscountEligible({ ...win, limit: 1 })).toHaveLength(1)
+      })
+
+      it("paciente que já recebeu desconto fica fora", async () => {
+        const repos = await setup()
+        const { first, second } = await twoPayments(repos)
+        const patientId = (await repos.payments.get(first.paymentId))!.patientId
+        const other = await syncedPayment(repos)
+        const otherPatientId = (await repos.payments.get(other.ref.paymentId))!.patientId
+
+        await repos.payments.applyDiscount(first.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        expect(await repos.payments.listDiscountEligible(win)).not.toContain(second.paymentId)
+        expect(await repos.payments.hasAppliedDiscount(patientId)).toBe(true)
+        expect(await repos.payments.hasAppliedDiscount(otherPatientId)).toBe(false)
+      })
+
+      it("applyDiscount grava a cobrança e enfileira e-mail e WhatsApp", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos)
+
+        const r = await repos.payments.applyDiscount(ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        expect(r).toEqual({ notificationsEnqueued: 2 })
+        const view = await repos.payments.get(ref.paymentId)
+        expect(view).toMatchObject({ amount: "29.90", originalAmount: "39.90", discountStatus: "applied" })
+        const rows = await discountRows(repos, ref.quizResponseId)
+        expect(kindsOf(rows)).toEqual(["payment_discount:email", "payment_discount:whatsapp"])
+        for (const n of rows) {
+          expect(n).toMatchObject({ paymentId: ref.paymentId, quizResponseId: ref.quizResponseId, status: "pending" })
+        }
+      })
+
+      it("applyDiscount de novo não duplica mensagens", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos)
+        const d = { ...discount, at: new Date(), channels: BOTH }
+
+        await repos.payments.applyDiscount(ref.paymentId, d)
+        expect(await repos.payments.applyDiscount(ref.paymentId, d)).toEqual({ notificationsEnqueued: 0 })
+
+        expect(await discountRows(repos, ref.quizResponseId)).toHaveLength(2)
+      })
+
+      it("paciente sem telefone: só e-mail", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos, { patient: { phone: "" } })
+
+        const r = await repos.payments.applyDiscount(ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        expect(r).toEqual({ notificationsEnqueued: 1 })
+        const rows = await discountRows(repos, ref.quizResponseId)
+        expect(rows).toHaveLength(1)
+        expect(rows[0].channel).toBe("email")
+      })
+
+      it("cobrança de dois quizzes: mensagens só no mais recente", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const first = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        await sleep(5)
+        const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        expect(second.paymentId).toBe(first.paymentId)
+        await repos.payments.markSynced(first.paymentId, synced("PENDING", "2026-10-14"))
+
+        await repos.payments.applyDiscount(first.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        const rows = await discountRows(repos, first.quizResponseId, second.quizResponseId)
+        expect(rows).toHaveLength(2)
+        expect(rows.every((n) => n.quizResponseId === second.quizResponseId)).toBe(true)
+      })
+
+      it("applyDiscount e markDiscountSkipped soltam o lock", async () => {
+        const repos = await setup()
+        const a = await syncedPayment(repos)
+        expect(await repos.payments.tryLock(a.ref.paymentId, 60_000)).toBe(true)
+        await repos.payments.applyDiscount(a.ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+        expect(await repos.payments.tryLock(a.ref.paymentId, 60_000)).toBe(true)
+
+        const b = await syncedPayment(repos)
+        expect(await repos.payments.tryLock(b.ref.paymentId, 60_000)).toBe(true)
+        await repos.payments.markDiscountSkipped(b.ref.paymentId, new Date())
+        expect(await repos.payments.tryLock(b.ref.paymentId, 60_000)).toBe(true)
+        expect((await repos.payments.get(b.ref.paymentId))!.discountStatus).toBe("skipped")
+      })
+    })
   })
 }
