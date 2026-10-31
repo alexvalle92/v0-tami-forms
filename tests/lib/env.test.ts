@@ -136,3 +136,44 @@ describe("parseEnv", () => {
     expect(env.META_TEST_EVENT_CODE).toBeUndefined()
   })
 })
+
+describe("parseEnv: desconto na cobrança", () => {
+  it("desconto: padrões", () => {
+    const env = parseEnv(valid)
+    expect({
+      PAYMENT_DISCOUNT_ENABLED: env.PAYMENT_DISCOUNT_ENABLED,
+      PAYMENT_DISCOUNT_AMOUNT: env.PAYMENT_DISCOUNT_AMOUNT,
+      PAYMENT_DISCOUNT_DUE_DAYS: env.PAYMENT_DISCOUNT_DUE_DAYS,
+    }).toEqual({ PAYMENT_DISCOUNT_ENABLED: false, PAYMENT_DISCOUNT_AMOUNT: "29.90", PAYMENT_DISCOUNT_DUE_DAYS: 5 })
+  })
+
+  it("desconto desligado: valores em branco ou inválidos não impedem o boot", () => {
+    const env = parseEnv({
+      ...valid,
+      PAYMENT_DISCOUNT_ENABLED: "",
+      PAYMENT_DISCOUNT_AMOUNT: "abc",
+      PAYMENT_DISCOUNT_DUE_DAYS: "-1",
+    })
+    expect(env.PAYMENT_DISCOUNT_ENABLED).toBe(false)
+    expect(env.PAYMENT_DISCOUNT_DUE_DAYS).toBe(5)
+  })
+
+  it("desconto ligado: lê os valores", () => {
+    const env = parseEnv({
+      ...valid,
+      PAYMENT_DISCOUNT_ENABLED: "true",
+      PAYMENT_DISCOUNT_AMOUNT: "24.90",
+      PAYMENT_DISCOUNT_DUE_DAYS: "7",
+    })
+    expect(env.PAYMENT_DISCOUNT_ENABLED).toBe(true)
+    expect(env.PAYMENT_DISCOUNT_AMOUNT).toBe("24.90")
+    expect(env.PAYMENT_DISCOUNT_DUE_DAYS).toBe(7)
+  })
+
+  it("desconto ligado com valor inválido: falha citando a variável", () => {
+    const on = { ...valid, PAYMENT_DISCOUNT_ENABLED: "true" }
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "29,90" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "0" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_DUE_DAYS: "0" })).toThrow(/PAYMENT_DISCOUNT_DUE_DAYS/)
+  })
+})

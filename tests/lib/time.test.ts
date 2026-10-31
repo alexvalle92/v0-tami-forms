@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { addDaysISO, hourInSaoPaulo, todayInSaoPaulo } from "@/lib/time"
+import { addDaysISO, hourInSaoPaulo, saoPauloDayStartUtc, todayInSaoPaulo } from "@/lib/time"
 
 describe("todayInSaoPaulo", () => {
   it("usa o fuso de São Paulo (UTC-3), não o UTC", () => {
@@ -28,5 +28,12 @@ describe("hourInSaoPaulo", () => {
 describe("addDaysISO", () => {
   it("soma dias atravessando o fim do ano", () => {
     expect(addDaysISO("2026-12-31", 2)).toBe("2027-01-02")
+  })
+})
+
+describe("saoPauloDayStartUtc", () => {
+  it("saoPauloDayStartUtc: meia-noite de São Paulo em UTC (offset fixo -03:00)", () => {
+    expect(saoPauloDayStartUtc("2026-10-31").toISOString()).toBe("2026-10-31T03:00:00.000Z")
+    expect(saoPauloDayStartUtc("2026-01-01").toISOString()).toBe("2026-01-01T03:00:00.000Z")
   })
 })

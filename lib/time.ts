@@ -21,6 +21,14 @@ export function hourInSaoPaulo(now: Date): number {
   return Number(saoPauloHour.format(now))
 }
 
+/**
+ * Instante UTC da meia-noite de São Paulo em `date` (YYYY-MM-DD). Usa o offset fixo -03:00: o Brasil
+ * não tem horário de verão desde 2019, e o offset fixo evita depender dos dados de fuso do runtime.
+ */
+export function saoPauloDayStartUtc(date: string): Date {
+  return new Date(`${date}T00:00:00-03:00`)
+}
+
 /** Soma `days` a uma data YYYY-MM-DD (aritmética em UTC). */
 export function addDaysISO(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`)
