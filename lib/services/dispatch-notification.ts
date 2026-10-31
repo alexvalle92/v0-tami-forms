@@ -143,7 +143,7 @@ export function createDispatchNotification(d: {
         amount: pd.amount,
         dueDate: pd.dueDate,
         // Quem já tem senha não recebe "dados de acesso": o último parágrafo muda, como no `payment_link`.
-        returning: n.patientPasswordHash !== null,
+        returning: Boolean(n.patientPasswordHash),
       })
     }
 
@@ -178,8 +178,8 @@ export function createDispatchNotification(d: {
    * Mensagem que perdeu a validade entre a fila e o envio (atraso por novas tentativas ou reabertura). Devolve o
    * motivo, ou null se ela ainda vale.
    * - Condição especial (`payment_discount`): cobrança já paga, que deixou de estar em aberto (cancelada,
-   *   estornada...) ou cujo desconto não está aplicado: nunca oferecer preço a quem já pagou nem a quem não tem mais
-   *   o valor baixo. Sem os dados da cobrança, quem decide é `renderMessage` (falha definitiva).
+   *   estornada...), cujo desconto não está aplicado ou cujo novo vencimento já passou (hoje em São Paulo): nunca
+   *   oferecer preço a quem já pagou, a quem não tem mais o valor baixo nem fora do prazo da oferta. Sem os dados da cobrança, quem decide é `renderMessage` (falha definitiva).
    * - Aviso de vencimento: plano que deixou de ser ativo, plano já vencido (nenhuma mensagem depois do vencimento) ou
    *   renovação já paga (spec §13: nunca pedir pagamento a quem já pagou). Faltando 0 a 5 dias o aviso ainda vale
    *   mesmo que o estágio de hoje seja outro: d5 e d2 trazem a data explícita. Sem plano ou sem data, quem decide
@@ -192,6 +192,8 @@ export function createDispatchNotification(d: {
       if (pd.paidAt !== null) return "payment already paid"
       if (pd.paymentStatus !== "PENDING" && pd.paymentStatus !== "OVERDUE") return "payment no longer open"
       if (pd.discountStatus !== "applied") return "discount not applied"
+      // O preço baixo só vale até o novo vencimento: depois dele a oferta seria falsa.
+      if (pd.dueDate !== null && pd.dueDate < todayInSaoPaulo(d.now())) return "discount expired"
       return null
     }
     if (n.kind !== "plan_expiring_d5" && n.kind !== "plan_expiring_d2" && n.kind !== "plan_expiring_d0") return null

@@ -957,7 +957,12 @@ describe("createDispatchNotification", () => {
 
     /** Aplica o desconto na cobrança do setup e devolve os ids das mensagens `payment_discount`. */
     async function discounted(s: Setup) {
-      await s.repos.payments.applyDiscount(s.paymentId, { ...DISCOUNT, at: NOW, channels: ["email", "whatsapp"] })
+      await s.repos.payments.applyDiscount(s.paymentId, {
+        ...DISCOUNT,
+        status: "PENDING",
+        at: NOW,
+        channels: ["email", "whatsapp"],
+      })
       const rows = [...s.repos.state.notifications.values()].filter((n) => n.kind === "payment_discount")
       return Object.fromEntries(rows.map((n) => [n.channel, n.id])) as Record<Channel, string>
     }
@@ -1013,6 +1018,15 @@ describe("createDispatchNotification", () => {
       expect(sent.html).not.toContain("dados de acesso")
     })
 
+    it("hash de senha vazio conta como sem senha, como no payment_link", async () => {
+      const s = await setup({ wrap: withView((v) => ({ ...v, patientPasswordHash: "" })) })
+      const ids = await discounted(s)
+
+      expect(await s.dispatch(ids.email)).toBe("sent")
+
+      expect(s.email.send.mock.calls[0][0].html).toBe(message(false).html)
+    })
+
     describe("cobrança que mudou até o envio: descartada sem enviar e sem alerta", () => {
       async function expectDiscarded(s: Setup, id: string, reason: string) {
         expect(await s.dispatch(id)).toBe("skipped")
@@ -1047,6 +1061,20 @@ describe("createDispatchNotification", () => {
         const ids = await discounted(s)
 
         await expectDiscarded(s, ids.email, "discount not applied")
+      })
+
+      it("novo vencimento já passou (ontem em São Paulo)", async () => {
+        const s = await setup({ wrap: withPayment({ dueDate: "2026-10-06" }) })
+        const ids = await discounted(s)
+
+        await expectDiscarded(s, ids.email, "discount expired")
+      })
+
+      it("vence hoje: ainda vale", async () => {
+        const s = await setup({ wrap: withPayment({ dueDate: "2026-10-07" }) })
+        const ids = await discounted(s)
+
+        expect(await s.dispatch(ids.email)).toBe("sent")
       })
 
       it("OVERDUE ainda vale: sai normalmente", async () => {
