@@ -7,6 +7,8 @@ export type AsaasPayment = {
   invoiceNumber: string | null
   billingType: string | null
   dueDate: string
+  /** Valor da cobrança; 0 quando a resposta não traz um número. */
+  value: number
 }
 
 export type CreateCustomerInput = {
@@ -28,6 +30,14 @@ export type CreatePaymentInput = {
   callback: { successUrl: string }
 }
 
+/** Campos que o Asaas aceita regravar numa cobrança (PUT /payments/{id}). */
+export type UpdatePaymentInput = {
+  value: number
+  dueDate: string
+  description: string
+  billingType: string
+}
+
 export type CallOpts = { deadline: number }
 
 export interface AsaasClient {
@@ -35,6 +45,12 @@ export interface AsaasClient {
   createCustomer(i: CreateCustomerInput, o: CallOpts): Promise<{ id: string }>
   findPaymentByExternalReference(ref: string, o: CallOpts): Promise<AsaasPayment | null>
   createPayment(i: CreatePaymentInput, o: CallOpts): Promise<AsaasPayment>
+  getPayment(asaasId: string, o: CallOpts): Promise<AsaasPayment>
+  /**
+   * PUT sem repetição: se a resposta se perder, não dá para saber se a alteração valeu, então
+   * a falha transiente fica para a rodada seguinte, que começa pelo GET e vê o estado real.
+   */
+  updatePayment(asaasId: string, i: UpdatePaymentInput, o: CallOpts): Promise<AsaasPayment>
 }
 
 const BASE_URLS = {
@@ -121,6 +137,7 @@ function toPayment(raw: unknown): AsaasPayment {
     invoiceNumber: typeof raw.invoiceNumber === "string" ? raw.invoiceNumber : null,
     billingType: typeof raw.billingType === "string" ? raw.billingType : null,
     dueDate: typeof raw.dueDate === "string" ? raw.dueDate : "",
+    value: typeof raw.value === "number" ? raw.value : 0,
   }
 }
 
@@ -150,7 +167,7 @@ export function createAsaasClient(cfg: {
 
   async function request(
     path: string,
-    init: { method: "GET" | "POST"; body?: string },
+    init: { method: "GET" | "POST" | "PUT"; body?: string },
     o: CallOpts,
     attempts?: number,
   ): Promise<unknown> {
@@ -172,6 +189,16 @@ export function createAsaasClient(cfg: {
     const qs = new URLSearchParams({ externalReference: ref })
     const first = firstOfList(await request(`/payments?${qs}`, { method: "GET" }, o))
     return first === null ? null : toPayment(first.item)
+  }
+
+  async function getPayment(asaasId: string, o: CallOpts) {
+    return toPayment(await request(`/payments/${encodeURIComponent(asaasId)}`, { method: "GET" }, o))
+  }
+
+  /** Uma tentativa só: ver o JSDoc de AsaasClient.updatePayment. */
+  async function updatePayment(asaasId: string, i: UpdatePaymentInput, o: CallOpts) {
+    const init = { method: "PUT" as const, body: JSON.stringify(i) }
+    return toPayment(await request(`/payments/${encodeURIComponent(asaasId)}`, init, o, 1))
   }
 
   /**
@@ -211,6 +238,8 @@ export function createAsaasClient(cfg: {
   return {
     findCustomerByCpf,
     findPaymentByExternalReference,
+    getPayment,
+    updatePayment,
     createCustomer: (i, o) =>
       postWithRecovery(
         async () => toCustomer(await request("/customers", { method: "POST", body: JSON.stringify(i) }, o, 1)),

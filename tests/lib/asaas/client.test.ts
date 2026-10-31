@@ -71,7 +71,7 @@ const asaasPayment = {
   billingType: "UNDEFINED",
   dueDate: "2026-10-09",
 }
-const mappedPayment = { ...asaasPayment }
+const mappedPayment = { ...asaasPayment, value: 0 } // sem value na resposta, toPayment devolve 0
 
 describe("asaas client: buscas", () => {
   it("sandbox: GET /customers?cpfCnpj com access_token", async () => {
@@ -262,6 +262,78 @@ describe("asaas client: createCustomer", () => {
     const t = setup([json({ errors: [] }, 400)])
     const err = await catchError(t.client.createCustomer(customerInput, opts()))
     expect(err.transient).toBe(false)
+    expect(t.calls).toHaveLength(1)
+  })
+})
+
+describe("asaas client: getPayment", () => {
+  it("GET /payments/{id} com o id codificado e devolve value", async () => {
+    const t = setup([
+      json({
+        id: "pay_123",
+        status: "PENDING",
+        invoiceUrl: "https://x/i/1",
+        value: 39.9,
+        dueDate: "2026-11-01",
+        billingType: "PIX",
+      }),
+    ])
+    const payment = await t.client.getPayment("pay_123", opts())
+    expect(t.calls).toHaveLength(1)
+    expect(t.calls[0].url).toBe("https://api-sandbox.asaas.com/v3/payments/pay_123")
+    expect(t.calls[0].method).toBe("GET")
+    expect(payment.value).toBe(39.9)
+    expect(payment.billingType).toBe("PIX")
+    expect(payment.dueDate).toBe("2026-11-01")
+  })
+
+  it("codifica o id na URL", async () => {
+    const t = setup([json(asaasPayment)])
+    await t.client.getPayment("a/b?c", opts())
+    expect(t.calls[0].url).toBe("https://api-sandbox.asaas.com/v3/payments/a%2Fb%3Fc")
+  })
+
+  it("resposta sem id é inválida (transiente)", async () => {
+    const t = setup([json({ status: "PENDING", invoiceUrl: "https://x/i/1" })])
+    const err = await catchError(t.client.getPayment("pay_123", opts()))
+    expect(err.transient).toBe(true)
+    expect(err.message).toBe("invalid asaas response")
+  })
+
+  it("value ausente ou não numérico vira 0", async () => {
+    const t = setup([json({ ...asaasPayment, value: "39.9" }), json(asaasPayment)])
+    await expect(t.client.getPayment("pay_1", opts())).resolves.toMatchObject({ value: 0 })
+    await expect(t.client.getPayment("pay_1", opts())).resolves.toMatchObject({ value: 0 })
+  })
+})
+
+describe("asaas client: updatePayment", () => {
+  const update = { value: 29.9, dueDate: "2026-11-05", description: "d", billingType: "PIX" }
+
+  it("PUT /payments/{id} com o corpo exato e uma tentativa só", async () => {
+    const t = setup([json({ ...asaasPayment, value: 29.9, dueDate: "2026-11-05" })])
+    const payment = await t.client.updatePayment("pay_1", update, opts())
+    expect(t.calls).toHaveLength(1)
+    expect(t.calls[0].url).toBe("https://api-sandbox.asaas.com/v3/payments/pay_1")
+    expect(t.calls[0].method).toBe("PUT")
+    expect(t.calls[0].body).toBe('{"value":29.9,"dueDate":"2026-11-05","description":"d","billingType":"PIX"}')
+    expect(payment.value).toBe(29.9)
+    expect(payment.dueDate).toBe("2026-11-05")
+  })
+
+  it("503 lança HttpError transiente depois de uma única chamada", async () => {
+    const t = setup([json({}, 503), json(asaasPayment)])
+    const err = await catchError(t.client.updatePayment("pay_1", update, opts()))
+    expect(err.transient).toBe(true)
+    expect(err.status).toBe(503)
+    expect(t.calls).toHaveLength(1)
+  })
+
+  it("400 lança HttpError não transiente", async () => {
+    const t = setup([json({ errors: [] }, 400)])
+    const err = await catchError(t.client.updatePayment("pay_1", update, opts()))
+    expect(err.transient).toBe(false)
+    expect(err.status).toBe(400)
     expect(t.calls).toHaveLength(1)
   })
 })
