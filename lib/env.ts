@@ -7,12 +7,12 @@ const booleanFlag = z
   .default("true")
   .transform((value) => value === "true")
 
-// Rastreamento da Meta e desconto na cobrança: começam desligados, ao contrário dos outros interruptores.
+// Interruptores que começam desligados, ao contrário dos outros (rastreamento da Meta e desconto na cobrança).
 // Nas variáveis META_* e PAYMENT_DISCOUNT_*, valor em branco conta como ausente e o formato só é conferido
 // com a chave ligada: desligada, uma variável esquecida ou malformada no painel não impede o app de subir.
 const blankAsMissing = (value: unknown) => (typeof value === "string" && value.trim() === "" ? undefined : value)
 
-const metaFlag = z.preprocess(
+const offByDefaultFlag = z.preprocess(
   blankAsMissing,
   z
     .enum(["true", "false"])
@@ -21,14 +21,6 @@ const metaFlag = z.preprocess(
 )
 
 const metaText = z.preprocess(blankAsMissing, z.string().optional())
-
-const discountFlag = z.preprocess(
-  blankAsMissing,
-  z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((value) => value === "true"),
-)
 
 const envSchema = z.object({
   DATABASE_URL: required,
@@ -58,12 +50,12 @@ const envSchema = z.object({
   ANTHROPIC_MODEL: z.string().min(1).default("claude-opus-5-5"),
   ACCESS_PASSWORD_SECRET: z.string().min(32),
   PLANA_APP_URL: z.string().url().default("https://plana.nutritamilivalle.com.br/"),
-  META_TRACKING_ENABLED: metaFlag,
+  META_TRACKING_ENABLED: offByDefaultFlag,
   META_PIXEL_ID: metaText,
   META_CAPI_TOKEN: metaText,
   META_API_VERSION: z.preprocess(blankAsMissing, z.string().default("v24.0")),
   META_TEST_EVENT_CODE: metaText,
-  PAYMENT_DISCOUNT_ENABLED: discountFlag,
+  PAYMENT_DISCOUNT_ENABLED: offByDefaultFlag,
   PAYMENT_DISCOUNT_AMOUNT: z.preprocess(blankAsMissing, z.string().default("29.90")),
   PAYMENT_DISCOUNT_DUE_DAYS: z.preprocess(blankAsMissing, z.string().default("5")),
 }).superRefine((env, ctx) => {

@@ -174,6 +174,9 @@ describe("parseEnv: desconto na cobrança", () => {
     const on = { ...valid, PAYMENT_DISCOUNT_ENABLED: "true" }
     expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "29,90" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
     expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "0" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "0.00" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "29.999" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_DUE_DAYS: "1.5" })).toThrow(/PAYMENT_DISCOUNT_DUE_DAYS/)
     expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_DUE_DAYS: "0" })).toThrow(/PAYMENT_DISCOUNT_DUE_DAYS/)
   })
 })
