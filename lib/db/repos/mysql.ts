@@ -453,6 +453,7 @@ export function createMysqlRepos(db: Db): Repos {
               amount: d.amount,
               originalAmount: d.originalAmount,
               dueDate: d.dueDate,
+              status: d.status,
               discountStatus: "applied",
               discountAppliedAt: d.at,
               lockedUntil: null,

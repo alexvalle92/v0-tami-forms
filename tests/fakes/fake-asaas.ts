@@ -114,6 +114,8 @@ export function createFakeAsaas(): FakeAsaas {
       // altera o mesmo objeto, que `payments` também guarda, para as duas visões não divergirem
       payment.value = input.value
       payment.dueDate = input.dueDate
+      // Como o Asaas real: mudar o vencimento de uma cobrança vencida a devolve para PENDING.
+      if (payment.status === "OVERDUE") payment.status = "PENDING"
       return payment
     },
   }

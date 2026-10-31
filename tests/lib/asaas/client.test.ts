@@ -308,7 +308,14 @@ describe("asaas client: getPayment", () => {
 })
 
 describe("asaas client: updatePayment", () => {
-  const update = { value: 29.9, dueDate: "2026-11-05", description: "d", billingType: "PIX" }
+  const update = {
+    value: 29.9,
+    dueDate: "2026-11-05",
+    description: "d",
+    billingType: "PIX",
+    externalReference: "ref-1",
+    callback: { successUrl: "https://x/ok" },
+  }
 
   it("PUT /payments/{id} com o corpo exato e uma tentativa só", async () => {
     const t = setup([json({ ...asaasPayment, value: 29.9, dueDate: "2026-11-05" })])
@@ -316,7 +323,9 @@ describe("asaas client: updatePayment", () => {
     expect(t.calls).toHaveLength(1)
     expect(t.calls[0].url).toBe("https://api-sandbox.asaas.com/v3/payments/pay_1")
     expect(t.calls[0].method).toBe("PUT")
-    expect(t.calls[0].body).toBe('{"value":29.9,"dueDate":"2026-11-05","description":"d","billingType":"PIX"}')
+    expect(t.calls[0].body).toBe(
+      '{"value":29.9,"dueDate":"2026-11-05","description":"d","billingType":"PIX","externalReference":"ref-1","callback":{"successUrl":"https://x/ok"}}',
+    )
     expect(payment.value).toBe(29.9)
     expect(payment.dueDate).toBe("2026-11-05")
   })

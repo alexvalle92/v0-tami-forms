@@ -186,9 +186,15 @@ function buildContainer(): Container {
         applyDiscount: createApplyPaymentDiscount({
           payments,
           asaas,
+          alertAdmin,
           log,
           now,
-          config: { amount: env.PAYMENT_DISCOUNT_AMOUNT, dueDays: env.PAYMENT_DISCOUNT_DUE_DAYS, channels },
+          config: {
+            amount: env.PAYMENT_DISCOUNT_AMOUNT,
+            dueDays: env.PAYMENT_DISCOUNT_DUE_DAYS,
+            successUrl: env.PAYMENT_SUCCESS_URL,
+            channels,
+          },
         }),
         discountAmount: env.PAYMENT_DISCOUNT_AMOUNT,
         limit: DISCOUNTS_PER_ROUND,

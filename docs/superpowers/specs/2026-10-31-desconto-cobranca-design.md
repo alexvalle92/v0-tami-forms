@@ -98,13 +98,15 @@ Com a feature ligada, `PAYMENT_DISCOUNT_AMOUNT` maior ou igual a `PAYMENT_AMOUNT
 2. `payments.tryLock(id, 120 s)`. Falhou → `busy`. Depois do lock, relê a cobrança e repete as conferências do passo 1. Também confere com `payments.hasAppliedDiscount(patientId)` que nenhuma outra cobrança do paciente recebeu o desconto; se recebeu → `markDiscountSkipped`, `skipped`.
 3. **Asaas `GET /payments/{asaasId}`.**
    - Status diferente de `PENDING`/`OVERDUE` (paga, excluída, estornada) → `markDiscountSkipped`, `skipped`. Não manda mensagem: o webhook cuida do resto.
+   - Se o `GET` ainda não mostra o valor e o vencimento novos e o `value` do Asaas é **menor ou igual** ao do desconto (o valor local estava defasado) → `markDiscountSkipped` com motivo `asaas_value_not_above_discount`, `skipped`, sem `PUT` e sem mensagem: o desconto nunca aumenta nem iguala o preço de verdade.
 4. **Asaas `PUT /payments/{asaasId}`**, a não ser que o `GET` já mostre `value` igual ao valor do desconto e `dueDate` igual ao novo vencimento (o `PUT` de uma rodada anterior deu certo e a gravação no banco falhou):
    - `value`: `PAYMENT_DISCOUNT_AMOUNT`
    - `dueDate`: hoje em São Paulo + `PAYMENT_DISCOUNT_DUE_DAYS`
    - `description`: `Plano Alimentar Personalizado - {nome} - 30 dias - condição especial`
    - `billingType`: o que o `GET` devolveu (não muda a forma de pagamento que a pessoa escolheu)
-5. **`payments.applyDiscount(id, { amount, originalAmount, dueDate, at, channels })`** numa transação:
-   - `amount` = desconto, `original_amount` = valor anterior, `due_date` = novo vencimento, `discount_status = 'applied'`, `discount_applied_at = at`, solta o lock;
+   - `externalReference`: o id da cobrança no app, e `callback.successUrl`: `PAYMENT_SUCCESS_URL`, os mesmos da criação. O `PUT` pode apagar o que não vem no corpo, e sem a referência o webhook não acharia a cobrança.
+5. **`payments.applyDiscount(id, { amount, originalAmount, dueDate, status, at, channels })`** numa transação:
+   - `amount` = desconto, `original_amount` = valor anterior, `due_date` = novo vencimento, `status` = o da resposta do `PUT` (ou do `GET`, se o `PUT` foi pulado; o Asaas devolve a cobrança vencida para `PENDING` e o webhook `PAYMENT_UPDATED` é ignorado), `discount_status = 'applied'`, `discount_applied_at = at`, solta o lock;
    - insere as `notifications` `payment_discount` (um por canal habilitado e com destinatário) ligadas ao `quiz_response` **mais recente** daquela cobrança. O índice único `(quiz_response_id, channel, kind)` impede duplicatas (`INSERT IGNORE`).
    - Cobrança sem `quiz_response` (não deve acontecer): grava o desconto sem mensagem e registra `discount.no_quiz_response` como `warn`.
 6. Devolve `applied` e registra `discount.applied` (`paymentId`, `originalAmount`, `amount`, `dueDate`).
@@ -115,7 +117,7 @@ Com a feature ligada, `PAYMENT_DISCOUNT_AMOUNT` maior ou igual a `PAYMENT_AMOUNT
 |---|---|
 | Erro passageiro do Asaas (rede, timeout, 5xx, 429) no `GET` ou no `PUT` | Nada é gravado, solta o lock, `retry`. A rodada seguinte, ainda na janela, tenta de novo. Repetir o `PUT` com os mesmos valores é seguro. Log `discount.retry` (`warn`) |
 | Erro definitivo do Asaas (4xx) | `markDiscountSkipped`, `skipped`, log `discount.skipped` (`error`, com `httpStatus` e `step`) |
-| Falha ao gravar no banco depois do `PUT` | Solta o lock (no `finally`), `retry`. Na rodada seguinte o `GET` mostra o valor novo e o fluxo pula o `PUT` (passo 4) |
+| Falha ao gravar no banco depois do `PUT` (ou com o `GET` já mostrando o valor novo) | Solta o lock (no `finally`), `retry`. Na rodada seguinte o `GET` mostra o valor novo e o fluxo pula o `PUT` (passo 4). Como o Asaas já cobra o valor novo e o banco ainda não, também registra `discount.asaas_changed_db_not` (`error`) e **avisa o admin** (`alertAdmin`, tipo `payment`, etapa `db.apply_discount`). Falha do próprio alerta vira `discount.alert_failed` (`error`) e não muda o resultado |
 | Cobranças em aberto no fim da janela por falhas passageiras | Ficam com `discount_status` nulo e perdem a oferta no dia seguinte (não são mais "de ontem"). Sem alerta |
 
 Deadline das chamadas ao Asaas: o mesmo `paymentDeadlineMs` da rodada, limitado à janela segura do lock (100 s), como em `syncPayment`.
@@ -175,7 +177,7 @@ ALTER TABLE payments
 listDiscountEligible(d: { fromUtc: Date; toUtc: Date; discountAmount: string; limit: number }): Promise<string[]>
 hasAppliedDiscount(patientId: string): Promise<boolean>
 applyDiscount(id: string, d: {
-  amount: string; originalAmount: string; dueDate: string; at: Date; channels: Channel[]
+  amount: string; originalAmount: string; dueDate: string; status: string; at: Date; channels: Channel[]
 }): Promise<{ notificationsEnqueued: number }>
 markDiscountSkipped(id: string, at: Date): Promise<void>
 ```
@@ -188,6 +190,7 @@ markDiscountSkipped(id: string, at: Date): Promise<void>
 getPayment(asaasId: string, o: CallOpts): Promise<AsaasPayment>
 updatePayment(asaasId: string, i: {
   value: number; dueDate: string; description: string; billingType: string
+  externalReference: string; callback: { successUrl: string }
 }, o: CallOpts): Promise<AsaasPayment>
 ```
 
@@ -217,7 +220,7 @@ O despachante já escolhe o texto do `payment_link` pelo paciente ter ou não se
 - Sem riscado: `toWhatsAppParts` não converte `<s>` e o WhatsApp usa outra marcação.
 - No WhatsApp, cada parágrafo é uma parte, com o intervalo de 3 s que já existe.
 
-**Descartar sem enviar (`skipped`, sem alerta):** cobrança com status fora de `PENDING`/`OVERDUE`, com `paid_at` ou sem `discount_status = 'applied'` no momento do envio. Falhas de envio seguem o fluxo atual (backoff, 5 tentativas, alerta ao admin).
+**Descartar sem enviar (`skipped`, sem alerta):** cobrança com status fora de `PENDING`/`OVERDUE`, com `paid_at`, sem `discount_status = 'applied'` ou com o novo vencimento (`due_date`) anterior a hoje em São Paulo (`discount expired`) no momento do envio. Falhas de envio seguem o fluxo atual (backoff, 5 tentativas, alerta ao admin).
 
 ## 9. Testes
 
@@ -235,6 +238,7 @@ Escritos antes do código (TDD), com `vitest`:
 ## 10. Ativação
 
 1. Deploy com `PAYMENT_DISCOUNT_ENABLED=false` (a migration roda no boot).
-2. No Easypanel: `PAYMENT_DISCOUNT_ENABLED=true`, `PAYMENT_DISCOUNT_AMOUNT=29.90`, `PAYMENT_DISCOUNT_DUE_DAYS=5`; reiniciar.
-3. No dia seguinte, depois das 9h: conferir `discount.applied` nos logs, uma cobrança no painel do Asaas (valor e vencimento) e a chegada do e-mail e do WhatsApp.
-4. Para desligar: `PAYMENT_DISCOUNT_ENABLED=false` e reiniciar. Cobranças já alteradas continuam com o desconto.
+2. **Antes da produção, no sandbox do Asaas** (`ASAAS_ENV=sandbox`, desconto ligado): depois do `PUT`, buscar a cobrança (`GET`) e conferir que `externalReference` e `callback` continuam como na criação; pagar uma cobrança já com desconto e conferir que o webhook gera o plano e um Purchase de 29,90.
+3. No Easypanel: `PAYMENT_DISCOUNT_ENABLED=true`, `PAYMENT_DISCOUNT_AMOUNT=29.90`, `PAYMENT_DISCOUNT_DUE_DAYS=5`; reiniciar.
+4. No dia seguinte, depois das 9h: conferir `discount.applied` nos logs, uma cobrança no painel do Asaas (valor e vencimento) e a chegada do e-mail e do WhatsApp.
+5. Para desligar: `PAYMENT_DISCOUNT_ENABLED=false` e reiniciar. Cobranças já alteradas continuam com o desconto.

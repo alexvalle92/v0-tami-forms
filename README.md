@@ -494,14 +494,18 @@ Regras:
 - **Uma vez por cobrança:** uma cobrança já avaliada (com desconto ou descartada) nunca é alterada de novo.
 - **Cobrança paga:** o status é conferido no Asaas imediatamente antes da alteração; paga, estornada ou excluída não é tocada e não recebe mensagem.
 - **Valor registrado:** o valor da cobrança no banco passa a ser o valor com desconto, então o Purchase da Meta e o Metabase registram o que foi realmente cobrado. O valor anterior fica em `payments.original_amount`.
+- **Valor de verdade no Asaas:** se o valor da cobrança no Asaas já não passa do desconto (o valor guardado aqui estava defasado), ela é descartada sem alteração e sem mensagem.
 - **Falha passageira do Asaas:** a rodada seguinte, ainda dentro da janela, tenta de novo. Falha definitiva (erro 4xx) descarta a cobrança.
+- **Asaas alterado e banco não:** se o Asaas aceita a alteração mas a gravação no banco falha, a rodada seguinte corrige sozinha; enquanto isso o admin recebe um e-mail (tipo `payment`, etapa `db.apply_discount`) e o log registra `discount.asaas_changed_db_not`.
+- **Mensagem fora do prazo:** a mensagem que ainda estiver na fila depois do novo vencimento (hoje em São Paulo) é descartada sem envio e sem alerta.
 
 Como ligar:
 
 1. Faça o deploy com `PAYMENT_DISCOUNT_ENABLED=false` (a migration das colunas novas de `payments` roda no boot).
 2. **No PlanA**, rode `pnpm db:sync-schema` para copiar o schema novo: `payments` ganhou `discount_status`, `discount_applied_at` e `original_amount`.
-3. No Easypanel, defina `PAYMENT_DISCOUNT_ENABLED=true` (e, se quiser mudar, `PAYMENT_DISCOUNT_AMOUNT` e `PAYMENT_DISCOUNT_DUE_DAYS`) e reinicie.
-4. No dia seguinte, depois das 9h, confira `discount.applied` nos logs, uma cobrança no painel do Asaas (valor e vencimento) e a chegada do e-mail e do WhatsApp.
+3. **Antes da produção, teste no sandbox do Asaas** (`ASAAS_ENV=sandbox`, desconto ligado): depois da alteração, busque a cobrança (`GET /payments/{id}`) e confirme que `externalReference` e `callback` continuam como na criação; pague uma cobrança já com desconto e confirme que o webhook gera o plano e um Purchase de 29,90.
+4. No Easypanel, defina `PAYMENT_DISCOUNT_ENABLED=true` (e, se quiser mudar, `PAYMENT_DISCOUNT_AMOUNT` e `PAYMENT_DISCOUNT_DUE_DAYS`) e reinicie.
+5. No dia seguinte, depois das 9h, confira `discount.applied` nos logs, uma cobrança no painel do Asaas (valor e vencimento) e a chegada do e-mail e do WhatsApp.
 
 Para desligar: `PAYMENT_DISCOUNT_ENABLED=false` e reiniciar. As cobranças já alteradas continuam com o desconto.
 

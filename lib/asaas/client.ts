@@ -30,12 +30,18 @@ export type CreatePaymentInput = {
   callback: { successUrl: string }
 }
 
-/** Campos que o Asaas aceita regravar numa cobrança (PUT /payments/{id}). */
+/**
+ * Campos que o Asaas aceita regravar numa cobrança (PUT /payments/{id}). `externalReference` e `callback`
+ * vão de novo porque o PUT pode apagar o que não vem no corpo: sem eles o webhook perderia o vínculo com a
+ * cobrança e o pagamento não levaria à página de agradecimento.
+ */
 export type UpdatePaymentInput = {
   value: number
   dueDate: string
   description: string
   billingType: string
+  externalReference: string
+  callback: { successUrl: string }
 }
 
 export type CallOpts = { deadline: number }
@@ -197,7 +203,16 @@ export function createAsaasClient(cfg: {
 
   /** Uma tentativa só: ver o JSDoc de AsaasClient.updatePayment. */
   async function updatePayment(asaasId: string, i: UpdatePaymentInput, o: CallOpts) {
-    const init = { method: "PUT" as const, body: JSON.stringify(i) }
+    // Campos nomeados um a um: o corpo enviado ao Asaas é só o que está listado aqui.
+    const body = JSON.stringify({
+      value: i.value,
+      dueDate: i.dueDate,
+      description: i.description,
+      billingType: i.billingType,
+      externalReference: i.externalReference,
+      callback: { successUrl: i.callback.successUrl },
+    })
+    const init = { method: "PUT" as const, body }
     return toPayment(await request(`/payments/${encodeURIComponent(asaasId)}`, init, o, 1))
   }
 

@@ -451,6 +451,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       p.amount = d.amount
       p.originalAmount = d.originalAmount
       p.dueDate = d.dueDate
+      p.status = d.status
       p.discountStatus = "applied"
       p.discountAppliedAt = d.at
       p.lockedUntil = null

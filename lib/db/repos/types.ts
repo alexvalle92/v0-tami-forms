@@ -99,12 +99,13 @@ export interface PaymentRepo {
   /** O paciente tem alguma cobrança com desconto aplicado? */
   hasAppliedDiscount(patientId: string): Promise<boolean>
   /**
-   * Uma transação: grava o desconto, solta o lock e enfileira `payment_discount` no quiz mais recente
-   * da cobrança. Devolve quantas mensagens entraram (0 se já estavam na fila).
+   * Uma transação: grava o desconto (e o `status` que o Asaas devolveu: a alteração tira a cobrança de
+   * `OVERDUE`), solta o lock e enfileira `payment_discount` no quiz mais recente da cobrança. Devolve quantas
+   * mensagens entraram (0 se já estavam na fila).
    */
   applyDiscount(
     id: string,
-    d: { amount: string; originalAmount: string; dueDate: string; at: Date; channels: Channel[] },
+    d: { amount: string; originalAmount: string; dueDate: string; status: string; at: Date; channels: Channel[] },
   ): Promise<{ notificationsEnqueued: number }>
   /** `discount_status = 'skipped'`, `discount_applied_at = at`; solta o lock. */
   markDiscountSkipped(id: string, at: Date): Promise<void>

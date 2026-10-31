@@ -3,6 +3,7 @@ import type { Channel, PaymentRepo, PaymentView } from "@/lib/db/repos/types"
 import { HttpError } from "@/lib/http/retry"
 import type { Logger } from "@/lib/log"
 import { addDaysISO, todayInSaoPaulo } from "@/lib/time"
+import type { AlertAdmin } from "./alert-admin"
 import { safeErrorMessage, toLastError } from "./last-error"
 
 export type DiscountResult = "applied" | "skipped" | "retry" | "busy"
@@ -28,14 +29,16 @@ const cents = (value: number | string) => Math.round(Number(value) * 100)
 /**
  * Aplica o desconto numa cobrança em aberto do Asaas: altera valor, vencimento e descrição por PUT e
  * grava o resultado (com as mensagens) numa transação. Idempotente: se o PUT de uma rodada anterior deu
- * certo e a gravação falhou, o GET mostra o valor novo e o PUT é pulado.
+ * certo e a gravação falhou, o GET mostra o valor novo e o PUT é pulado. Se a gravação falha com o Asaas já
+ * alterado, o preço lá e o daqui divergem até a rodada seguinte: avisa o admin além de pedir nova tentativa.
  */
 export function createApplyPaymentDiscount(d: {
   payments: PaymentRepo
   asaas: AsaasClient
+  alertAdmin: AlertAdmin
   log: Logger
   now: () => Date
-  config: { amount: string; dueDays: number; channels: Channel[] }
+  config: { amount: string; dueDays: number; successUrl: string; channels: Channel[] }
 }): ApplyPaymentDiscount {
   return async function applyPaymentDiscount(paymentId, opts) {
     const skippedWithoutWriting = (reason: string): DiscountResult => {
@@ -63,6 +66,7 @@ export function createApplyPaymentDiscount(d: {
 
       /** Marca a cobrança como avaliada sem desconto (solta o lock). */
       async function skip(why: string, fields: Record<string, unknown> = {}): Promise<DiscountResult> {
+        step = "db.mark_discount_skipped"
         await d.payments.markDiscountSkipped(paymentId, d.now())
         lockHeld = false
         d.log.info("discount.skipped", { paymentId, reason: why, ...fields })
@@ -70,6 +74,8 @@ export function createApplyPaymentDiscount(d: {
       }
 
       let step = "db.has_applied_discount"
+      // O Asaas já tem o valor novo (PUT feito agora, ou feito numa rodada anterior): se o banco falhar, divergem.
+      let asaasChanged = false
       try {
         if (await d.payments.hasAppliedDiscount(payment.patientId)) return await skip("patient_already_discounted")
 
@@ -86,9 +92,16 @@ export function createApplyPaymentDiscount(d: {
         }
 
         const alreadyDiscounted = cents(remote.value) === cents(amount) && remote.dueDate === dueDate
-        if (!alreadyDiscounted) {
+        let status = remote.status
+        if (alreadyDiscounted) {
+          asaasChanged = true
+        } else {
+          // O valor local pode estar defasado: nunca "descontar" para um preço igual ou maior que o de verdade.
+          if (cents(remote.value) <= cents(amount)) {
+            return await skip("asaas_value_not_above_discount", { asaasValue: remote.value })
+          }
           step = "asaas.update_payment"
-          await d.asaas.updatePayment(
+          const updated = await d.asaas.updatePayment(
             asaasId,
             {
               value: Number(amount),
@@ -96,9 +109,15 @@ export function createApplyPaymentDiscount(d: {
               description: `Plano Alimentar Personalizado - ${payment.patient.name} - 30 dias - condição especial`,
               // Não muda a forma de pagamento que a pessoa escolheu.
               billingType: remote.billingType ?? "UNDEFINED",
+              // O PUT pode apagar o que não vem no corpo: manda de volta o que a criação gravou.
+              externalReference: payment.id,
+              callback: { successUrl: d.config.successUrl },
             },
             asaasOpts,
           )
+          asaasChanged = true
+          // O Asaas tira a cobrança vencida de OVERDUE ao mudar o vencimento; o webhook de update é ignorado.
+          status = updated.status || remote.status
         }
 
         step = "db.apply_discount"
@@ -106,6 +125,7 @@ export function createApplyPaymentDiscount(d: {
           amount,
           originalAmount,
           dueDate,
+          status,
           at: d.now(),
           channels: d.config.channels,
         })
@@ -117,7 +137,8 @@ export function createApplyPaymentDiscount(d: {
         return "applied"
       } catch (err) {
         // Nunca logar `err.body` nem dados pessoais.
-        const { httpStatus, message } = toLastError(step, err, 1, d.now())
+        const lastError = toLastError(step, err, 1, d.now())
+        const { httpStatus, message } = lastError
         const fields = { paymentId, step, ...(httpStatus !== undefined ? { httpStatus } : {}), message }
         // 4xx do Asaas é definitivo; o resto (rede, timeout, 5xx, 429, banco) é passageiro.
         if (err instanceof HttpError && !err.transient) {
@@ -132,6 +153,15 @@ export function createApplyPaymentDiscount(d: {
           return "skipped"
         }
         d.log.warn("discount.retry", fields)
+        if (step === "db.apply_discount" && asaasChanged) {
+          // Preço novo no Asaas e antigo aqui: a próxima rodada tenta de novo, mas alguém precisa ficar sabendo.
+          d.log.error("discount.asaas_changed_db_not", { paymentId, message })
+          try {
+            await d.alertAdmin({ kind: "payment", id: paymentId, patientName: payment.patient.name, error: lastError })
+          } catch (alertErr) {
+            d.log.error("discount.alert_failed", { paymentId, message: safeErrorMessage(alertErr) })
+          }
+        }
         return "retry"
       }
     } finally {

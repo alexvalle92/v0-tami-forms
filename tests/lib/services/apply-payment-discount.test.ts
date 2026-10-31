@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import type { Channel } from "@/lib/db/repos/types"
 import { HttpError } from "@/lib/http/retry"
 import type { Logger } from "@/lib/log"
+import type { AlertAdmin } from "@/lib/services/alert-admin"
 import { createApplyPaymentDiscount } from "@/lib/services/apply-payment-discount"
 import { createSyncPayment } from "@/lib/services/sync-payment"
 import { createFakeAsaas } from "../../fakes/fake-asaas"
@@ -11,7 +12,8 @@ import { createMemoryRepos } from "../../fakes/memory-repos"
 const NOW = new Date("2026-10-31T12:00:00Z")
 const OPTS = { deadline: NOW.getTime() + 60_000 }
 const CHANNELS: Channel[] = ["email", "whatsapp"]
-const CONFIG = { amount: "29.90", dueDays: 5, channels: CHANNELS }
+const SUCCESS_URL = "https://app.example.com/obrigado"
+const CONFIG = { amount: "29.90", dueDays: 5, successUrl: SUCCESS_URL, channels: CHANNELS }
 
 type Setup = Awaited<ReturnType<typeof setup>>
 
@@ -35,19 +37,21 @@ async function setup() {
     alertAdmin: vi.fn(async () => {}),
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     now: () => NOW,
-    config: { dueDays: 2, successUrl: "https://app.example.com/obrigado", channels: CHANNELS },
+    config: { dueDays: 2, successUrl: SUCCESS_URL, channels: CHANNELS },
   })
   expect(await sync(created.paymentId, OPTS)).toMatchObject({ status: "synced" })
 
+  const alertAdmin = vi.fn<AlertAdmin>(async () => {})
   const apply = createApplyPaymentDiscount({
     payments: repos.payments,
     asaas,
+    alertAdmin,
     log,
     now: () => NOW,
     config: CONFIG,
   })
   const asaasId = repos.state.payments.get(created.paymentId)!.asaasId!
-  return { repos, asaas, log, apply, paymentId: created.paymentId, asaasId }
+  return { repos, asaas, log, alertAdmin, apply, paymentId: created.paymentId, asaasId }
 }
 
 const row = (s: Setup) => s.repos.state.payments.get(s.paymentId)!
@@ -76,6 +80,8 @@ describe("createApplyPaymentDiscount", () => {
       dueDate: "2026-11-05",
       description: "Plano Alimentar Personalizado - Maria da Silva - 30 dias - condição especial",
       billingType: "PIX",
+      externalReference: s.paymentId,
+      callback: { successUrl: SUCCESS_URL },
     })
     expect(row(s).amount).toBe("29.90")
     expect(row(s).originalAmount).toBe("39.90")
@@ -87,6 +93,64 @@ describe("createApplyPaymentDiscount", () => {
       amount: "29.90",
       dueDate: "2026-11-05",
     })
+    await expectUnlocked(s)
+  })
+
+  it("cobrança vencida (OVERDUE): o status local acompanha o que o Asaas devolve (PENDING)", async () => {
+    const s = await setup()
+    s.asaas.byId.get(s.asaasId)!.status = "OVERDUE"
+    mutableRow(s).status = "OVERDUE"
+
+    expect(await s.apply(s.paymentId, OPTS)).toBe("applied")
+
+    expect(row(s).status).toBe("PENDING")
+    expect(row(s).discountStatus).toBe("applied")
+  })
+
+  it("PUT pulado (Asaas já com o valor novo): o status gravado vem do GET", async () => {
+    const s = await setup()
+    const remote = s.asaas.byId.get(s.asaasId)!
+    remote.value = 29.9
+    remote.dueDate = "2026-11-05"
+    remote.status = "OVERDUE"
+
+    expect(await s.apply(s.paymentId, OPTS)).toBe("applied")
+
+    expect(s.asaas.calls).not.toContain("updatePayment")
+    expect(row(s).status).toBe("OVERDUE")
+  })
+
+  it("valor no Asaas não passa do desconto: skipped, sem PUT e sem mensagem", async () => {
+    const s = await setup()
+    // O valor local (39.90) está defasado: no Asaas a cobrança já é de 19.90.
+    s.asaas.byId.get(s.asaasId)!.value = 19.9
+
+    const result = await s.apply(s.paymentId, OPTS)
+
+    expect(result).toBe("skipped")
+    expect(s.asaas.calls).not.toContain("updatePayment")
+    expect(s.asaas.updatedPayments).toEqual([])
+    expect(row(s).discountStatus).toBe("skipped")
+    expect(row(s).amount).toBe("39.90")
+    expect(discountNotifications(s)).toHaveLength(0)
+    expect(s.log.info).toHaveBeenCalledWith(
+      "discount.skipped",
+      expect.objectContaining({ paymentId: s.paymentId, reason: "asaas_value_not_above_discount" }),
+    )
+    await expectUnlocked(s)
+  })
+
+  it("falha ao marcar como pulada: retry no passo db.mark_discount_skipped", async () => {
+    const s = await setup()
+    s.asaas.byId.get(s.asaasId)!.status = "RECEIVED"
+    vi.spyOn(s.repos.payments, "markDiscountSkipped").mockRejectedValueOnce(new Error("db"))
+
+    expect(await s.apply(s.paymentId, OPTS)).toBe("retry")
+
+    expect(s.log.warn).toHaveBeenCalledWith(
+      "discount.retry",
+      expect.objectContaining({ paymentId: s.paymentId, step: "db.mark_discount_skipped" }),
+    )
     await expectUnlocked(s)
   })
 
@@ -236,6 +300,68 @@ describe("createApplyPaymentDiscount", () => {
     expect(s.asaas.updatedPayments).toHaveLength(1)
     expect(discountNotifications(s)).toHaveLength(2)
     expect(row(s).originalAmount).toBe("39.90")
+  })
+
+  describe("PUT feito e banco falhou: Asaas e banco divergem", () => {
+    it("loga o evento, avisa o admin uma vez e devolve retry", async () => {
+      const s = await setup()
+      vi.spyOn(s.repos.payments, "applyDiscount").mockRejectedValueOnce(new Error("db"))
+
+      expect(await s.apply(s.paymentId, OPTS)).toBe("retry")
+
+      expect(s.asaas.updatedPayments).toHaveLength(1)
+      expect(s.log.error).toHaveBeenCalledWith("discount.asaas_changed_db_not", {
+        paymentId: s.paymentId,
+        message: "db",
+      })
+      expect(s.alertAdmin).toHaveBeenCalledTimes(1)
+      expect(s.alertAdmin).toHaveBeenCalledWith({
+        kind: "payment",
+        id: s.paymentId,
+        patientName: "Maria da Silva",
+        error: expect.objectContaining({ step: "db.apply_discount", message: "db", attempt: 1 }),
+      })
+      await expectUnlocked(s)
+    })
+
+    it("sem PUT nesta rodada (Asaas já tinha o valor novo) também avisa", async () => {
+      const s = await setup()
+      const remote = s.asaas.byId.get(s.asaasId)!
+      remote.value = 29.9
+      remote.dueDate = "2026-11-05"
+      vi.spyOn(s.repos.payments, "applyDiscount").mockRejectedValueOnce(new Error("db"))
+
+      expect(await s.apply(s.paymentId, OPTS)).toBe("retry")
+
+      expect(s.asaas.calls).not.toContain("updatePayment")
+      expect(s.alertAdmin).toHaveBeenCalledTimes(1)
+    })
+
+    it("falha do alerta é logada e não muda o resultado", async () => {
+      const s = await setup()
+      vi.spyOn(s.repos.payments, "applyDiscount").mockRejectedValueOnce(new Error("db"))
+      s.alertAdmin.mockRejectedValueOnce(new Error("smtp down"))
+
+      expect(await s.apply(s.paymentId, OPTS)).toBe("retry")
+
+      expect(s.log.error).toHaveBeenCalledWith("discount.alert_failed", {
+        paymentId: s.paymentId,
+        message: "smtp down",
+      })
+      await expectUnlocked(s)
+    })
+
+    it("falha antes do PUT (GET) não avisa o admin", async () => {
+      const s = await setup()
+      s.asaas.failNext("getPayment", new HttpError("HTTP 503", { transient: true, status: 503 }))
+      await s.apply(s.paymentId, OPTS)
+
+      s.asaas.failNext("updatePayment", new HttpError("x", { transient: true }))
+      await s.apply(s.paymentId, OPTS)
+
+      expect(s.alertAdmin).not.toHaveBeenCalled()
+      expect(s.log.error).not.toHaveBeenCalledWith("discount.asaas_changed_db_not", expect.anything())
+    })
   })
 
   it("sem quiz_response: aplica e avisa no log", async () => {

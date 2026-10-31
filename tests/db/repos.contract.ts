@@ -2106,7 +2106,7 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
     describe("47. desconto na cobrança", () => {
       // Janela em volta do relógio real: as cobranças criadas agora caem dentro dela.
       const win = { fromUtc: inMinutes(-10), toUtc: inMinutes(10), discountAmount: "29.90", limit: BIG }
-      const discount = { amount: "29.90", originalAmount: "39.90", dueDate: "2026-11-05" }
+      const discount = { amount: "29.90", originalAmount: "39.90", dueDate: "2026-11-05", status: "PENDING" }
 
       /** As mensagens `payment_discount` dos envios, pendentes na fila. */
       async function discountRows(repos: Repos, ...quizResponseIds: string[]): Promise<NotificationView[]> {
@@ -2215,7 +2215,10 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
 
         await repos.payments.applyDiscount(first.paymentId, { ...discount, at: new Date(), channels: BOTH })
 
-        expect(await repos.payments.listDiscountEligible(win)).not.toContain(second.paymentId)
+        const eligible = await repos.payments.listDiscountEligible(win)
+        expect(eligible).not.toContain(second.paymentId)
+        // A exclusão é por paciente: a cobrança elegível de outro paciente continua na lista.
+        expect(eligible).toContain(other.ref.paymentId)
         expect(await repos.payments.hasAppliedDiscount(patientId)).toBe(true)
         expect(await repos.payments.hasAppliedDiscount(otherPatientId)).toBe(false)
       })
@@ -2234,6 +2237,17 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         for (const n of rows) {
           expect(n).toMatchObject({ paymentId: ref.paymentId, quizResponseId: ref.quizResponseId, status: "pending" })
         }
+      })
+
+      it("applyDiscount grava o status devolvido pelo Asaas (OVERDUE volta a PENDING)", async () => {
+        const repos = await setup()
+        const ref = expectRef(await repos.submissions.create(newSub()))
+        await repos.payments.markSynced(ref.paymentId, synced("OVERDUE", "2026-10-01"))
+        expect((await repos.payments.get(ref.paymentId))!.status).toBe("OVERDUE")
+
+        await repos.payments.applyDiscount(ref.paymentId, { ...discount, status: "PENDING", at: new Date(), channels: BOTH })
+
+        expect(await repos.payments.get(ref.paymentId)).toMatchObject({ status: "PENDING", discountStatus: "applied" })
       })
 
       it("applyDiscount de novo não duplica mensagens", async () => {
