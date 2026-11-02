@@ -6,8 +6,14 @@ import type { GeneratedPlan } from "@/lib/meal-plan/plan"
 
 const plan: GeneratedPlan = {
   meals: [
-    { name: "Café da manhã", time: "07:00", foods: "Ovo mexido — 100 g", calories: 400 },
-    { name: "Almoço", time: "12:30", foods: "Arroz — 120 g\nFrango — 150 g", calories: 600 },
+    {
+      name: "Café da manhã",
+      time: "07:00",
+      foods: "Ovo mexido — 100 g",
+      calories: 400,
+      substitutes: [{ foods: "Crepioca — 1 ovo", calories: 390 }],
+    },
+    { name: "Almoço", time: "12:30", foods: "Arroz — 120 g\nFrango — 150 g", calories: 600, substitutes: [] },
   ],
   calories: 1000,
   observations: "Beba água.",

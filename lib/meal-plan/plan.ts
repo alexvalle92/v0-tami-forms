@@ -7,7 +7,14 @@ import type { PlanData } from "@/lib/db/repos/types"
 import type { Targets } from "./targets"
 
 export type GeneratedPlan = {
-  meals: { name: string; time: string; foods: string; calories: number }[]
+  meals: {
+    name: string
+    time: string
+    foods: string
+    calories: number
+    /** Opções que o paciente come no lugar da principal: nenhuma no almoço, exatamente 1 nas demais. */
+    substitutes: { foods: string; calories: number }[]
+  }[]
   calories: number
   observations: string
 }
@@ -21,6 +28,7 @@ export const generatedPlanSchema: z.ZodType<GeneratedPlan> = z.object({
       time: z.string(),
       foods: z.string(),
       calories: z.number(),
+      substitutes: z.array(z.object({ foods: z.string(), calories: z.number() })),
     }),
   ),
   calories: z.number(),
@@ -31,6 +39,8 @@ export type PlanIssue =
   | "meals_count"
   | "meal_fields"
   | "food_without_quantity"
+  | "substitutes_count"
+  | "substitute_calories_mismatch"
   | "meals_sum_mismatch"
   | "calories_out_of_range"
   | "observations_empty"
@@ -39,6 +49,8 @@ const MIN_MEALS = 2
 const MAX_MEALS = 6
 /** Soma das refeições a até 10% do total (aritmética inteira: |soma − total| · 10 <= total). */
 const SUM_TOLERANCE_DIVISOR = 10
+/** Substituta a até 10% das calorias da principal (mesma aritmética: |sub − principal| · 10 <= principal). */
+const SUBSTITUTE_TOLERANCE_DIVISOR = 10
 /** Total entre max(piso, 85% da meta) e 115% da meta, em centésimos para evitar erro de ponto flutuante. */
 const LOWER_PERCENT = 85
 const UPPER_PERCENT = 115
@@ -58,6 +70,13 @@ function hasQuantity(line: string): boolean {
   return /\d/.test(line) || AT_WILL.test(line.normalize("NFC"))
 }
 
+/** Almoço: o nome, sem acentos e em minúsculas, contém "almoco". É a única refeição sem substituta. */
+export function isLunch(name: string): boolean {
+  return name.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().includes("almoco")
+}
+
+const hasCalories = (calories: number) => Number.isFinite(calories) && calories > 0
+
 export function validatePlan(plan: GeneratedPlan, targets: Pick<Targets, "calories" | "calorieFloor">): PlanIssue[] {
   const issues = new Set<PlanIssue>()
 
@@ -68,11 +87,21 @@ export function validatePlan(plan: GeneratedPlan, targets: Pick<Targets, "calori
       meal.name.trim() !== "" &&
       meal.time.trim() !== "" &&
       meal.foods.trim() !== "" &&
-      Number.isFinite(meal.calories) &&
-      meal.calories > 0
+      hasCalories(meal.calories)
     if (!complete) issues.add("meal_fields")
 
     if (foodLines(meal.foods).some((line) => !hasQuantity(line))) issues.add("food_without_quantity")
+
+    if (meal.substitutes.length !== (isLunch(meal.name) ? 0 : 1)) issues.add("substitutes_count")
+
+    for (const sub of meal.substitutes) {
+      if (sub.foods.trim() === "" || !hasCalories(sub.calories)) issues.add("meal_fields")
+      if (foodLines(sub.foods).some((line) => !hasQuantity(line))) issues.add("food_without_quantity")
+      // Negado de propósito, como a soma: calorias não finitas (NaN) também contam como divergência.
+      if (!(Math.abs(sub.calories - meal.calories) * SUBSTITUTE_TOLERANCE_DIVISOR <= meal.calories)) {
+        issues.add("substitute_calories_mismatch")
+      }
+    }
   }
 
   const total = plan.calories
@@ -92,15 +121,28 @@ export function validatePlan(plan: GeneratedPlan, targets: Pick<Targets, "calori
   return [...issues]
 }
 
-/** Formato de `meal_plans.plan_data`: calorias da refeição viram texto inteiro, total vira inteiro. */
+/**
+ * Formato de `meal_plans.plan_data`: calorias da refeição viram texto inteiro, total vira inteiro. As
+ * substitutas seguem o mesmo formato; sem substituta (almoço), a chave `substitutes` não é gravada.
+ */
 export function toPlanData(plan: GeneratedPlan): PlanData {
   return {
-    meals: plan.meals.map((meal) => ({
-      name: meal.name.trim(),
-      time: meal.time.trim(),
-      foods: foodLines(meal.foods).join("\n"),
-      calories: String(Math.round(meal.calories)),
-    })),
+    meals: plan.meals.map((meal) => {
+      const base = {
+        name: meal.name.trim(),
+        time: meal.time.trim(),
+        foods: foodLines(meal.foods).join("\n"),
+        calories: String(Math.round(meal.calories)),
+      }
+      if (meal.substitutes.length === 0) return base
+      return {
+        ...base,
+        substitutes: meal.substitutes.map((sub) => ({
+          foods: foodLines(sub.foods).join("\n"),
+          calories: String(Math.round(sub.calories)),
+        })),
+      }
+    }),
     calories: Math.round(plan.calories),
     observations: plan.observations.trim(),
   }

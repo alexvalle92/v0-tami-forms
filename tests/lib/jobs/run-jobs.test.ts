@@ -61,6 +61,8 @@ function validPlan(): GeneratedPlan {
       time: `0${7 + i}:00`,
       foods: "Ovos — 100 g\nCafé sem açúcar — 200 ml",
       calories: each,
+      // Almoço sem substituta; as demais com uma, de mesmas calorias (regra de validatePlan)
+      substitutes: name === "Almoço" ? [] : [{ foods: "Ovos — 100 g\nCafé sem açúcar — 200 ml", calories: each }],
     })),
     calories: TARGET_CALORIES,
     observations: "Beba água.",
