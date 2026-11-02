@@ -1,6 +1,6 @@
 // Texto dos scripts que components/meta-pixel-head.tsx põe no <head>. Função pura, para testar sem React.
 
-const DEFAULT_VALUE = "39.90"
+import { paymentAmount } from "@/lib/payment-amount"
 
 export type MetaHeadScripts = {
   pixelId: string
@@ -19,8 +19,7 @@ export function metaHeadScripts(env: Record<string, string | undefined>): MetaHe
   const pixelId = env.META_PIXEL_ID
   if (!pixelId || !/^\d+$/.test(pixelId)) return null
 
-  const amount = env.PAYMENT_AMOUNT
-  const value = amount && /^\d+(\.\d{1,2})?$/.test(amount) ? amount : DEFAULT_VALUE
+  const value = paymentAmount(env)
 
   const config = `window.__TF_META__=${JSON.stringify({ pixelId, value }).replace(/</g, "\\u003c")};`
   const pixel =
