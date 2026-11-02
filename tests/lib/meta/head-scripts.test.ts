@@ -25,6 +25,13 @@ describe("metaHeadScripts", () => {
     expect(s.pixel).toContain("fbq('track','PageView')")
   })
 
+  it("desliga os eventos automáticos (SubscribedButtonClick) antes do init", () => {
+    const { pixel } = metaHeadScripts(ON)!
+
+    expect(pixel).toContain("fbq('set','autoConfig',false,'1234567890')")
+    expect(pixel.indexOf("fbq('set','autoConfig'")).toBeLessThan(pixel.indexOf("fbq('init'"))
+  })
+
   it("sem PAYMENT_AMOUNT ou com valor fora do formato, o valor é 39.90", () => {
     expect(metaHeadScripts({ ...ON, PAYMENT_AMOUNT: undefined })!.config).toContain('"value":"39.90"')
     expect(metaHeadScripts({ ...ON, PAYMENT_AMOUNT: "39,90" })!.config).toContain('"value":"39.90"')
