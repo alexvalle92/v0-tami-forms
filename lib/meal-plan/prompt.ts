@@ -1,6 +1,7 @@
 // Prompt da nutricionista e mensagem do paciente enviados à IA (spec §6.3).
-// Texto copiado, sem alterações, do fluxo n8n "Criar Dieta". O arquivo
-// docs/superpowers/plans/2026-10-11-prompt-nutricionista.md é só a cópia de referência desse fluxo:
+// Texto copiado do fluxo n8n "Criar Dieta", com a seção "Opções de substituição" acrescentada neste
+// repositório (spec 2026-11-02-navegacao-mobile-substituicoes do PlanA). O arquivo
+// docs/superpowers/plans/2026-10-11-prompt-nutricionista.md é só a cópia de referência do fluxo original:
 // a fonte que vale é este arquivo, `prompt.ts`.
 
 import type { PlanAnswers } from "./answers"
@@ -179,6 +180,18 @@ Repetir o almoço ou
 Direcionamento: Priorize a utilização dos alimentos acima, mas fique a vontade para acrescentar outros alimentos caso seja necessário
 
 ### No campo de observações, descreva para o paciente algumas melhorias que pode fazer no dia a dia e como deve ser seu consumo diário de água.
+
+---
+
+# Opções de substituição
+
+Toda refeição tem uma opção principal e exatamente 1 opção de substituição, no campo substitutes. O almoço não tem substituição: nele, substitutes fica vazio.
+
+- A substituição é uma refeição completa e diferente da principal, que o paciente come no lugar dela.
+- Os alimentos da substituição seguem as mesmas regras do campo foods: nome, quantidade em gramas (g) ou unidades (un), medida caseira e um alimento por linha.
+- Priorize os alimentos da seção "Priorização de alimentos por refeição".
+- As calorias da substituição ficam próximas das da principal, com no máximo 10% de diferença.
+- O total de calorias do plano é a soma das opções principais; as substituições não entram na soma.
 
 ---
 
