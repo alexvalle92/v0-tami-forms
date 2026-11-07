@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import Script from 'next/script'
+import { MetaPixelHead } from '@/components/meta-pixel-head'
 import './globals.css'
 
 const _geist = Geist({ subsets: ['latin'] })
@@ -37,6 +38,7 @@ export default function RootLayout({
         })(window,document,'script','dataLayer','GTM-PPXNWRMB');
       `}
     </Script>
+    <MetaPixelHead />
   </head>
 
   <body>

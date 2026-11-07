@@ -71,4 +71,112 @@ describe("parseEnv", () => {
   it("PLANA_APP_URL precisa ser URL", () => {
     expect(() => parseEnv({ ...valid, PLANA_APP_URL: "nao-e-url" })).toThrow("PLANA_APP_URL")
   })
+
+  it("deixa o rastreamento da Meta desligado por padrão, sem exigir id nem token", () => {
+    const env = parseEnv(valid)
+    expect(env.META_TRACKING_ENABLED).toBe(false)
+    expect(env.META_API_VERSION).toBe("v24.0")
+    expect(env.META_PIXEL_ID).toBeUndefined()
+  })
+
+  it("exige META_PIXEL_ID e META_CAPI_TOKEN com o rastreamento ligado", () => {
+    expect(() => parseEnv({ ...valid, META_TRACKING_ENABLED: "true" })).toThrow(
+      /META_PIXEL_ID.*META_CAPI_TOKEN|META_CAPI_TOKEN.*META_PIXEL_ID/,
+    )
+  })
+
+  it("aceita o rastreamento ligado com id só de dígitos e token", () => {
+    const env = parseEnv({
+      ...valid,
+      META_TRACKING_ENABLED: "true",
+      META_PIXEL_ID: "1234567890",
+      META_CAPI_TOKEN: "EAAB",
+      META_TEST_EVENT_CODE: "TEST123",
+    })
+    expect(env.META_TRACKING_ENABLED).toBe(true)
+    expect(env.META_TEST_EVENT_CODE).toBe("TEST123")
+  })
+
+  it("com o rastreamento ligado, rejeita META_PIXEL_ID com letras e META_API_VERSION fora do formato vNN.N", () => {
+    const on = { ...valid, META_TRACKING_ENABLED: "true", META_PIXEL_ID: "1234567890", META_CAPI_TOKEN: "EAAB" }
+    expect(() => parseEnv({ ...on, META_PIXEL_ID: "abc" })).toThrow(/META_PIXEL_ID/)
+    expect(() => parseEnv({ ...on, META_API_VERSION: "24" })).toThrow(/META_API_VERSION/)
+  })
+
+  it("com o rastreamento desligado, variáveis META_* em branco ou fora do formato não impedem o boot", () => {
+    const env = parseEnv({
+      ...valid,
+      META_TRACKING_ENABLED: "false",
+      META_PIXEL_ID: "numero-do-pixel",
+      META_CAPI_TOKEN: "",
+      META_API_VERSION: "",
+      META_TEST_EVENT_CODE: " ",
+    })
+    expect(env.META_TRACKING_ENABLED).toBe(false)
+    expect(env.META_API_VERSION).toBe("v24.0")
+  })
+
+  it("META_TRACKING_ENABLED em branco vale como desligado", () => {
+    expect(parseEnv({ ...valid, META_TRACKING_ENABLED: "" }).META_TRACKING_ENABLED).toBe(false)
+  })
+
+  it("com o rastreamento ligado, META_* em branco contam como ausentes", () => {
+    expect(() =>
+      parseEnv({ ...valid, META_TRACKING_ENABLED: "true", META_PIXEL_ID: "", META_CAPI_TOKEN: "EAAB" }),
+    ).toThrow(/META_PIXEL_ID/)
+    const env = parseEnv({
+      ...valid,
+      META_TRACKING_ENABLED: "true",
+      META_PIXEL_ID: "1234567890",
+      META_CAPI_TOKEN: "EAAB",
+      META_API_VERSION: "",
+      META_TEST_EVENT_CODE: "",
+    })
+    expect(env.META_API_VERSION).toBe("v24.0")
+    expect(env.META_TEST_EVENT_CODE).toBeUndefined()
+  })
+})
+
+describe("parseEnv: desconto na cobrança", () => {
+  it("desconto: padrões", () => {
+    const env = parseEnv(valid)
+    expect({
+      PAYMENT_DISCOUNT_ENABLED: env.PAYMENT_DISCOUNT_ENABLED,
+      PAYMENT_DISCOUNT_AMOUNT: env.PAYMENT_DISCOUNT_AMOUNT,
+      PAYMENT_DISCOUNT_DUE_DAYS: env.PAYMENT_DISCOUNT_DUE_DAYS,
+    }).toEqual({ PAYMENT_DISCOUNT_ENABLED: false, PAYMENT_DISCOUNT_AMOUNT: "29.90", PAYMENT_DISCOUNT_DUE_DAYS: 5 })
+  })
+
+  it("desconto desligado: valores em branco ou inválidos não impedem o boot", () => {
+    const env = parseEnv({
+      ...valid,
+      PAYMENT_DISCOUNT_ENABLED: "",
+      PAYMENT_DISCOUNT_AMOUNT: "abc",
+      PAYMENT_DISCOUNT_DUE_DAYS: "-1",
+    })
+    expect(env.PAYMENT_DISCOUNT_ENABLED).toBe(false)
+    expect(env.PAYMENT_DISCOUNT_DUE_DAYS).toBe(5)
+  })
+
+  it("desconto ligado: lê os valores", () => {
+    const env = parseEnv({
+      ...valid,
+      PAYMENT_DISCOUNT_ENABLED: "true",
+      PAYMENT_DISCOUNT_AMOUNT: "24.90",
+      PAYMENT_DISCOUNT_DUE_DAYS: "7",
+    })
+    expect(env.PAYMENT_DISCOUNT_ENABLED).toBe(true)
+    expect(env.PAYMENT_DISCOUNT_AMOUNT).toBe("24.90")
+    expect(env.PAYMENT_DISCOUNT_DUE_DAYS).toBe(7)
+  })
+
+  it("desconto ligado com valor inválido: falha citando a variável", () => {
+    const on = { ...valid, PAYMENT_DISCOUNT_ENABLED: "true" }
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "29,90" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "0" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "0.00" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_AMOUNT: "29.999" })).toThrow(/PAYMENT_DISCOUNT_AMOUNT/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_DUE_DAYS: "1.5" })).toThrow(/PAYMENT_DISCOUNT_DUE_DAYS/)
+    expect(() => parseEnv({ ...on, PAYMENT_DISCOUNT_DUE_DAYS: "0" })).toThrow(/PAYMENT_DISCOUNT_DUE_DAYS/)
+  })
 })

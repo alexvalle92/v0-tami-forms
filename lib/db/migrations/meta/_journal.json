@@ -29,6 +29,34 @@
       "when": 1791829848036,
       "tag": "0003_plan_expiring_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1792844393915,
+      "tag": "0004_observability_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1792844913701,
+      "tag": "0005_observability_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1792868830121,
+      "tag": "0006_meta_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1793488083380,
+      "tag": "0007_payment_discount",
+      "breakpoints": true
     }
   ]
 }

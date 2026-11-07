@@ -55,7 +55,7 @@ O servidor abre em `http://localhost:5000` (a porta é sempre 5000). As migratio
 
 O modelo está em `.env.example`. Nenhuma variável começa com `NEXT_PUBLIC_`: todas ficam só no servidor.
 
-Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e lista o que está errado. Para usar o valor padrão, **remova** a variável; não deixe `NOME=` em branco.
+Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e lista o que está errado. Para usar o valor padrão, **remova** a variável; não deixe `NOME=` em branco. A exceção são as `META_*`: em branco contam como ausentes e, com `META_TRACKING_ENABLED` desligado, nem são conferidas.
 
 | Variável | Obrigatória | Para que serve |
 |---|---|---|
@@ -83,6 +83,14 @@ Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e l
 | `ANTHROPIC_MODEL` | não | Modelo da IA. Padrão `claude-opus-5-5`. Para usar o padrão, **remova** a variável: `ANTHROPIC_MODEL=` em branco é inválido |
 | `ACCESS_PASSWORD_SECRET` | sim | Segredo de pelo menos 32 caracteres, aleatório. Dele sai a senha temporária de cada paciente. **Não troque depois** (veja abaixo) |
 | `PLANA_APP_URL` | não | Endereço do PlanA que vai nas mensagens. Padrão `https://plana.nutritamilivalle.com.br/` |
+| `PAYMENT_DISCOUNT_ENABLED` | não | `true` liga o desconto automático na cobrança não paga; `false` (padrão) desliga. Veja "Desconto automático na cobrança não paga" |
+| `PAYMENT_DISCOUNT_AMOUNT` | não | Valor com desconto, com ponto e até 2 casas. Padrão `29.90`. Ignorado com o desconto desligado |
+| `PAYMENT_DISCOUNT_DUE_DAYS` | não | Dias de validade da condição especial, contados a partir do dia em que o desconto é aplicado. Padrão `5`. Ignorado com o desconto desligado |
+| `META_TRACKING_ENABLED` | não | `true` liga o Pixel da Meta e a API de Conversões; `false` (padrão) desliga tudo. Veja a seção "Pixel da Meta e API de Conversões" |
+| `META_PIXEL_ID` | se `META_TRACKING_ENABLED=true` | Id do Pixel da Meta, só dígitos |
+| `META_CAPI_TOKEN` | se `META_TRACKING_ENABLED=true` | Token de acesso da API de Conversões |
+| `META_API_VERSION` | não | Versão da Graph API. Padrão `v24.0` |
+| `META_TEST_EVENT_CODE` | não | Código da aba "Testar eventos" da Meta. Só para testar; remova em produção |
 
 Para gerar um `JOBS_TOKEN`: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
@@ -147,6 +155,317 @@ Outros eventos, se marcados, são aceitos e ignorados. Cartão de crédito: o As
 
 O app responde `200` mesmo para corpo ilegível, justamente para não pausar a fila à toa. Só responde `401` (token errado ou ausente) e `500` (falha do banco, quando pede reenvio).
 
+## Pixel da Meta e API de Conversões
+
+O quiz avisa a Meta de quem avança no funil, para a campanha otimizar por quem converte e não só por quem clica. Tudo é desligado por padrão (`META_TRACKING_ENABLED=false`).
+
+| Evento | Quando dispara | Por onde |
+|---|---|---|
+| `PageView` | Abriu qualquer página | Pixel (navegador) |
+| `ViewContent` | Abriu o quiz | Pixel + API de Conversões (mesmo `event_id`, a Meta deduplica) |
+| `Lead` | Informou o e-mail e avançou (etapa 24) | Pixel + API de Conversões |
+| `InitiateCheckout` | Clicou em "Garantir Meu Plano Alimentar Agora" | Pixel + API de Conversões, com o valor de `PAYMENT_AMOUNT` |
+| `Purchase` | Chegou o webhook de pagamento do Asaas | **Só pelo servidor**, com o valor da cobrança |
+
+O `Purchase` sai do servidor porque o pagamento acontece no domínio do Asaas e muita gente não volta para `/confirmationPayment`.
+
+**Variáveis** (também na tabela da seção 4):
+
+| Variável | Para que serve |
+|---|---|
+| `META_TRACKING_ENABLED` | `true` liga o Pixel, o espelho, a gravação da atribuição e o envio do `Purchase`. Padrão `false`. Vale com um reinício, sem novo build |
+| `META_PIXEL_ID` | Id do Pixel (só dígitos). Obrigatória se ligado |
+| `META_CAPI_TOKEN` | Token de acesso da API de Conversões. Obrigatória se ligado. Nunca vai para o log |
+| `META_API_VERSION` | Versão da Graph API. Padrão `v24.0`; confira a vigente no Gerenciador de Eventos |
+| `META_TEST_EVENT_CODE` | Código da aba "Testar eventos". Enquanto existir, todo envio do servidor vai como teste. **Remova em produção** |
+
+**Como funciona o `Purchase`.** O envio do quiz grava em `meta_attributions` o que a Meta usa para casar a compra com o clique (cookies `_fbp` e `_fbc`, o `fbclid` da URL, IP, User-Agent e a página). No primeiro evento de pagamento da cobrança, o webhook do Asaas coloca uma linha em `meta_conversions`, na mesma transação, e o envio é tentado logo depois da resposta ao Asaas. Se a Meta estiver fora do ar, o job de 2 minutos repete com espera crescente, até 8 tentativas ou 7 dias (o limite da Meta); depois disso a linha vira `failed` e o `ADMIN_ALERT_EMAIL` recebe o aviso. Cobrança sem atribuição não gera `Purchase`: renovações pedidas pelo PlanA (`/api/renewals`) e quem pagou depois de um quiz feito com o rastreamento desligado.
+
+**Dados pessoais.** E-mail, telefone e nome saem para a Meta com hash SHA-256; o CPF nunca sai. IP e User-Agent saem sem hash, como a Meta exige, e ficam guardados 90 dias. Não há banner de consentimento: `trackingAllowed()` em `lib/client/meta.ts` é o ponto onde um banner passaria a decidir se o Pixel carrega. Cabe a você decidir se a política de privacidade já cita a Meta.
+
+**Ativação:**
+
+1. No Gerenciador de Eventos da Meta, anote o id do Pixel, gere o token de acesso da API de Conversões e confira a versão vigente da Graph API.
+2. No GTM (`GTM-PPXNWRMB`), confira que **não existe tag da Meta**; se existir, pause antes de publicar, ou os eventos contam em dobro.
+3. No Easypanel, defina `META_TRACKING_ENABLED=true`, `META_PIXEL_ID`, `META_CAPI_TOKEN`, `META_API_VERSION` e `META_TEST_EVENT_CODE` (o código da aba "Testar eventos"). Reinicie: o boot aplica a migration `0006`, que cria as duas tabelas.
+4. Abra o quiz no celular por um link com `?fbclid=teste` e passe até o botão final. Em "Testar eventos", confira `PageView`, `ViewContent`, `Lead` e `InitiateCheckout`, cada um recebido pelo navegador e pelo servidor e marcado como desduplicado.
+5. Pague uma cobrança no sandbox do Asaas e confira o `Purchase` com o valor da cobrança, vindo do servidor, sem abrir `/confirmationPayment`.
+6. Remova `META_TEST_EVENT_CODE`, reinicie e configure a campanha para otimizar por `Purchase` (ou por `InitiateCheckout` enquanto o volume de compras for baixo demais para sair da fase de aprendizado).
+
+**Acompanhar o `Purchase`:**
+
+```sql
+SELECT id, payment_id, status, attempts, next_attempt_at,
+       JSON_UNQUOTE(JSON_EXTRACT(last_error, '$.message')) AS erro
+FROM meta_conversions
+WHERE status <> 'sent'
+ORDER BY created_at DESC;
+```
+
+Para reabrir uma conversão `failed`, veja "Rodar o job na mão e reabrir falhas".
+
+## Observabilidade (funil e erros)
+
+O app grava o caminho de quem preenche o quiz e os erros das integrações no próprio MySQL, e o **Metabase** (gratuito, no Easypanel) mostra isso em painéis, sem escrever SQL no dia a dia.
+
+### O que é gravado e o que nunca é gravado
+
+- **Funil do quiz** (`funnel_sessions` e `funnel_events`): um id aleatório por aba (`sessionStorage`, sem vínculo com o paciente), a etapa vista, o tempo em cada etapa, os erros de validação, o resultado do envio, o clique no checkout, a origem (UTM e só o host do referrer), o aparelho (tipo, sistema e navegador, tirados do User-Agent) e as respostas não sensíveis da lista permitida (faixa etária, sexo biológico, tipo físico, refeições, sono, água etc.; o IMC entra só como faixa).
+- **Erros do backend** (`app_logs`): todo `warn` e `error` do logger (Asaas, e-mail, WhatsApp, Anthropic, webhook, envio do quiz) e quatro eventos de sucesso (`submit.done`, `webhook.asaas.received`, `plan.generation.done`, `notification.dispatch.sent`), para calcular a taxa de falha. É o mesmo texto que já vai para o stdout, já mascarado.
+- **Nunca é gravado:** nome, CPF, e-mail, WhatsApp, peso, altura, meta e IMC numérico; o IP (só o rate limit em memória o usa); o User-Agent bruto.
+- O usuário `metabase_ro` só lê as 3 tabelas e as 5 views abaixo. Ele **não** enxerga `patients`, `payments`, `quiz_responses` nem `notifications`.
+
+### Metabase no Easypanel
+
+Faça depois do primeiro deploy do app com as migrations `0004` e `0005` aplicadas (o `GRANT` falha em tabela que ainda não existe). Os comandos SQL rodam como `root`, no console do serviço MySQL do Easypanel.
+
+1. **Banco interno do Metabase e o usuário dele** (o Metabase guarda aqui as perguntas e os painéis, separado do `tami_forms`):
+
+   ```sql
+   CREATE DATABASE metabase CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+   CREATE USER 'metabase_app'@'%' IDENTIFIED BY '<senha forte>';
+   GRANT ALL PRIVILEGES ON metabase.* TO 'metabase_app'@'%';
+   ```
+
+2. **Usuário de leitura** (é com ele que o Metabase consulta os dados do app; só `SELECT`, e só nestas tabelas e views):
+
+   ```sql
+   CREATE USER 'metabase_ro'@'%' IDENTIFIED BY '<senha forte>';
+   GRANT SELECT ON tami_forms.funnel_sessions TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.funnel_events TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.app_logs TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_funnel_steps TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_abandonment TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_session_answers TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_step_durations TO 'metabase_ro'@'%';
+   GRANT SELECT ON tami_forms.vw_api_errors TO 'metabase_ro'@'%';
+   ```
+
+   Os usuários `metabase_*` são criados em `'%'` para a rede interna do Easypanel: **não publique a porta do MySQL na internet** no Easypanel. O usuário do próprio app (o de `DATABASE_URL`) precisa de permissão para `CREATE VIEW`, porque a migration das views roda no boot.
+
+   Se o banco do app não se chamar `tami_forms`, troque o nome nas 8 linhas. Os `GRANT` valem pelo nome: continuam valendo quando uma migration recria uma view.
+
+3. **Serviço novo** pelo template **Metabase** do Easypanel, com estas variáveis de ambiente:
+
+   | Variável | Valor |
+   |---|---|
+   | `MB_DB_TYPE` | `mysql` |
+   | `MB_DB_HOST` | host interno do serviço MySQL (o nome do serviço, como no `DATABASE_URL`) |
+   | `MB_DB_PORT` | `3306` |
+   | `MB_DB_DBNAME` | `metabase` |
+   | `MB_DB_USER` | `metabase_app` |
+   | `MB_DB_PASS` | a senha do `metabase_app` |
+   | `JAVA_OPTS` | `-Xmx1g` |
+
+   Defina o limite de memória do serviço em **1,5 GB** (o servidor tem 8 GB, a maior parte livre).
+4. **Domínio próprio** (por exemplo `painel.nutritamilivalle.com.br`) no proxy do Easypanel. No primeiro acesso, crie o usuário admin.
+5. No Metabase, em `Admin > Bancos de dados > Adicionar banco`, escolha **MySQL**, informe o host interno, a porta `3306`, o banco `tami_forms` e o usuário `metabase_ro`. Em `Admin > Configurações > Localização`, deixe o fuso do relatório em `America/Sao_Paulo`. As datas das tabelas estão em UTC; os gráficos "por dia" (painéis 8 e 9) agrupam por dia UTC, então o dia vira às 21h de Brasília.
+6. Crie as 9 perguntas abaixo (`Novo > Pergunta SQL`, banco `tami_forms`) e monte um painel com elas. Nas perguntas com `{{periodo}}`, `{{utm_source}}`, `{{utm_campaign}}` ou `{{device_type}}`, abra a variável, escolha o tipo **Filtro de campo** e aponte para a coluna da tabela indicada em cada painel; depois ligue esses filtros aos filtros do painel (`Período`, `utm_source`, `utm_campaign`, `device_type`). Os trechos `[[AND ...]]` só entram na consulta quando o filtro é preenchido.
+
+**Se der erro de conexão.** O MySQL 8 cria usuários com `caching_sha2_password`, e o Metabase, numa conexão interna sem TLS, pode recusar com `Public Key Retrieval is not allowed`. Os comandos acima ficam como estão; escolha uma destas saídas (confira os nomes exatos na documentação do Metabase da sua versão):
+
+- **Banco de dados `tami_forms` (usuário `metabase_ro`):** no formulário de conexão, abra as opções avançadas e, no campo de opções adicionais do JDBC, coloque `allowPublicKeyRetrieval=true`.
+- **Banco interno do Metabase (usuário `metabase_app`):** se o serviço não subir com esse erro, troque as variáveis `MB_DB_*` separadas por uma só, `MB_DB_CONNECTION_URI=mysql://<host>:3306/metabase?user=metabase_app&password=<senha>&allowPublicKeyRetrieval=true` (forma de URI única descrita na documentação do Metabase; confira se a sua versão aceita esse formato).
+- **Só no MySQL 8.0:** em vez de mexer na conexão, troque o plugin do usuário, por exemplo `ALTER USER 'metabase_ro'@'%' IDENTIFIED WITH mysql_native_password BY '<senha forte>';` (idem para `metabase_app`). No MySQL 8.4 esse plugin vem desativado, então prefira as duas opções acima.
+
+### Os 9 painéis
+
+Duas regras valem para todos: o filtro de campo do Metabase escreve o nome da tabela na frente da coluna, por isso as consultas **não usam apelido de tabela** nos pontos onde há `{{...}}`; e o MySQL não tem `MEDIAN`, por isso a mediana e o p90 do painel 3 usam `ROW_NUMBER()` e `COUNT()` por `step_slug`.
+
+#### 1. Funil por etapa
+
+Objetivo: ver quantas sessões chegaram a cada etapa e quanto cai de uma etapa para a seguinte. Filtros de campo: `periodo` em `funnel_sessions.started_at`, `utm_source`, `utm_campaign` e `device_type` nas colunas de mesmo nome de `funnel_sessions`. Visualização: **Funil** (etapa = `step_slug`, medida = `sessoes`); a tabela mostra também `pct_do_inicio` e `pct_queda`.
+
+```sql
+SELECT vw_funnel_steps.step,
+       vw_funnel_steps.step_slug,
+       COUNT(funnel_sessions.session_id) AS sessoes,
+       ROUND(100 * COUNT(funnel_sessions.session_id)
+             / NULLIF(FIRST_VALUE(COUNT(funnel_sessions.session_id)) OVER (ORDER BY vw_funnel_steps.step), 0), 1) AS pct_do_inicio,
+       ROUND(100 * (1 - COUNT(funnel_sessions.session_id)
+             / NULLIF(LAG(COUNT(funnel_sessions.session_id)) OVER (ORDER BY vw_funnel_steps.step), 0)), 1) AS pct_queda
+FROM vw_funnel_steps
+LEFT JOIN funnel_sessions
+       ON funnel_sessions.max_step >= vw_funnel_steps.step
+       [[AND {{periodo}}]]
+       [[AND {{utm_source}}]]
+       [[AND {{utm_campaign}}]]
+       [[AND {{device_type}}]]
+GROUP BY vw_funnel_steps.step, vw_funnel_steps.step_slug
+ORDER BY vw_funnel_steps.step;
+```
+
+Sem filtros, o resultado é o mesmo de `SELECT step, step_slug, sessions, pct_of_start FROM vw_funnel_steps ORDER BY step`.
+
+#### 2. Onde abandonam
+
+Objetivo: descobrir em que etapa ficam as sessões que não chegaram ao checkout e pararam há mais de 30 minutos. Filtros de campo: `periodo` em `vw_abandonment.started_at`; `utm_source`, `utm_campaign` e `device_type` nas colunas de `vw_abandonment`. Visualização: **Barras**, etapa no eixo X (`abandon_step_slug`) e `sessoes` no Y.
+
+```sql
+SELECT abandon_step, abandon_step_slug, COUNT(*) AS sessoes
+FROM vw_abandonment
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{utm_source}}]]
+  [[AND {{utm_campaign}}]]
+  [[AND {{device_type}}]]
+GROUP BY abandon_step, abandon_step_slug
+ORDER BY abandon_step;
+```
+
+#### 3. Tempo por etapa
+
+Objetivo: achar as etapas em que as pessoas demoram mais, pela mediana e pelo percentil 90 (o p90 mostra o "lento" que a mediana esconde). Filtro de campo: `periodo` em `vw_step_durations.created_at`. Visualização: **Barras** com `mediana_s` e `p90_s` por `step_slug`, ou tabela.
+
+```sql
+WITH ordenado AS (
+  SELECT step,
+         step_slug,
+         duration_ms,
+         ROW_NUMBER() OVER (PARTITION BY step_slug ORDER BY duration_ms) AS posicao,
+         COUNT(*)     OVER (PARTITION BY step_slug)                      AS total
+  FROM vw_step_durations
+  WHERE duration_ms IS NOT NULL
+    [[AND {{periodo}}]]
+)
+SELECT step,
+       step_slug,
+       MAX(total) AS respostas,
+       ROUND(AVG(CASE WHEN posicao IN (FLOOR((total + 1) / 2), CEIL((total + 1) / 2)) THEN duration_ms END) / 1000, 1) AS mediana_s,
+       ROUND(MIN(CASE WHEN posicao >= CEIL(0.9 * total) THEN duration_ms END) / 1000, 1) AS p90_s
+FROM ordenado
+GROUP BY step, step_slug
+ORDER BY step;
+```
+
+#### 4. Erros de validação
+
+Objetivo: ver em que etapa e por qual motivo (`vazio`, `email_invalido`, `telefone_invalido`, `cpf_invalido`) as pessoas esbarram na validação. Filtro de campo: `periodo` em `funnel_events.created_at`. Visualização: **Barras empilhadas**, `step_slug` no eixo X e `motivo` como série.
+
+```sql
+SELECT step,
+       step_slug,
+       JSON_UNQUOTE(JSON_EXTRACT(props, '$.reason')) AS motivo,
+       COUNT(*) AS total
+FROM funnel_events
+WHERE event = 'validation_error'
+  [[AND {{periodo}}]]
+GROUP BY step, step_slug, motivo
+ORDER BY total DESC;
+```
+
+#### 5. Conversão por origem
+
+Objetivo: comparar a origem do tráfego pela parte das sessões que chega ao clique no checkout. Sem UTM, a origem mostra o host do referrer (`ref:...`) ou `(direto)`. Filtros de campo: `periodo` em `funnel_sessions.started_at` e `device_type` em `funnel_sessions.device_type`. Visualização: **Tabela** ordenada por `sessoes` (ou barras com `pct_checkout`).
+
+```sql
+SELECT COALESCE(utm_source, CONCAT('ref:', referrer_host), '(direto)') AS origem,
+       COALESCE(utm_campaign, '(sem campanha)') AS campanha,
+       COUNT(*) AS sessoes,
+       SUM(checkout_clicked) AS checkouts,
+       ROUND(100 * SUM(checkout_clicked) / COUNT(*), 1) AS pct_checkout
+FROM funnel_sessions
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{device_type}}]]
+GROUP BY origem, campanha
+ORDER BY sessoes DESC;
+```
+
+#### 6. Conversão por aparelho
+
+Objetivo: ver se o quiz converte pior em algum aparelho, sistema ou navegador (inclusive os navegadores internos do Instagram e do Facebook). Filtros de campo: `periodo` em `funnel_sessions.started_at`, `utm_source` e `utm_campaign` em `funnel_sessions`. Visualização: **Tabela** (ou barras de `pct_checkout` por `device_type`). O Safari do iPadOS 13 ou mais novo se identifica como Mac, então os iPads aparecem como desktop/macOS.
+
+```sql
+SELECT device_type,
+       os,
+       browser,
+       COUNT(*) AS sessoes,
+       SUM(checkout_clicked) AS checkouts,
+       ROUND(100 * SUM(checkout_clicked) / COUNT(*), 1) AS pct_checkout
+FROM funnel_sessions
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{utm_source}}]]
+  [[AND {{utm_campaign}}]]
+GROUP BY device_type, os, browser
+ORDER BY sessoes DESC;
+```
+
+#### 7. Respostas × abandono
+
+Objetivo: cruzar uma resposta do quiz com a etapa em que a pessoa abandonou (o exemplo usa `tipo_fisico`; troque `vw_session_answers.tipo_fisico` por qualquer outra coluna da view: `faixa_etaria`, `sexo_biologico`, `peso_comportamento`, `sono`, `agua`, `imc_faixa` etc.). Só entram sessões abandonadas. Filtros de campo: `periodo` em `vw_session_answers.started_at`; `utm_source`, `utm_campaign` e `device_type` em `vw_session_answers`. Visualização: **Barras empilhadas**, `abandon_step_slug` no eixo X e `resposta` como série.
+
+```sql
+SELECT vw_abandonment.abandon_step,
+       vw_abandonment.abandon_step_slug,
+       COALESCE(vw_session_answers.tipo_fisico, '(sem resposta)') AS resposta,
+       COUNT(*) AS sessoes
+FROM vw_session_answers
+JOIN vw_abandonment ON vw_abandonment.session_id = vw_session_answers.session_id
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+  [[AND {{utm_source}}]]
+  [[AND {{utm_campaign}}]]
+  [[AND {{device_type}}]]
+GROUP BY vw_abandonment.abandon_step, vw_abandonment.abandon_step_slug, resposta
+ORDER BY vw_abandonment.abandon_step, sessoes DESC;
+```
+
+#### 8. Falhas de envio no navegador
+
+Objetivo: saber quantas tentativas de envio (etapa `envio`) deram certo e quantas falharam, e de que tipo (`http_4xx`, `http_5xx`, `timeout`, `rede`, `resposta_invalida`, `storage`), dia a dia. Filtro de campo: `periodo` em `funnel_events.created_at`. Visualização: **Barras empilhadas** por `dia`, com `resultado` como série.
+
+```sql
+SELECT DATE(created_at) AS dia,
+       JSON_UNQUOTE(JSON_EXTRACT(props, '$.outcome')) AS resultado,
+       COUNT(*) AS total
+FROM funnel_events
+WHERE event = 'submit_result'
+  [[AND {{periodo}}]]
+GROUP BY dia, resultado
+ORDER BY dia, resultado;
+```
+
+#### 9. Saúde das integrações
+
+Objetivo: acompanhar os erros do servidor por área (a parte do nome do evento antes do primeiro ponto: `payment`, `webhook`, `submit`, `events`, `plan`, `notification`, `notifications`, `renewals`, `job`, `jobs`, `boot`, `alert_admin`, `notice_admin`; as falhas do Asaas aparecem em `payment.*` e `webhook.asaas.*`, não existe uma área `asaas`) e por dia, com os sucessos ao lado. Só quatro eventos de sucesso são gravados (`submit`, `webhook`, `plan` e `notification`); nas demais áreas a coluna `sucessos` fica em 0. Nas áreas `submit` e `events`, os avisos de erro do cliente (4xx, como `*.invalid` e `*.bad_body`) também contam como "erros". Os avisos de limite de requisições (`events.rate_limited` e `submit.rate_limited`) não são gravados em `app_logs`. Filtro de campo: `periodo` em `vw_api_errors.day`. Visualização: **Linhas** (ou barras) com `erros` e `sucessos` por `day`, uma série por `area`.
+
+```sql
+SELECT day,
+       area,
+       SUM(CASE WHEN level IN ('warn', 'error') THEN total ELSE 0 END) AS erros,
+       SUM(CASE WHEN level = 'info' THEN total ELSE 0 END) AS sucessos
+FROM vw_api_errors
+WHERE 1 = 1
+  [[AND {{periodo}}]]
+GROUP BY day, area
+ORDER BY day, area;
+```
+
+Para ver quais eventos estão falhando (uma tabela de apoio ao lado do painel 9, mesmo filtro `periodo`):
+
+```sql
+SELECT area, event, level, SUM(total) AS total
+FROM vw_api_errors
+WHERE level IN ('warn', 'error')
+  [[AND {{periodo}}]]
+GROUP BY area, event, level
+ORDER BY total DESC;
+```
+
+### Quando uma etapa do quiz mudar
+
+A lista de etapas (`vw_funnel_steps`) e a de chaves de resposta (`vw_session_answers`) estão **copiadas** dentro da migration `0005_observability_views.sql`, a partir de `QUIZ_STEPS` e `ALLOWED_ANSWER_KEYS` (`lib/quiz/steps.ts`). Ao entrar, sair ou renomear uma etapa, ou ao incluir uma chave de resposta, crie uma **nova migration** que recria as views (`DROP VIEW` + `CREATE VIEW`). Enquanto isso não for feito, o teste `tests/lib/quiz/steps-migration.test.ts` falha. Etapa nova ganha um slug novo e as outras mantêm o seu; assim a comparação ao longo do tempo continua válida.
+
+### Retenção
+
+- Funil (`funnel_events` e `funnel_sessions`): **365 dias**.
+- `app_logs`: **90 dias**.
+- `meta_attributions` (IP, User-Agent e cookies da Meta de cada envio do quiz): **90 dias**.
+
+A limpeza roda no fim de cada rodada do job (a cada 2 minutos), apagando até 1.000 linhas por tabela por rodada. Para mudar os prazos ou o tamanho do lote, edite `FUNNEL_RETENTION_DAYS`, `APP_LOG_RETENTION_DAYS`, `META_ATTRIBUTION_RETENTION_DAYS` e `PURGE_BATCH` em `lib/jobs/purge-observability.ts`.
+
 ## 6. Operação
 
 ### O job de fundo
@@ -156,11 +475,41 @@ A cada 2 minutos o app executa uma rodada que:
 - termina as cobranças que o Asaas não conseguiu criar antes (até 20 por rodada);
 - gera os planos alimentares que ficaram pendentes (até 3 por rodada). Normalmente o plano sai logo depois do pagamento; esta etapa é a rede de segurança para quando a geração falhou ou o app reiniciou no meio;
 - enfileira os avisos de vencimento do plano (ver "Integração com o PlanA"). Esta etapa só age entre **9h e 20h de São Paulo**: fora desse horário a rodada a ignora e a primeira rodada dentro da janela cria os avisos do dia (nunca duplica);
-- envia os e-mails e WhatsApps pendentes (até 50 por rodada). Os das etapas anteriores, inclusive os avisos de vencimento, já saem na mesma rodada.
+- com `PAYMENT_DISCOUNT_ENABLED=true`, aplica o desconto nas cobranças de ontem que ainda não foram pagas (até 50 por rodada, só entre **9h e 20h de São Paulo**; ver "Desconto automático na cobrança não paga");
+- envia os e-mails e WhatsApps pendentes (até 50 por rodada). Os das etapas anteriores, inclusive os avisos de vencimento e os do desconto, já saem na mesma rodada.
 
 Quando uma tentativa falha, a espera cresce: 2, 4, 8, 16 e 32 minutos; depois, 60 minutos entre tentativas. O limite é de **8 tentativas** por cobrança, **5** por geração de plano (esperas de 2, 4, 8 e 16 minutos) e **5** por mensagem. Esgotado o limite, o item vira falha definitiva e um e-mail é enviado para `ADMIN_ALERT_EMAIL`.
 
 Erros que não adiantam repetir (por exemplo, o Asaas recusar os dados) viram falha definitiva logo na primeira vez.
+
+### Desconto automático na cobrança não paga
+
+No dia seguinte à criação da cobrança, a partir das 9h (São Paulo), o app baixa o valor da cobrança ainda em aberto para `PAYMENT_DISCOUNT_AMOUNT` (padrão R$ 29,90), estende o vencimento para hoje + `PAYMENT_DISCOUNT_DUE_DAYS` (padrão 5 dias) e avisa o paciente por e-mail e WhatsApp: "condição especial, de R$ 39,90 para R$ 29,90, vale até dd/mm/aaaa". O link de pagamento é o mesmo.
+
+Regras:
+
+- **Quais cobranças:** as criadas **ontem** (dia de São Paulo), de 1º quiz ou renovação, que ainda estão em aberto no Asaas (pendentes ou vencidas, sem pagamento) e com valor **maior** que o do desconto. O desconto nunca aumenta o preço.
+- **Janela:** a etapa só age das **9h às 20h** de São Paulo. A primeira rodada da janela aplica; se o servidor estiver fora do ar às 9h, aplica quando voltar. Depois das 20h as cobranças de ontem perdem a oferta, e as de anteontem não são recuperadas.
+- **Uma vez por paciente:** quem já recebeu o desconto em alguma cobrança não recebe de novo. Quem pagou o valor cheio antes continua elegível nas próximas cobranças.
+- **Uma vez por cobrança:** uma cobrança já avaliada (com desconto ou descartada) nunca é alterada de novo.
+- **Cobrança paga:** o status é conferido no Asaas imediatamente antes da alteração; paga, estornada ou excluída não é tocada e não recebe mensagem.
+- **Valor registrado:** o valor da cobrança no banco passa a ser o valor com desconto, então o Purchase da Meta e o Metabase registram o que foi realmente cobrado. O valor anterior fica em `payments.original_amount`.
+- **Valor de verdade no Asaas:** se o valor da cobrança no Asaas já não passa do desconto (o valor guardado aqui estava defasado), ela é descartada sem alteração e sem mensagem.
+- **Falha passageira do Asaas:** a rodada seguinte, ainda dentro da janela, tenta de novo. Falha definitiva (erro 4xx) descarta a cobrança.
+- **Asaas alterado e banco não:** se o Asaas aceita a alteração mas a gravação no banco falha, a rodada seguinte corrige sozinha; enquanto isso o admin recebe um e-mail (tipo `payment`, etapa `db.apply_discount`) e o log registra `discount.asaas_changed_db_not`.
+- **Mensagem fora do prazo:** a mensagem que ainda estiver na fila depois do novo vencimento (hoje em São Paulo) é descartada sem envio e sem alerta.
+
+Como ligar:
+
+1. Faça o deploy com `PAYMENT_DISCOUNT_ENABLED=false` (a migration das colunas novas de `payments` roda no boot).
+2. **No PlanA**, rode `pnpm db:sync-schema` para copiar o schema novo: `payments` ganhou `discount_status`, `discount_applied_at` e `original_amount`.
+3. **Antes da produção, teste no sandbox do Asaas** (`ASAAS_ENV=sandbox`, desconto ligado): depois da alteração, busque a cobrança (`GET /payments/{id}`) e confirme que `externalReference` e `callback` continuam como na criação; pague uma cobrança já com desconto e confirme que o webhook gera o plano e um Purchase de 29,90.
+4. No Easypanel, defina `PAYMENT_DISCOUNT_ENABLED=true` (e, se quiser mudar, `PAYMENT_DISCOUNT_AMOUNT` e `PAYMENT_DISCOUNT_DUE_DAYS`) e reinicie.
+5. No dia seguinte, depois das 9h, confira `discount.applied` nos logs, uma cobrança no painel do Asaas (valor e vencimento) e a chegada do e-mail e do WhatsApp.
+
+Para desligar: `PAYMENT_DISCOUNT_ENABLED=false` e reiniciar. As cobranças já alteradas continuam com o desconto.
+
+Se `PAYMENT_DISCOUNT_AMOUNT` for maior ou igual a `PAYMENT_AMOUNT`, o app sobe normalmente, mas nenhuma cobrança nova fica elegível; o boot registra o aviso `discount.config.no_effect`.
 
 ### Ver as falhas
 
@@ -211,7 +560,13 @@ curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Content-Type: application/json" \
   -d '{"notificationId":"ID_DA_MENSAGEM"}'
 
-# todas as falhas de uma vez (cobranças, gerações de plano e mensagens)
+# uma conversão da Meta (o id vem da consulta de meta_conversions)
+curl -X POST https://SEU-DOMINIO/api/jobs/retry \
+  -H "Authorization: Bearer SEU_JOBS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"metaConversionId":"ID_DA_CONVERSAO"}'
+
+# todas as falhas de uma vez (cobranças, gerações de plano, mensagens e conversões da Meta)
 curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Authorization: Bearer SEU_JOBS_TOKEN" \
   -H "Content-Type: application/json" \
@@ -235,7 +590,7 @@ curl -X POST https://SEU-DOMINIO/api/notifications/dispatch \
 
 1. Leia o `last_error` do item (consultas acima). Ele diz a etapa e o erro.
 2. Corrija a causa: chave do Asaas, chave da Anthropic, dado do paciente, SMTP, Evolution API.
-3. Chame `/api/jobs/retry` com o `id` do item, cobrança, mensagem ou geração de plano (ou `allFailed`, que reabre os três tipos).
+3. Chame `/api/jobs/retry` com o `id` do item, cobrança, mensagem ou geração de plano (ou `allFailed`, que reabre todos os tipos).
 
 Depois do retry, o app dispara uma rodada logo em seguida. Se já houver uma rodada em andamento, o reprocessamento espera a próxima: até 2 minutos. Com `JOBS_ENABLED=false`, espera até a próxima chamada manual de `/api/jobs/run`.
 
@@ -247,6 +602,7 @@ O PlanA (repositório `dieta-app`) é quem mostra o plano para a pessoa e onde o
 - **Ordem de deploy:** primeiro este app (aplica as migrations), depois o PlanA. Quando o schema mudar, este app sobe antes.
 - **Schema:** `lib/db/schema.ts` é a fonte. O PlanA mantém uma cópia idêntica; depois de mudar o schema aqui, rode `pnpm db:sync-schema` no PlanA.
 - **Mensagens:** todo e-mail e WhatsApp sai por aqui. O PlanA grava a mensagem de recuperação de senha em `notifications` (`kind = 'password_reset'`) e pede o envio imediato em `POST /api/notifications/dispatch` (seção "Operação"). Se esse pedido falhar, o job de 2 minutos envia.
+- **Opções de substituição:** cada refeição de `plan_data.meals` pode ter `substitutes` (opcional), uma lista de `{ foods, calories }` no mesmo formato da opção principal, que o paciente come no lugar dela. A IA gera exatamente 1 substituta em toda refeição, menos no almoço (nome que, sem acento, contém "almoco"), que fica sem a chave. `validatePlan` recusa o plano (e a geração tenta de novo) se a quantidade não bater, se a substituta tiver mais de 10% de diferença de calorias em relação à principal ou se faltar quantidade em alguma linha. O total do plano soma só as principais. **Ordem de deploy:** o PlanA sobe **antes** deste app; ele mostra as substitutas e o editor do admin as preserva ao salvar. Se este app gerasse substitutas antes, o paciente não as veria e um admin que salvasse o plano as apagaria. Não há migration nem variável nova.
 
 **Renovação do plano** (`POST /api/renewals`): o PlanA mostra o formulário de renovação ao paciente e, no envio, chama este endpoint para criar a cobrança. Exige `Authorization: Bearer <JOBS_TOKEN>` (o mesmo token do job; não há variável nova) e o mesmo corpo de `/api/submit-quiz`, `{ submissionId, answers }`, com `nome_completo`, `email`, `whatsapp` e `cpf` dentro de `answers` (até 64 KB). Usa a mesma validação e o mesmo serviço do quiz: idempotente por `submissionId`, reaproveita a cobrança pendente do paciente, cria a cobrança no Asaas dentro do pedido (até 20 s) e depois da resposta envia o link por e-mail e WhatsApp. Diferenças em relação ao quiz: não tem limite por IP (quem chama é o PlanA) e aceita `whatsapp` vazio, para o paciente cadastrado pelo admin sem telefone; nesse caso o cliente é criado no Asaas sem telefone e o link vai só por e-mail.
 

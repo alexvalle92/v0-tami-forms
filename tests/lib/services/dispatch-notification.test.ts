@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { Channel, LastError, NotificationRepo } from "@/lib/db/repos/types"
+import type { Channel, LastError, NotificationRepo, NotificationView } from "@/lib/db/repos/types"
 import { hashPassword, verifyPassword } from "@/lib/access/password-hash"
 import { deriveTempPassword } from "@/lib/access/temp-password"
 import { HttpError } from "@/lib/http/retry"
@@ -14,6 +14,7 @@ import {
   RENEWAL_PAYMENT_LINK_TITLE,
   renderFirstAccess,
   renderPasswordReset,
+  renderPaymentDiscount,
   renderPaymentLink,
   renderPlanExpiring,
   renderPlanReady,
@@ -948,6 +949,158 @@ describe("createDispatchNotification", () => {
       const sent = s.email.send.mock.calls[0][0]
       expect(sent.subject).toBe(PAYMENT_LINK_TITLE)
       expect(sent.html).toBe(renderPaymentLink({ name: NAME, link: PAY_URL }).html)
+    })
+  })
+
+  describe("payment_discount", () => {
+    const DISCOUNT = { amount: "29.90", originalAmount: "39.90", dueDate: "2026-11-05" }
+
+    /** Aplica o desconto na cobrança do setup e devolve os ids das mensagens `payment_discount`. */
+    async function discounted(s: Setup) {
+      await s.repos.payments.applyDiscount(s.paymentId, {
+        ...DISCOUNT,
+        status: "PENDING",
+        at: NOW,
+        channels: ["email", "whatsapp"],
+      })
+      const rows = [...s.repos.state.notifications.values()].filter((n) => n.kind === "payment_discount")
+      return Object.fromEntries(rows.map((n) => [n.channel, n.id])) as Record<Channel, string>
+    }
+
+    const message = (returning: boolean) =>
+      renderPaymentDiscount({ name: NAME, link: PAY_URL, ...DISCOUNT, returning })
+
+    const withPassword = (repos: ReturnType<typeof createMemoryRepos>): NotificationRepo => ({
+      ...repos.notifications,
+      get: async (id) => {
+        const view = await repos.notifications.get(id)
+        return view && { ...view, patientPasswordHash: "hash-qualquer" }
+      },
+    })
+
+    /** Relê a mensagem com a cobrança alterada depois do enfileiramento (o fake expõe o estado só para leitura). */
+    const withView =
+      (patch: (view: NotificationView) => NotificationView) =>
+      (repos: ReturnType<typeof createMemoryRepos>): NotificationRepo => ({
+        ...repos.notifications,
+        get: async (id) => {
+          const view = await repos.notifications.get(id)
+          return view && patch(view)
+        },
+      })
+    const withPayment = (patch: Partial<NonNullable<NotificationView["paymentDiscount"]>>) =>
+      withView((v) => ({ ...v, paymentDiscount: v.paymentDiscount && { ...v.paymentDiscount, ...patch } }))
+
+    it("envia o texto da condição especial com os valores da cobrança", async () => {
+      const s = await setup()
+      const ids = await discounted(s)
+
+      expect(await s.dispatch(ids.email)).toBe("sent")
+      expect(await s.dispatch(ids.whatsapp)).toBe("sent")
+
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.subject).toBe("🎁 Condição especial: seu plano de R$ 39,90 por R$ 29,90")
+      expect(sent.html).toBe(message(false).html)
+      expect(sent.html).toContain(PAY_URL)
+      const parts = toWhatsAppParts(message(false).subject, message(false).html)
+      expect(s.whatsapp.sendText.mock.calls).toEqual(parts.map((p) => [RECIPIENT_WA, p]))
+      expect(planRow(s, ids.email)).toMatchObject({ status: "sent" })
+    })
+
+    it("paciente com senha recebe a variante de renovação", async () => {
+      const s = await setup({ wrap: withPassword })
+      const ids = await discounted(s)
+
+      expect(await s.dispatch(ids.email)).toBe("sent")
+
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.html).toBe(message(true).html)
+      expect(sent.html).not.toContain("dados de acesso")
+    })
+
+    it("hash de senha vazio conta como sem senha, como no payment_link", async () => {
+      const s = await setup({ wrap: withView((v) => ({ ...v, patientPasswordHash: "" })) })
+      const ids = await discounted(s)
+
+      expect(await s.dispatch(ids.email)).toBe("sent")
+
+      expect(s.email.send.mock.calls[0][0].html).toBe(message(false).html)
+    })
+
+    describe("cobrança que mudou até o envio: descartada sem enviar e sem alerta", () => {
+      async function expectDiscarded(s: Setup, id: string, reason: string) {
+        expect(await s.dispatch(id)).toBe("skipped")
+        expect(s.email.send).not.toHaveBeenCalled()
+        expect(s.whatsapp.sendText).not.toHaveBeenCalled()
+        expect(s.alertAdmin).not.toHaveBeenCalled()
+        expect(s.log.error).not.toHaveBeenCalled()
+        expect(planRow(s, id)).toMatchObject({
+          status: "failed",
+          lockedUntil: null,
+          sentAt: null,
+          lastError: { step: "notify.stale", message: reason, at: NOW.toISOString() },
+        })
+      }
+
+      it("paga antes do envio (paidAt preenchido)", async () => {
+        const s = await setup({ wrap: withPayment({ paidAt: NOW }) })
+        const ids = await discounted(s)
+
+        await expectDiscarded(s, ids.email, "payment already paid")
+      })
+
+      it("status fora de PENDING/OVERDUE", async () => {
+        const s = await setup({ wrap: withPayment({ paymentStatus: "RECEIVED" }) })
+        const ids = await discounted(s)
+
+        await expectDiscarded(s, ids.whatsapp, "payment no longer open")
+      })
+
+      it("desconto que não está aplicado", async () => {
+        const s = await setup({ wrap: withPayment({ discountStatus: "skipped" }) })
+        const ids = await discounted(s)
+
+        await expectDiscarded(s, ids.email, "discount not applied")
+      })
+
+      it("novo vencimento já passou (ontem em São Paulo)", async () => {
+        const s = await setup({ wrap: withPayment({ dueDate: "2026-10-06" }) })
+        const ids = await discounted(s)
+
+        await expectDiscarded(s, ids.email, "discount expired")
+      })
+
+      it("vence hoje: ainda vale", async () => {
+        const s = await setup({ wrap: withPayment({ dueDate: "2026-10-07" }) })
+        const ids = await discounted(s)
+
+        expect(await s.dispatch(ids.email)).toBe("sent")
+      })
+
+      it("OVERDUE ainda vale: sai normalmente", async () => {
+        const s = await setup({ wrap: withPayment({ paymentStatus: "OVERDUE" }) })
+        const ids = await discounted(s)
+
+        expect(await s.dispatch(ids.email)).toBe("sent")
+      })
+    })
+
+    it("sem link ou sem originalAmount: falha definitiva", async () => {
+      const noLink = await setup({ wrap: withView((v) => ({ ...v, paymentUrl: null })) })
+      const noLinkIds = await discounted(noLink)
+
+      expect(await noLink.dispatch(noLinkIds.email)).toBe("failed")
+      expect(noLink.email.send).not.toHaveBeenCalled()
+      expect(planRow(noLink, noLinkIds.email)).toMatchObject({ status: "failed", attempts: 1 })
+      expect(noLink.alertAdmin).toHaveBeenCalledTimes(1)
+
+      const noOriginal = await setup({ wrap: withPayment({ originalAmount: null }) })
+      const noOriginalIds = await discounted(noOriginal)
+
+      expect(await noOriginal.dispatch(noOriginalIds.email)).toBe("failed")
+      expect(noOriginal.email.send).not.toHaveBeenCalled()
+      expect(planRow(noOriginal, noOriginalIds.email)).toMatchObject({ status: "failed", attempts: 1 })
+      expect(noOriginal.alertAdmin).toHaveBeenCalledTimes(1)
     })
   })
 

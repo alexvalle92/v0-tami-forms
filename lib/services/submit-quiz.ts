@@ -1,5 +1,6 @@
 import type {
   Channel,
+  MetaAttributionRepo,
   NotificationRepo,
   PaymentRepo,
   SubmissionRef,
@@ -16,21 +17,31 @@ export type SubmitResult =
   | { kind: "pending"; quizResponseId: string }
   | { kind: "db_error" }
 
-export type SubmitQuiz = (input: ParsedSubmission) => Promise<SubmitResult>
+/** O que só o pedido HTTP sabe; o PlanA (`/api/renewals`) não manda e, por isso, não gera atribuição. */
+export type SubmitContext = { clientIp?: string; userAgent?: string }
+
+export type SubmitQuiz = (input: ParsedSubmission, ctx?: SubmitContext) => Promise<SubmitResult>
+
+// Tamanho das colunas de meta_attributions.
+const MAX_CLIENT_IP = 45
+const MAX_USER_AGENT = 500
 
 /**
  * Uma submissão do quiz: grava tudo no MySQL e tenta obter o link de pagamento dentro do pedido.
  * Idempotente por `submissionId`. Só uma falha ao achar/criar o envio vira `db_error`;
  * depois que os dados estão salvos, qualquer erro vira `pending` (o job conclui).
+ * Com o rastreamento da Meta ligado e `meta` no envio, grava a atribuição do anúncio; essa gravação
+ * nunca muda o resultado.
  */
 export function createSubmitQuiz(d: {
   submissions: SubmissionRepo
   payments: PaymentRepo
   notifications: NotificationRepo
   syncPayment: SyncPayment
+  metaAttributions: Pick<MetaAttributionRepo, "save">
   log: Logger
   now: () => Date
-  config: { amount: string; channels: Channel[]; requestBudgetMs: number }
+  config: { amount: string; channels: Channel[]; requestBudgetMs: number; metaEnabled: boolean }
 }): SubmitQuiz {
   async function findOrCreateRef(input: ParsedSubmission): Promise<SubmissionRef | null> {
     const existing = await d.submissions.findBySubmissionId(input.submissionId)
@@ -49,7 +60,31 @@ export function createSubmitQuiz(d: {
     return d.submissions.findBySubmissionId(input.submissionId)
   }
 
-  return async function submitQuiz(input) {
+  async function saveMetaAttribution(input: ParsedSubmission, quizResponseId: string, ctx: SubmitContext | undefined) {
+    if (!d.config.metaEnabled || !input.meta) return
+    try {
+      await d.metaAttributions.save(
+        quizResponseId,
+        {
+          externalId: input.meta.externalId ?? null,
+          fbp: input.meta.fbp ?? null,
+          fbc: input.meta.fbc ?? null,
+          clientIp: ctx?.clientIp && ctx.clientIp !== "unknown" ? ctx.clientIp.slice(0, MAX_CLIENT_IP) : null,
+          userAgent: ctx?.userAgent ? ctx.userAgent.slice(0, MAX_USER_AGENT) : null,
+          eventSourceUrl: input.meta.eventSourceUrl ?? null,
+        },
+        d.now(),
+      )
+    } catch (err) {
+      d.log.warn("submit.meta_attribution_failed", {
+        submissionId: input.submissionId,
+        quizResponseId,
+        message: safeErrorMessage(err),
+      })
+    }
+  }
+
+  return async function submitQuiz(input, ctx) {
     const startedAt = d.now().getTime()
     const elapsed = () => d.now().getTime() - startedAt
 
@@ -76,7 +111,8 @@ export function createSubmitQuiz(d: {
     }
 
     const { quizResponseId, paymentId } = ref
-    const base = { submissionId: input.submissionId, quizResponseId, paymentId }
+    await saveMetaAttribution(input, quizResponseId, ctx)
+    const base ={ submissionId: input.submissionId, quizResponseId, paymentId }
     const pending = (reason: string): SubmitResult => {
       d.log.info("submit.done", { ...base, outcome: "pending", reason, durationMs: elapsed() })
       return { kind: "pending", quizResponseId }

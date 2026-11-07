@@ -3,6 +3,7 @@
 // (tests/db/repos.contract.ts). Todas as datas são `Date` (UTC).
 
 import type { RenewalCharge } from "@/lib/renewal/rules"
+import type { Utm } from "@/lib/analytics/events"
 
 export type Channel = "email" | "whatsapp"
 
@@ -37,6 +38,9 @@ export interface SubmissionRepo {
   create(s: NewSubmission): Promise<SubmissionRef | "duplicate">
 }
 
+/** Desfecho da avaliação do desconto numa cobrança; nulo = ainda não avaliada. */
+export type DiscountStatus = "applied" | "skipped"
+
 export type PaymentView = {
   id: string
   patientId: string
@@ -47,6 +51,9 @@ export type PaymentView = {
   syncAttempts: number
   /** Primeiro evento de pagamento do Asaas; nulo enquanto não paga. */
   paidAt: Date | null
+  discountStatus: DiscountStatus | null
+  /** Valor antes do desconto; só preenchido com `discountStatus = "applied"`. */
+  originalAmount: string | null
   patient: {
     id: string
     name: string
@@ -87,10 +94,25 @@ export interface PaymentRepo {
   reopen(id: string): Promise<boolean>
   /** Reabre todas as `ASAAS_FAILED`; devolve quantas. */
   reopenAllFailed(): Promise<number>
+  /** Cobranças elegíveis ao desconto (spec §6): uma por paciente, por `created_at` crescente. */
+  listDiscountEligible(d: { fromUtc: Date; toUtc: Date; discountAmount: string; limit: number }): Promise<string[]>
+  /** O paciente tem alguma cobrança com desconto aplicado? */
+  hasAppliedDiscount(patientId: string): Promise<boolean>
+  /**
+   * Uma transação: grava o desconto (e o `status` que o Asaas devolveu: a alteração tira a cobrança de
+   * `OVERDUE`), solta o lock e enfileira `payment_discount` no quiz mais recente da cobrança. Devolve quantas
+   * mensagens entraram (0 se já estavam na fila).
+   */
+  applyDiscount(
+    id: string,
+    d: { amount: string; originalAmount: string; dueDate: string; status: string; at: Date; channels: Channel[] },
+  ): Promise<{ notificationsEnqueued: number }>
+  /** `discount_status = 'skipped'`, `discount_applied_at = at`; solta o lock. */
+  markDiscountSkipped(id: string, at: Date): Promise<void>
 }
 
 export type NotificationKind =
-  | "payment_link" | "plan_ready" | "password_reset"
+  | "payment_link" | "plan_ready" | "password_reset" | "payment_discount"
   | "plan_expiring_d5" | "plan_expiring_d2" | "plan_expiring_d0"
 
 export type NotificationView = {
@@ -125,6 +147,18 @@ export type NotificationView = {
     endDate: string | null
     status: string
     renewalCharge: RenewalCharge | null
+  } | null
+  /**
+   * Estado da cobrança lido na hora, só no `payment_discount` (nulo nas demais): o envio confere se a condição
+   * especial ainda vale e monta o texto com os valores gravados.
+   */
+  paymentDiscount: {
+    paymentStatus: string
+    paidAt: Date | null
+    discountStatus: DiscountStatus | null
+    amount: string
+    originalAmount: string | null
+    dueDate: string | null
   } | null
 }
 
@@ -194,6 +228,11 @@ export type PaymentEventResult =
       pendingGeneration: { id: string; quizResponseId: string } | null
       /** Evento pago de uma cobrança sem envio do quiz ligado: nenhuma geração foi criada. */
       missingQuizResponse: boolean
+      /**
+       * Purchase da Meta a enviar depois da resposta: só no primeiro evento pago da cobrança e só se um
+       * envio dela tem atribuição. Nos demais casos é sempre null.
+       */
+      pendingConversion: { id: string } | null
     }
 
 export interface WebhookRepo {
@@ -269,6 +308,54 @@ export interface MealPlanRepo {
   listByPatient(patientId: string): Promise<MealPlanView[]>
 }
 
+/** O que o envio do quiz guarda para o `Purchase` do servidor casar com o clique no anúncio (spec Meta §8). */
+export type MetaAttributionInput = {
+  externalId: string | null
+  fbp: string | null
+  fbc: string | null
+  clientIp: string | null
+  userAgent: string | null
+  eventSourceUrl: string | null
+}
+
+export interface MetaAttributionRepo {
+  /** INSERT IGNORE: a primeira gravação do envio vale (reenvio com o mesmo submissionId não troca). */
+  save(quizResponseId: string, a: MetaAttributionInput, now: Date): Promise<void>
+  /** Apaga até `limit` linhas com `created_at < cutoff`; devolve quantas. */
+  purgeOlderThan(cutoff: Date, limit: number): Promise<number>
+}
+
+/** Tudo que o envio do Purchase precisa; montado na hora de enviar para não duplicar dado pessoal na fila. */
+export type MetaConversionPayload = {
+  id: string
+  paymentId: string
+  eventId: string
+  eventTime: Date
+  /** Tentativas já feitas, sem contar a que vai começar. */
+  attempts: number
+  amount: string
+  patient: { email: string; phone: string; name: string }
+  attribution: MetaAttributionInput
+}
+
+export interface MetaConversionRepo {
+  /** `pending` com `next_attempt_at <= now` e não reservadas, por `next_attempt_at` crescente. */
+  listDue(now: Date, limit: number): Promise<string[]>
+  /** Reserva a linha por 60 s se ela está `pending`, vencida e livre; `false` se outro processo a tem. */
+  claim(id: string, now: Date): Promise<boolean>
+  /** `null` se a conversão, a cobrança, o paciente ou a atribuição não existem mais. */
+  loadPayload(id: string): Promise<MetaConversionPayload | null>
+  /** Marca como enviada; soma uma tentativa e solta a reserva. */
+  markSent(id: string, now: Date): Promise<void>
+  /** Segue `pending` em `nextAttemptAt`; soma uma tentativa e solta a reserva. */
+  markRetry(id: string, nextAttemptAt: Date, lastError: LastError): Promise<void>
+  /** Marca como `failed`; soma uma tentativa e solta a reserva. */
+  markFailed(id: string, lastError: LastError): Promise<void>
+  /** Só age em `failed`: volta a `pending` agora, com as tentativas zeradas. */
+  reopen(id: string): Promise<boolean>
+  reopenAllFailed(): Promise<number>
+}
+
 export type Repos = {
   submissions: SubmissionRepo
   payments: PaymentRepo
@@ -276,11 +363,85 @@ export type Repos = {
   webhooks: WebhookRepo
   planGenerations: PlanGenerationRepo
   mealPlans: MealPlanRepo
+  analytics: AnalyticsRepo
+  appLogs: AppLogRepo
+  metaAttributions: MetaAttributionRepo
+  metaConversions: MetaConversionRepo
 }
 
 /** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */
 export type PlanData = {
-  meals: { name: string; time: string; foods: string; calories: string }[]
+  meals: { name: string; time: string; foods: string; calories: string; substitutes?: { foods: string; calories: string }[] }[]
   calories: number
   observations: string
+}
+
+export type FunnelSessionPatch = {
+  sessionId: string
+  device: { deviceType: string; os: string; browser: string }
+  /** Presente quando o lote tem `session_start`. */
+  start?: { utm: Utm; referrerHost: string | null; viewportW: number | null; viewportH: number | null }
+  /** Último `step_view` do lote. */
+  lastStep?: { step: number; slug: string }
+  /** Maior `step` entre os `step_view` do lote. */
+  maxStep?: { step: number; slug: string }
+  checkoutClicked: boolean
+  /** answerKey → valor, só chaves permitidas. */
+  answers: Record<string, string | string[]>
+}
+
+export type FunnelEventRow = {
+  sessionId: string
+  event: string
+  step: number | null
+  stepSlug: string | null
+  props: Record<string, unknown>
+  clientTs: Date
+  createdAt: Date
+}
+
+/** Sessão do funil como gravada em `funnel_sessions` (leitura para os testes de contrato). */
+export type FunnelSessionView = {
+  sessionId: string
+  startedAt: Date
+  lastEventAt: Date
+  lastStep: number | null
+  lastStepSlug: string | null
+  maxStep: number | null
+  maxStepSlug: string | null
+  checkoutClicked: boolean
+  utm: Utm
+  referrerHost: string | null
+  deviceType: string
+  os: string
+  browser: string
+  viewportW: number | null
+  viewportH: number | null
+  answers: Record<string, string | string[]>
+}
+
+export interface AnalyticsRepo {
+  /** Uma transação: upsert da sessão (§7) e insert dos eventos. */
+  recordBatch(session: FunnelSessionPatch, events: FunnelEventRow[], now: Date): Promise<void>
+  /** Apaga até `limit` eventos (`created_at < cutoff`) e até `limit` sessões (`last_event_at < cutoff`); devolve o total. */
+  purgeOlderThan(cutoff: Date, limit: number): Promise<number>
+  /** Leitura para os testes de contrato. */
+  getSession(sessionId: string): Promise<FunnelSessionView | null>
+  listEvents(sessionId: string): Promise<FunnelEventRow[]>
+}
+
+export type AppLogRow = {
+  ts: Date
+  level: "info" | "warn" | "error"
+  event: string
+  area: string
+  fields: Record<string, unknown>
+}
+
+export interface AppLogRepo {
+  insertMany(rows: AppLogRow[]): Promise<void>
+  /** Apaga até `limit` linhas com `ts < cutoff`; devolve quantas. */
+  purgeOlderThan(cutoff: Date, limit: number): Promise<number>
+  /** Leitura para os testes de contrato: linhas com o `event` dado, por `ts`. */
+  listByEvent(event: string): Promise<AppLogRow[]>
 }

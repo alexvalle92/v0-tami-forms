@@ -165,6 +165,7 @@ describe("createSyncPayment", () => {
       invoiceNumber: "INV-1",
       billingType: "UNDEFINED",
       dueDate: "2026-10-09",
+      value: 39.9,
     })
 
     const result = await s.sync(s.paymentId, OPTS)

@@ -143,4 +143,34 @@ describe("parseSubmitRequest", () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.issues.length).toBeGreaterThan(0)
   })
+
+  it("meta malformado não derruba o envio e vira ausente", () => {
+    const result = parseSubmitRequest({
+      submissionId,
+      answers: validAnswers,
+      meta: { fbp: "x".repeat(2000), externalId: "não-uuid" },
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.meta).toBeUndefined()
+
+    const notObject = parseSubmitRequest({ submissionId, answers: validAnswers, meta: "x" })
+    expect(notObject.ok).toBe(true)
+    if (notObject.ok) expect(notObject.value.meta).toBeUndefined()
+  })
+
+  it("meta com campos válidos chega ao valor, e só com eles", () => {
+    const result = parseSubmitRequest({
+      submissionId,
+      answers: validAnswers,
+      meta: { fbc: "fb.1.1.abc", fbp: "lixo" },
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.meta).toStrictEqual({ fbc: "fb.1.1.abc" })
+  })
+
+  it("sem meta, o valor não tem a chave meta", () => {
+    const result = parseSubmitRequest({ submissionId, answers: validAnswers })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value).not.toHaveProperty("meta")
+  })
 })

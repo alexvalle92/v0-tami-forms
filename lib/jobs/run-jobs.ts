@@ -1,21 +1,42 @@
-import type { NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
+import type { MetaConversionRepo, NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
 import type { Logger } from "@/lib/log"
 import type { DispatchNotification } from "@/lib/services/dispatch-notification"
 import type { GeneratePlan } from "@/lib/services/generate-plan"
 import { safeErrorMessage } from "@/lib/services/last-error"
+import type { SendMetaConversion } from "@/lib/services/send-meta-conversion"
 import type { SyncPayment } from "@/lib/services/sync-payment"
 
 /**
  * `payments`, `plans` e `notifications` contam os itens tentados (qualquer desfecho); `reminders`, os
- * avisos de vencimento enfileirados na rodada; `errors`, as exceções.
+ * avisos de vencimento enfileirados na rodada; `errors`, as exceções. `conversions` (Purchase da Meta
+ * tentados) só existe quando a rodada recebe `meta` ligado; `discounts` (cobranças que entraram na etapa do
+ * desconto, qualquer desfecho) só existe quando a rodada recebe `discounts`.
  */
-export type RunSummary = { payments: number; plans: number; reminders: number; notifications: number; errors: number }
+export type RunSummary = {
+  payments: number
+  plans: number
+  reminders: number
+  notifications: number
+  errors: number
+  conversions?: number
+  discounts?: number
+}
+
+/** Fila do Purchase da Meta. Com `enabled` falso a rodada nem lista: as linhas esperam o religamento. */
+export type RunJobsMeta = {
+  enabled: boolean
+  conversions: Pick<MetaConversionRepo, "listDue">
+  send: SendMetaConversion
+  limit: number
+}
 
 /**
  * Uma rodada do job: primeiro as cobranças vencidas (para que um link criado agora já seja enviado
  * na mesma rodada), depois as gerações de plano vencidas, em seguida o enfileiramento dos avisos de
- * vencimento do plano (só dentro da janela de horário) e por fim as notificações vencidas (as
- * `plan_ready` de uma geração concluída agora e os avisos enfileirados agora saem na mesma rodada).
+ * vencimento do plano (só dentro da janela de horário), o desconto nas cobranças de ontem (se `discounts`
+ * estiver configurado; também só na janela) e por fim as notificações vencidas (as `plan_ready` de uma
+ * geração concluída agora, os avisos enfileirados agora e as `payment_discount` criadas agora saem na mesma rodada), o
+ * Purchase da Meta vencido (se `meta` estiver ligado) e, se houver, a limpeza por retenção (o total apagado entra no log como `purged`, fora do `RunSummary`).
  * Itens em sequência; a exceção de um item é logada (mensagem segura, sem dados pessoais), conta em
  * `errors` e não interrompe os demais.
  */
@@ -27,6 +48,12 @@ export function createRunJobs(d: {
   generatePlan: GeneratePlan
   dispatchNotification: DispatchNotification
   enqueueExpiryReminders: () => Promise<number>
+  /** Desconto nas cobranças de ontem (devolve as tentadas); opcional, roda antes das notificações e uma falha só conta em `errors`. */
+  discounts?: () => Promise<number>
+  /** Limpeza por retenção (devolve o total apagado); opcional, roda por último e uma falha só conta em `errors`. */
+  purge?: () => Promise<number>
+  /** Fila do Purchase da Meta; opcional, roda depois das notificações e antes da limpeza. */
+  meta?: RunJobsMeta
   log: Logger
   now: () => Date
   paymentDeadlineMs: number
@@ -75,6 +102,16 @@ export function createRunJobs(d: {
       d.log.error("job.reminders.error", { message: safeErrorMessage(err) })
     }
 
+    if (d.discounts) {
+      summary.discounts = 0
+      try {
+        summary.discounts = await d.discounts()
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.discounts.error", { message: safeErrorMessage(err) })
+      }
+    }
+
     for (const notificationId of await list("notifications")) {
       summary.notifications++
       try {
@@ -85,7 +122,41 @@ export function createRunJobs(d: {
       }
     }
 
-    d.log.info("job.round.done", { ...summary, durationMs: d.now().getTime() - startedAt })
+    if (d.meta?.enabled) {
+      summary.conversions = 0
+      let conversionIds: string[] = []
+      try {
+        conversionIds = await d.meta.conversions.listDue(d.now(), d.meta.limit)
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.conversions.list_failed", { message: safeErrorMessage(err) })
+      }
+      for (const conversionId of conversionIds) {
+        summary.conversions++
+        try {
+          await d.meta.send(conversionId)
+        } catch (err) {
+          summary.errors++
+          d.log.error("job.conversion.error", { conversionId, message: safeErrorMessage(err) })
+        }
+      }
+    }
+
+    let purged = 0
+    if (d.purge) {
+      try {
+        purged = await d.purge()
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.purge.error", { message: safeErrorMessage(err) })
+      }
+    }
+
+    d.log.info("job.round.done", {
+      ...summary,
+      ...(d.purge ? { purged } : {}),
+      durationMs: d.now().getTime() - startedAt,
+    })
     return summary
   }
 }

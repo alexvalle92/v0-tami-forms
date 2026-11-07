@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { getContainer } from "@/lib/container"
 
 // Monta o container de verdade com um env completo e inválido para a rede: o pool do mysql2 só conecta na
@@ -51,5 +51,55 @@ describe("getContainer (ligação das dependências do pós-pagamento)", () => {
     expect(c.retryFailed).toBeTypeOf("function")
     expect(c.env.ASAAS_WEBHOOK_TOKEN).toBe("w".repeat(32))
     expect(c.env.ANTHROPIC_MODEL).toBe("claude-opus-5-5")
+  })
+
+  it("expõe um limite próprio para os eventos do funil, separado do limite do envio", () => {
+    const c = getContainer()
+    expect(c.eventsRateLimiter).toBeDefined()
+    expect(c.eventsRateLimiter).not.toBe(c.rateLimiter)
+    expect(c.repos.analytics.recordBatch).toBeTypeOf("function")
+  })
+
+  it("expõe o envio do Purchase com o rastreamento da Meta desligado e ligado", async () => {
+    const off = getContainer()
+    expect(off.sendMetaConversion).toBeTypeOf("function")
+    expect(off.metaCapi).toBeNull()
+
+    // O env é lido uma vez por módulo: recarrega o módulo para ler o env ligado.
+    vi.resetModules()
+    delete globals.__tamiFormsContainer
+    Object.assign(process.env, {
+      META_TRACKING_ENABLED: "true",
+      META_PIXEL_ID: "1234567890",
+      META_CAPI_TOKEN: "EAAB-token",
+    })
+    const { getContainer: getFreshContainer } = await import("@/lib/container")
+    const on = getFreshContainer()
+    expect(on.sendMetaConversion).toBeTypeOf("function")
+    expect(on.metaCapi?.send).toBeTypeOf("function")
+  })
+
+  it("monta a rodada com o desconto na cobrança desligado (padrão) e ligado", async () => {
+    expect(getContainer().runner).toBeTypeOf("function")
+
+    // O env é lido uma vez por módulo: recarrega o módulo para ler o env ligado.
+    vi.resetModules()
+    delete globals.__tamiFormsContainer
+    Object.assign(process.env, {
+      PAYMENT_DISCOUNT_ENABLED: "true",
+      PAYMENT_DISCOUNT_AMOUNT: "29.90",
+      PAYMENT_DISCOUNT_DUE_DAYS: "5",
+    })
+    const { getContainer: getFreshContainer } = await import("@/lib/container")
+    const on = getFreshContainer()
+    expect(on.env.PAYMENT_DISCOUNT_ENABLED).toBe(true)
+    expect(on.runner).toBeTypeOf("function")
+  })
+
+  it("expõe um limite próprio para o espelho dos eventos da Meta", () => {
+    const c = getContainer()
+    expect(c.metaEventsRateLimiter).toBeDefined()
+    expect(c.metaEventsRateLimiter).not.toBe(c.eventsRateLimiter)
+    expect(c.metaEventsRateLimiter).not.toBe(c.rateLimiter)
   })
 })

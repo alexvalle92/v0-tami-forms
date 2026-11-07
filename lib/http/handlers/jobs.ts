@@ -18,6 +18,7 @@ const retryTargetSchema = z.union([
   z.object({ paymentId: id }).strict(),
   z.object({ notificationId: id }).strict(),
   z.object({ planGenerationId: id }).strict(),
+  z.object({ metaConversionId: id }).strict(),
   z.object({ allFailed: z.literal(true) }).strict(),
 ])
 
@@ -40,8 +41,8 @@ export function createJobsRunHandler(d: {
 }
 
 /**
- * POST /api/jobs/retry: reabre cobranças/notificações/gerações de plano em falha definitiva
- * (`{ paymentId }`, `{ notificationId }`, `{ planGenerationId }` ou `{ allFailed: true }`) e, depois da resposta, dispara uma rodada do job.
+ * POST /api/jobs/retry: reabre cobranças/notificações/gerações de plano/conversões da Meta em falha definitiva
+ * (`{ paymentId }`, `{ notificationId }`, `{ planGenerationId }`, `{ metaConversionId }` ou `{ allFailed: true }`) e, depois da resposta, dispara uma rodada do job.
  */
 export function createJobsRetryHandler(d: {
   token: string

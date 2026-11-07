@@ -1,9 +1,18 @@
 import { randomUUID } from "node:crypto"
 import type {
+  AnalyticsRepo,
+  AppLogRepo,
+  AppLogRow,
   Channel,
+  DiscountStatus,
+  FunnelEventRow,
+  FunnelSessionView,
   LastError,
   MealPlanRepo,
   MealPlanView,
+  MetaAttributionInput,
+  MetaAttributionRepo,
+  MetaConversionRepo,
   NewSubmission,
   NotificationKind,
   NotificationRepo,
@@ -58,6 +67,9 @@ export type PaymentRow = {
   /** YYYY-MM-DD */
   paymentDate: string | null
   lastEvent: string | null
+  discountStatus: DiscountStatus | null
+  discountAppliedAt: Date | null
+  originalAmount: string | null
   /** Decide a cobrança de renovação de um plano (a criada depois dele, §4). */
   createdAt: Date
 }
@@ -130,6 +142,9 @@ export type MealPlanRow = {
   createdAt: Date
 }
 
+/** Sessão do funil, como em `funnel_sessions`. */
+export type FunnelSessionRow = FunnelSessionView
+
 type Processed = Extract<PaymentEventResult, { outcome: "processed" }>
 
 const isLocked = (row: { lockedUntil: Date | null }, now: Date) =>
@@ -147,6 +162,27 @@ export type MemoryState = {
   webhookEvents: ReadonlyMap<string, Readonly<WebhookEventRow>>
   planGenerations: ReadonlyMap<string, Readonly<PlanGenerationRow>>
   mealPlans: ReadonlyMap<string, Readonly<MealPlanRow>>
+  funnelSessions: ReadonlyMap<string, Readonly<FunnelSessionRow>>
+  funnelEvents: readonly Readonly<FunnelEventRow>[]
+  appLogs: readonly Readonly<AppLogRow>[]
+  metaAttributions: ReadonlyMap<string, Readonly<MetaAttributionRow>>
+  metaConversions: ReadonlyMap<string, Readonly<MetaConversionRow>>
+}
+
+export type MetaAttributionRow = MetaAttributionInput & { quizResponseId: string; createdAt: Date }
+
+export type MetaConversionRow = {
+  id: string
+  paymentId: string
+  quizResponseId: string
+  eventId: string
+  eventTime: Date
+  status: "pending" | "sent" | "failed"
+  attempts: number
+  nextAttemptAt: Date
+  lockedUntil: Date | null
+  lastError: LastError | null
+  sentAt: Date | null
 }
 
 /** Atalhos de teste para estados que nenhuma interface pública do `v0-tami-forms` cria (o PlanA os cria no banco). */
@@ -165,6 +201,11 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
   const webhookEvents = new Map<string, WebhookEventRow>()
   const planGenerations = new Map<string, PlanGenerationRow>()
   const mealPlans = new Map<string, MealPlanRow>()
+  const funnelSessions = new Map<string, FunnelSessionRow>()
+  const funnelEvents: FunnelEventRow[] = []
+  const appLogRows: AppLogRow[] = []
+  const metaAttributionRows = new Map<string, MetaAttributionRow>()
+  const metaConversionRows = new Map<string, MetaConversionRow>()
 
   const patientByCpf = (cpf: string) => [...patients.values()].find((p) => p.cpf === cpf)
 
@@ -242,6 +283,9 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
           paidAt: null,
           paymentDate: null,
           lastEvent: null,
+          discountStatus: null,
+          discountAppliedAt: null,
+          originalAmount: null,
           createdAt: now,
         }
         payments.set(payment.id, payment)
@@ -274,6 +318,8 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         paymentUrl: p.paymentUrl,
         syncAttempts: p.syncAttempts,
         paidAt: p.paidAt,
+        discountStatus: p.discountStatus,
+        originalAmount: p.originalAmount,
         patient: {
           id: patient.id,
           name: patient.name,
@@ -362,6 +408,71 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         count++
       }
       return count
+    },
+
+    // Mesma regra do SQL: filtros primeiro, depois uma por paciente (a de created_at mais recente).
+    async listDiscountEligible(d) {
+      const limit = Math.round(Number(d.discountAmount) * 100)
+      const appliedPatients = new Set(
+        [...payments.values()].filter((p) => p.discountStatus === "applied").map((p) => p.patientId),
+      )
+      const latest = new Map<string, PaymentRow>()
+      for (const p of payments.values()) {
+        if (
+          p.createdAt.getTime() < d.fromUtc.getTime() ||
+          p.createdAt.getTime() >= d.toUtc.getTime() ||
+          (p.status !== "PENDING" && p.status !== "OVERDUE") ||
+          p.asaasId === null ||
+          p.paidAt !== null ||
+          p.discountStatus !== null ||
+          Math.round(Number(p.amount) * 100) <= limit ||
+          appliedPatients.has(p.patientId)
+        ) {
+          continue
+        }
+        const best = latest.get(p.patientId)
+        // Empate no instante: vale a inserida depois (o MySQL desempata por id; aqui não há como saber).
+        if (!best || p.createdAt.getTime() >= best.createdAt.getTime()) latest.set(p.patientId, p)
+      }
+      return [...latest.values()]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .slice(0, d.limit)
+        .map((p) => p.id)
+    },
+
+    async hasAppliedDiscount(patientId) {
+      return [...payments.values()].some((p) => p.patientId === patientId && p.discountStatus === "applied")
+    },
+
+    // Sem `await`: tudo acontece de forma atômica, como a transação do MySQL.
+    async applyDiscount(id, d) {
+      const p = payments.get(id)
+      if (!p) return { notificationsEnqueued: 0 }
+      p.amount = d.amount
+      p.originalAmount = d.originalAmount
+      p.dueDate = d.dueDate
+      p.status = d.status
+      p.discountStatus = "applied"
+      p.discountAppliedAt = d.at
+      p.lockedUntil = null
+
+      // Quiz mais recente da cobrança (o Map preserva a ordem de inserção).
+      const quiz = [...quizResponses.values()].filter((q) => q.paymentId === id).pop()
+      if (!quiz) return { notificationsEnqueued: 0 }
+      const patient = patients.get(quiz.patientId)!
+      const before = notifications.size
+      for (const channel of d.channels) {
+        enqueueNotification({ id: quiz.id, paymentId: id }, patient, channel, "payment_discount", d.at)
+      }
+      return { notificationsEnqueued: notifications.size - before }
+    },
+
+    async markDiscountSkipped(id, at) {
+      const p = payments.get(id)
+      if (!p) return
+      p.discountStatus = "skipped"
+      p.discountAppliedAt = at
+      p.lockedUntil = null
     },
   }
 
@@ -498,6 +609,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       if (!n) return null
       const patient = patients.get(n.patientId)!
       const plan = n.mealPlanId === null ? undefined : mealPlans.get(n.mealPlanId)
+      const payment = n.paymentId === null ? undefined : payments.get(n.paymentId)
       const view: NotificationView = {
         id: n.id,
         quizResponseId: n.quizResponseId,
@@ -516,6 +628,17 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         mealPlan: plan
           ? { id: plan.id, endDate: plan.endDate, status: plan.status, renewalCharge: renewalChargeOf(plan) }
           : null,
+        paymentDiscount:
+          n.kind === "payment_discount" && payment
+            ? {
+                paymentStatus: payment.status,
+                paidAt: payment.paidAt,
+                discountStatus: payment.discountStatus,
+                amount: payment.amount,
+                originalAmount: payment.originalAmount,
+                dueDate: payment.dueDate,
+              }
+            : null,
       }
       return view
     },
@@ -639,10 +762,12 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       p.lastEvent = e.event
       let pendingGeneration: Processed["pendingGeneration"] = null
       let missingQuizResponse = false
+      let pendingConversion: Processed["pendingConversion"] = null
 
       if (e.group === "paid") {
         // 5. Pago.
         p.status = e.status ?? (e.event === "PAYMENT_CONFIRMED" ? "CONFIRMED" : "RECEIVED")
+        const firstPayment = p.paidAt === null
         if (p.paidAt === null) p.paidAt = now
         p.paymentDate = e.paymentDate ?? p.paymentDate
         p.billingType = e.billingType ?? p.billingType
@@ -674,6 +799,30 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         if (generation?.status === "pending") {
           pendingGeneration = { id: generation.id, quizResponseId: generation.quizResponseId }
         }
+
+        // Purchase da Meta: primeiro evento pago e envio mais recente da cobrança que tem atribuição.
+        if (firstPayment) {
+          const attributed = [...quizResponses.values()]
+            .filter((q) => q.paymentId === p.id && metaAttributionRows.has(q.id))
+            .pop()
+          if (attributed && ![...metaConversionRows.values()].some((c) => c.paymentId === p.id)) {
+            const conversion: MetaConversionRow = {
+              id: randomUUID(),
+              paymentId: p.id,
+              quizResponseId: attributed.id,
+              eventId: `purchase:${p.id}`,
+              eventTime: new Date(now),
+              status: "pending",
+              attempts: 0,
+              nextAttemptAt: new Date(now),
+              lockedUntil: null,
+              lastError: null,
+              sentAt: null,
+            }
+            metaConversionRows.set(conversion.id, conversion)
+            pendingConversion = { id: conversion.id }
+          }
+        }
       } else {
         // 6. Reversão e 7. antes de pagar: só o status (sem status no evento, mantém o atual).
         p.status = e.status ?? p.status
@@ -686,6 +835,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         patientName: patients.get(p.patientId)!.name,
         pendingGeneration,
         missingQuizResponse,
+        pendingConversion,
       }
     },
   }
@@ -851,6 +1001,231 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     },
   }
 
+  const cloneEvent = (e: FunnelEventRow): FunnelEventRow => ({
+    ...e,
+    props: structuredClone(e.props),
+    clientTs: new Date(e.clientTs),
+    createdAt: new Date(e.createdAt),
+  })
+
+  // Sem `await` em recordBatch e purgeOlderThan: cada chamada é atômica, como a transação do MySQL.
+  const analyticsRepo: AnalyticsRepo = {
+    async recordBatch(patch, events, now) {
+      const existing = funnelSessions.get(patch.sessionId)
+      if (!existing) {
+        funnelSessions.set(patch.sessionId, {
+          sessionId: patch.sessionId,
+          startedAt: new Date(now),
+          lastEventAt: new Date(now),
+          lastStep: patch.lastStep?.step ?? null,
+          lastStepSlug: patch.lastStep?.slug ?? null,
+          maxStep: patch.maxStep?.step ?? null,
+          maxStepSlug: patch.maxStep?.slug ?? null,
+          checkoutClicked: patch.checkoutClicked,
+          utm: { ...patch.start?.utm },
+          referrerHost: patch.start?.referrerHost ?? null,
+          deviceType: patch.device.deviceType,
+          os: patch.device.os,
+          browser: patch.device.browser,
+          viewportW: patch.start?.viewportW ?? null,
+          viewportH: patch.start?.viewportH ?? null,
+          answers: structuredClone(patch.answers),
+        })
+      } else {
+        if (now.getTime() > existing.lastEventAt.getTime()) existing.lastEventAt = new Date(now)
+        if (patch.lastStep) {
+          existing.lastStep = patch.lastStep.step
+          existing.lastStepSlug = patch.lastStep.slug
+        }
+        if (patch.maxStep && patch.maxStep.step > (existing.maxStep ?? -1)) {
+          existing.maxStep = patch.maxStep.step
+          existing.maxStepSlug = patch.maxStep.slug
+        }
+        existing.checkoutClicked = existing.checkoutClicked || patch.checkoutClicked
+        existing.answers = { ...existing.answers, ...structuredClone(patch.answers) }
+        // UTMs, referrer e viewport só entram se ainda estão nulos; o aparelho nunca muda.
+        existing.utm = { ...patch.start?.utm, ...existing.utm }
+        existing.referrerHost = existing.referrerHost ?? patch.start?.referrerHost ?? null
+        existing.viewportW = existing.viewportW ?? patch.start?.viewportW ?? null
+        existing.viewportH = existing.viewportH ?? patch.start?.viewportH ?? null
+      }
+      for (const e of events) funnelEvents.push(cloneEvent(e))
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const byAge = (a: { at: Date }, b: { at: Date }) => a.at.getTime() - b.at.getTime()
+      const oldEvents = funnelEvents
+        .map((e, i) => ({ e, i, at: e.createdAt }))
+        .filter((x) => x.at.getTime() < cutoff.getTime())
+        .sort(byAge)
+        .slice(0, limit)
+      const drop = new Set(oldEvents.map((x) => x.e))
+      for (let i = funnelEvents.length - 1; i >= 0; i--) if (drop.has(funnelEvents[i])) funnelEvents.splice(i, 1)
+
+      const oldSessions = [...funnelSessions.values()]
+        .map((s) => ({ s, at: s.lastEventAt }))
+        .filter((x) => x.at.getTime() < cutoff.getTime())
+        .sort(byAge)
+        .slice(0, limit)
+      for (const { s } of oldSessions) funnelSessions.delete(s.sessionId)
+      return oldEvents.length + oldSessions.length
+    },
+
+    async getSession(sessionId) {
+      const s = funnelSessions.get(sessionId)
+      return s
+        ? {
+            ...s,
+            startedAt: new Date(s.startedAt),
+            lastEventAt: new Date(s.lastEventAt),
+            utm: { ...s.utm },
+            answers: structuredClone(s.answers),
+          }
+        : null
+    },
+
+    async listEvents(sessionId) {
+      return funnelEvents.filter((e) => e.sessionId === sessionId).map(cloneEvent)
+    },
+  }
+
+  const appLogsRepo: AppLogRepo = {
+    async insertMany(rows) {
+      for (const r of rows) appLogRows.push({ ...r, ts: new Date(r.ts), fields: structuredClone(r.fields) })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const old = appLogRows
+        .filter((r) => r.ts.getTime() < cutoff.getTime())
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+        .slice(0, limit)
+      const drop = new Set(old)
+      for (let i = appLogRows.length - 1; i >= 0; i--) if (drop.has(appLogRows[i])) appLogRows.splice(i, 1)
+      return old.length
+    },
+
+    async listByEvent(event) {
+      return appLogRows
+        .filter((r) => r.event === event)
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+        .map((r) => ({ ...r, ts: new Date(r.ts), fields: structuredClone(r.fields) }))
+    },
+  }
+
+  const metaAttributionsRepo: MetaAttributionRepo = {
+    async save(quizResponseId, a, now) {
+      if (metaAttributionRows.has(quizResponseId)) return
+      metaAttributionRows.set(quizResponseId, { ...a, quizResponseId, createdAt: new Date(now) })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const old = [...metaAttributionRows.values()]
+        .filter((r) => r.createdAt.getTime() < cutoff.getTime())
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .slice(0, limit)
+      for (const r of old) metaAttributionRows.delete(r.quizResponseId)
+      return old.length
+    },
+  }
+
+  const conversionDue = (c: MetaConversionRow, now: Date) =>
+    c.status === "pending" &&
+    c.nextAttemptAt.getTime() <= now.getTime() &&
+    (c.lockedUntil === null || c.lockedUntil.getTime() < now.getTime())
+  const reopenConversion = (c: MetaConversionRow, now: Date) => {
+    c.status = "pending"
+    c.attempts = 0
+    c.nextAttemptAt = now
+    c.lastError = null
+    c.lockedUntil = null
+  }
+
+  const metaConversionsRepo: MetaConversionRepo = {
+    async listDue(now, limit) {
+      return [...metaConversionRows.values()]
+        .filter((c) => conversionDue(c, now))
+        .sort((a, b) => a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime() || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map((c) => c.id)
+    },
+
+    async claim(id, now) {
+      const c = metaConversionRows.get(id)
+      if (!c || !conversionDue(c, now)) return false
+      c.lockedUntil = new Date(now.getTime() + 60_000)
+      return true
+    },
+
+    async loadPayload(id) {
+      const c = metaConversionRows.get(id)
+      const payment = c && payments.get(c.paymentId)
+      const patient = payment && patients.get(payment.patientId)
+      const a = c && metaAttributionRows.get(c.quizResponseId)
+      if (!c || !payment || !patient || !a) return null
+      return {
+        id: c.id,
+        paymentId: c.paymentId,
+        eventId: c.eventId,
+        eventTime: new Date(c.eventTime),
+        attempts: c.attempts,
+        amount: payment.amount,
+        patient: { email: patient.email, phone: patient.phone, name: patient.name },
+        attribution: {
+          externalId: a.externalId,
+          fbp: a.fbp,
+          fbc: a.fbc,
+          clientIp: a.clientIp,
+          userAgent: a.userAgent,
+          eventSourceUrl: a.eventSourceUrl,
+        },
+      }
+    },
+
+    async markSent(id, now) {
+      const c = metaConversionRows.get(id)
+      if (!c) return
+      c.status = "sent"
+      c.sentAt = new Date(now)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async markRetry(id, nextAttemptAt, lastError) {
+      const c = metaConversionRows.get(id)
+      if (!c) return
+      c.nextAttemptAt = new Date(nextAttemptAt)
+      c.lastError = structuredClone(lastError)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async markFailed(id, lastError) {
+      const c = metaConversionRows.get(id)
+      if (!c) return
+      c.status = "failed"
+      c.lastError = structuredClone(lastError)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async reopen(id) {
+      const c = metaConversionRows.get(id)
+      if (!c || c.status !== "failed") return false
+      reopenConversion(c, new Date())
+      return true
+    },
+
+    async reopenAllFailed() {
+      let n = 0
+      for (const c of metaConversionRows.values()) {
+        if (c.status !== "failed") continue
+        reopenConversion(c, new Date())
+        n++
+      }
+      return n
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -858,7 +1233,23 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     webhooks,
     planGenerations: planGenerationsRepo,
     mealPlans: mealPlansRepo,
-    state: { patients, payments, notifications, webhookEvents, planGenerations, mealPlans },
+    analytics: analyticsRepo,
+    appLogs: appLogsRepo,
+    metaAttributions: metaAttributionsRepo,
+    metaConversions: metaConversionsRepo,
+    state: {
+      patients,
+      payments,
+      notifications,
+      webhookEvents,
+      planGenerations,
+      mealPlans,
+      funnelSessions,
+      funnelEvents,
+      appLogs: appLogRows,
+      metaAttributions: metaAttributionRows,
+      metaConversions: metaConversionRows,
+    },
     seed: {
       passwordReset({ patientId, channel, link }) {
         const patient = patients.get(patientId)

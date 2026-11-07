@@ -4,7 +4,7 @@ import type { EmailSender } from "@/lib/notify/email"
 import { safeErrorMessage } from "./last-error"
 
 export type AdminAlert = {
-  kind: "payment" | "notification" | "meal_plan"
+  kind: "payment" | "notification" | "meal_plan" | "meta_conversion"
   id: string
   patientName: string
   error: LastError

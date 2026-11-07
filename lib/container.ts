@@ -7,26 +7,36 @@ import { createMysqlRepos } from "@/lib/db/repos/mysql"
 import type { Channel, PaymentEventInput, Repos } from "@/lib/db/repos/types"
 import { getEnv, type Env } from "@/lib/env"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
+import { createMetaCapiClient, type MetaCapiClient } from "@/lib/meta/capi"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
+import { createApplyPaymentDiscounts } from "@/lib/jobs/payment-discounts"
 import { createRetryFailed, type RetryTarget } from "@/lib/jobs/retry-failed"
+import { createPurgeObservability } from "@/lib/jobs/purge-observability"
 import { createRunJobs } from "@/lib/jobs/run-jobs"
 import { createExclusiveRunner } from "@/lib/jobs/scheduler"
 import { createLogger, type Logger } from "@/lib/log"
+import { createLogPersister } from "@/lib/log-persist"
 import { createAnthropicGenerator } from "@/lib/meal-plan/anthropic-generator"
 import { createSmtpEmailSender, type EmailSender } from "@/lib/notify/email"
 import { createEvolutionWhatsAppSender, type WhatsAppSender } from "@/lib/notify/whatsapp"
 import { createAlertAdmin, createNoticeAdmin, type NoticeAdmin } from "@/lib/services/alert-admin"
+import { createApplyPaymentDiscount } from "@/lib/services/apply-payment-discount"
 import { createDispatchForQuizResponse } from "@/lib/services/dispatch-for-quiz-response"
 import { createDispatchNotification, type DispatchNotification } from "@/lib/services/dispatch-notification"
 import { createGeneratePlan, createRunPlanGeneration } from "@/lib/services/generate-plan"
 import { createHandleAsaasEvent, type HandledEvent } from "@/lib/services/handle-asaas-event"
+import { createSendMetaConversion, type SendMetaConversion } from "@/lib/services/send-meta-conversion"
 import { createSubmitQuiz, type SubmitQuiz } from "@/lib/services/submit-quiz"
 import { createSyncPayment, type SyncPayment } from "@/lib/services/sync-payment"
 
 const SUBMIT_REQUEST_BUDGET_MS = 20_000
 const JOB_PAYMENT_DEADLINE_MS = 30_000
 const JOB_LIMITS = { payments: 20, plans: 3, notifications: 50 }
+const META_CONVERSIONS_PER_ROUND = 20
+const DISCOUNTS_PER_ROUND = 50
 const SUBMIT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }
+const EVENTS_RATE_LIMIT = { limit: 120, windowMs: 60_000 }
+const META_EVENTS_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
 
 export type Container = {
   env: Env
@@ -46,10 +56,18 @@ export type Container = {
   runPlanGeneration: (generationId: string) => Promise<void>
   /** Aviso ao admin de estorno/chargeback ou de pagamento sem envio do quiz; nunca lança. */
   noticeAdmin: NoticeAdmin
+  /** Envia à Meta o Purchase de uma cobrança paga (fila `meta_conversions`); nunca lança e não faz nada com o rastreamento desligado. */
+  sendMetaConversion: SendMetaConversion
+  /** Cliente da API de Conversões; `null` com o rastreamento da Meta desligado. */
+  metaCapi: MetaCapiClient | null
   /** Rodada exclusiva do job: o agendador e `POST /api/jobs/run` usam este mesmo runner. */
   runner: () => Promise<"ran" | "skipped">
   retryFailed: (t: RetryTarget) => Promise<{ reopened: number }>
   rateLimiter: RateLimiter
+  /** Limite próprio de `POST /api/events`, separado do limite do envio do quiz. */
+  eventsRateLimiter: RateLimiter
+  /** Limite próprio de `POST /api/meta/events` (espelho dos eventos do Pixel). */
+  metaEventsRateLimiter: RateLimiter
   ping: () => Promise<void>
 }
 
@@ -66,9 +84,10 @@ export function enabledChannels(env: Pick<Env, "NOTIFY_EMAIL_ENABLED" | "NOTIFY_
 
 function buildContainer(): Container {
   const env = getEnv()
-  const log = createLogger()
   const db = getDb()
   const repos = createMysqlRepos(db)
+  const logPersister = createLogPersister({ repo: repos.appLogs, write: console.log })
+  const log = createLogger(console.log, logPersister.push)
   const { payments, notifications, submissions, webhooks, planGenerations } = repos
   const now = () => new Date()
   const channels = enabledChannels(env)
@@ -117,9 +136,15 @@ function buildContainer(): Container {
     payments,
     notifications,
     syncPayment,
+    metaAttributions: repos.metaAttributions,
     log,
     now,
-    config: { amount: env.PAYMENT_AMOUNT, channels, requestBudgetMs: SUBMIT_REQUEST_BUDGET_MS },
+    config: {
+      amount: env.PAYMENT_AMOUNT,
+      channels,
+      requestBudgetMs: SUBMIT_REQUEST_BUDGET_MS,
+      metaEnabled: env.META_TRACKING_ENABLED,
+    },
   })
   const dispatchForQuizResponse = createDispatchForQuizResponse({ notifications, dispatchNotification, log })
   const generatePlan = createGeneratePlan({
@@ -134,8 +159,50 @@ function buildContainer(): Container {
   })
   const runPlanGeneration = createRunPlanGeneration({ generatePlan, dispatchForQuizResponse, log })
   const handleAsaasEvent = createHandleAsaasEvent({ webhooks, log, now })
+  // Sem a chave ligada (e o env garante id e token quando ligada) não há cliente: a CAPI nunca é chamada.
+  const metaCapi =
+    env.META_TRACKING_ENABLED && env.META_PIXEL_ID && env.META_CAPI_TOKEN
+      ? createMetaCapiClient({
+          pixelId: env.META_PIXEL_ID,
+          token: env.META_CAPI_TOKEN,
+          apiVersion: env.META_API_VERSION,
+          testEventCode: env.META_TEST_EVENT_CODE,
+        })
+      : null
+  const sendMetaConversion = createSendMetaConversion({
+    conversions: repos.metaConversions,
+    capi: metaCapi,
+    enabled: env.META_TRACKING_ENABLED,
+    alertAdmin,
+    log,
+    now,
+  })
 
   const enqueueExpiryReminders = createEnqueueExpiryReminders({ notifications, channels, now, log })
+  // Desligada, a etapa nem entra na rodada (e as outras duas variáveis do desconto são ignoradas).
+  const applyPaymentDiscounts = env.PAYMENT_DISCOUNT_ENABLED
+    ? createApplyPaymentDiscounts({
+        payments,
+        applyDiscount: createApplyPaymentDiscount({
+          payments,
+          asaas,
+          alertAdmin,
+          log,
+          now,
+          config: {
+            amount: env.PAYMENT_DISCOUNT_AMOUNT,
+            dueDays: env.PAYMENT_DISCOUNT_DUE_DAYS,
+            successUrl: env.PAYMENT_SUCCESS_URL,
+            channels,
+          },
+        }),
+        discountAmount: env.PAYMENT_DISCOUNT_AMOUNT,
+        limit: DISCOUNTS_PER_ROUND,
+        deadlineMs: JOB_PAYMENT_DEADLINE_MS,
+        now,
+        log,
+      })
+    : undefined
   const runJobs = createRunJobs({
     payments,
     planGenerations,
@@ -144,6 +211,19 @@ function buildContainer(): Container {
     generatePlan,
     dispatchNotification,
     enqueueExpiryReminders,
+    discounts: applyPaymentDiscounts,
+    purge: createPurgeObservability({
+      analytics: repos.analytics,
+      appLogs: repos.appLogs,
+      metaAttributions: repos.metaAttributions,
+      now,
+    }),
+    meta: {
+      enabled: env.META_TRACKING_ENABLED,
+      conversions: repos.metaConversions,
+      send: sendMetaConversion,
+      limit: META_CONVERSIONS_PER_ROUND,
+    },
     log,
     now,
     paymentDeadlineMs: JOB_PAYMENT_DEADLINE_MS,
@@ -166,9 +246,13 @@ function buildContainer(): Container {
     handleAsaasEvent,
     runPlanGeneration,
     noticeAdmin,
+    sendMetaConversion,
+    metaCapi,
     runner,
-    retryFailed: createRetryFailed({ payments, notifications, planGenerations }),
+    retryFailed: createRetryFailed({ payments, notifications, planGenerations, metaConversions: repos.metaConversions }),
     rateLimiter: createRateLimiter(SUBMIT_RATE_LIMIT),
+    eventsRateLimiter: createRateLimiter(EVENTS_RATE_LIMIT),
+    metaEventsRateLimiter: createRateLimiter(META_EVENTS_RATE_LIMIT),
     ping: async () => {
       await db.execute(sql`SELECT 1`)
     },

@@ -1,10 +1,15 @@
 // Envio do quiz para a API. Módulo sem React e sem sessionStorage: quem chama
 // (loading-screen) cuida do armazenamento do link de pagamento.
 
+import type { SubmitFailure } from "@/lib/analytics/events"
+import type { SubmitMetaInput } from "@/lib/meta/shared"
+
 export const GENERIC_SUBMIT_ERROR =
   "Houve um problema ao registrar seus dados. Por favor, aguarde alguns instantes e tente novamente ou entre em contato com o suporte."
 
-export type SubmitQuizResult = { ok: true; linkPagamento?: string } | { ok: false; message: string }
+export type SubmitQuizResult =
+  | { ok: true; linkPagamento?: string }
+  | { ok: false; message: string; failure: SubmitFailure }
 
 function uuidV4FromBytes(bytes: Uint8Array): string {
   bytes[6] = (bytes[6] & 0x0f) | 0x40
@@ -37,16 +42,18 @@ export function newSubmissionId(): string {
 export async function submitQuizRequest(args: {
   submissionId: string
   answers: Record<string, unknown>
+  /** Atribuição do anúncio (Meta); vai junto do corpo só quando existe. */
+  meta?: SubmitMetaInput
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }): Promise<SubmitQuizResult> {
-  const { submissionId, answers, fetchImpl = fetch, timeoutMs = 30000 } = args
+  const { submissionId, answers, meta, fetchImpl = fetch, timeoutMs = 30000 } = args
 
   // AbortController + setTimeout em vez de AbortSignal.timeout (ausente no Safari < 16).
   // O timer fica ativo até o corpo da resposta ser lido, para que um corpo travado também estoure.
   let timer: ReturnType<typeof setTimeout> | undefined
+  const controller = new AbortController()
   try {
-    const controller = new AbortController()
     timer = setTimeout(() => controller.abort(), timeoutMs)
 
     const response = await fetchImpl("/api/submit-quiz", {
@@ -54,12 +61,12 @@ export async function submitQuizRequest(args: {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ submissionId, answers }),
+      body: JSON.stringify(meta ? { submissionId, answers, meta } : { submissionId, answers }),
       signal: controller.signal,
     })
 
     if (!response.ok) {
-      return { ok: false, message: GENERIC_SUBMIT_ERROR }
+      return { ok: false, message: GENERIC_SUBMIT_ERROR, failure: response.status >= 500 ? "http_5xx" : "http_4xx" }
     }
 
     const contentType = response.headers?.get("content-type")
@@ -67,18 +74,24 @@ export async function submitQuizRequest(args: {
     if (contentType?.includes("application/json")) {
       const text = await response.text()
       if (text) {
-        const data = JSON.parse(text)
+        let data: any
+        try {
+          data = JSON.parse(text)
+          if (data === null || typeof data !== "object") throw new Error("corpo não é um objeto")
+        } catch {
+          return { ok: false, message: GENERIC_SUBMIT_ERROR, failure: "resposta_invalida" }
+        }
         if (data.sucesso == true) {
           return data.linkPagamento ? { ok: true, linkPagamento: data.linkPagamento } : { ok: true }
         }
         if (data.mensagemErro) {
-          return { ok: false, message: data.mensagemErro }
+          return { ok: false, message: data.mensagemErro, failure: "resposta_invalida" }
         }
       }
     }
     return { ok: true }
   } catch {
-    return { ok: false, message: GENERIC_SUBMIT_ERROR }
+    return { ok: false, message: GENERIC_SUBMIT_ERROR, failure: controller.signal.aborted ? "timeout" : "rede" }
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }

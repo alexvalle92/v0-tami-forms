@@ -3,7 +3,7 @@ import { hashPassword, verifyPassword } from "@/lib/access/password-hash"
 import { deriveTempPassword } from "@/lib/access/temp-password"
 import type { Channel, NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
-import { createRunJobs } from "@/lib/jobs/run-jobs"
+import { createRunJobs, type RunJobsMeta } from "@/lib/jobs/run-jobs"
 import type { Logger } from "@/lib/log"
 import { parsePlanAnswers } from "@/lib/meal-plan/answers"
 import type { GeneratorResult } from "@/lib/meal-plan/generator"
@@ -61,6 +61,8 @@ function validPlan(): GeneratedPlan {
       time: `0${7 + i}:00`,
       foods: "Ovos — 100 g\nCafé sem açúcar — 200 ml",
       calories: each,
+      // Almoço sem substituta; as demais com uma, de mesmas calorias (regra de validatePlan)
+      substitutes: name === "Almoço" ? [] : [{ foods: "Ovos — 100 g\nCafé sem açúcar — 200 ml", calories: each }],
     })),
     calories: TARGET_CALORIES,
     observations: "Beba água.",
@@ -84,6 +86,12 @@ type Overrides = {
   /** Passo dos avisos de vencimento; por padrão não enfileira nada. */
   reminders?: (r: ReturnType<typeof createMemoryRepos>) => () => Promise<number>
   now?: () => Date
+  /** Etapa do desconto na cobrança; por padrão a rodada não recebe `discounts`. */
+  discounts?: () => Promise<number>
+  /** Limpeza por retenção; por padrão a rodada não recebe `purge`. */
+  purge?: () => Promise<number>
+  /** Fila do Purchase da Meta; por padrão a rodada não recebe `meta`. */
+  meta?: RunJobsMeta
 }
 
 async function setup(patientCount = 1, o: Overrides = {}) {
@@ -149,6 +157,9 @@ async function setup(patientCount = 1, o: Overrides = {}) {
     now,
     paymentDeadlineMs: 30_000,
     limits: LIMITS,
+    ...(o.discounts ? { discounts: o.discounts } : {}),
+    ...(o.purge ? { purge: o.purge } : {}),
+    ...(o.meta ? { meta: o.meta } : {}),
   })
   /** Marca a cobrança como paga pelo webhook (cria a geração `pending`); devolve o id da geração. */
   async function payAndQueueGeneration(paymentId: string, n: number): Promise<string> {
@@ -549,5 +560,204 @@ describe("createRunJobs", () => {
     expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 1 })
     expect(s.log.error).toHaveBeenCalledWith("job.reminders.error", { message: "db down" })
     expect([...s.repos.state.notifications.values()].map((n) => n.status)).toEqual(["sent", "sent"])
+  })
+
+  describe("desconto na cobrança", () => {
+    it("discounts roda depois dos avisos e antes das notificações", async () => {
+      const order: string[] = []
+      const s = await setup(1, {
+        reminders: () => async () => {
+          order.push("reminders")
+          return 0
+        },
+        discounts: async () => {
+          order.push("discounts")
+          return 3
+        },
+        notifications: (r) => ({
+          ...r.notifications,
+          listDue: async (at, limit) => {
+            order.push("listDue")
+            return r.notifications.listDue(at, limit)
+          },
+        }),
+      })
+
+      const summary = await s.runJobs()
+
+      expect(order).toEqual(["reminders", "discounts", "listDue"])
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 0, discounts: 3 })
+    })
+
+    it("sem discounts, o resumo não tem a chave", async () => {
+      const s = await setup(1)
+
+      const summary = await s.runJobs()
+
+      expect(summary).not.toHaveProperty("discounts")
+    })
+
+    it("discounts que lança conta em errors e a rodada segue", async () => {
+      const s = await setup(1, {
+        discounts: async () => {
+          throw new Error("db down")
+        },
+      })
+
+      const summary = await s.runJobs()
+
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 1, discounts: 0 })
+      expect(s.log.error).toHaveBeenCalledWith("job.discounts.error", { message: "db down" })
+      expect([...s.repos.state.notifications.values()].map((n) => n.status)).toEqual(["sent", "sent"])
+    })
+  })
+
+  describe("fila do Purchase da Meta", () => {
+    const metaWith = (over: Partial<RunJobsMeta> = {}): RunJobsMeta => ({
+      enabled: true,
+      conversions: { listDue: vi.fn(async (_now: Date, _limit: number) => ["mc-1", "mc-2"]) },
+      send: vi.fn(async (_id: string) => {}),
+      limit: 20,
+      ...over,
+    })
+
+    it("envia as vencidas depois das notificações e antes da limpeza, e conta em conversions", async () => {
+      const order: string[] = []
+      const meta = metaWith({
+        send: vi.fn(async (id: string) => {
+          order.push(`convert:${id}`)
+        }),
+      })
+      const s = await setup(1, {
+        meta,
+        wrapDispatch: (real) => async (id) => {
+          order.push("dispatch")
+          return real(id)
+        },
+        purge: async () => {
+          order.push("purge")
+          return 0
+        },
+      })
+
+      const summary = await s.runJobs()
+
+      expect(order).toEqual(["dispatch", "dispatch", "convert:mc-1", "convert:mc-2", "purge"])
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 0, conversions: 2 })
+      expect(meta.conversions.listDue).toHaveBeenCalledWith(expect.any(Date), 20)
+    })
+
+    it("com o rastreamento desligado não lista nem envia, e o resumo não tem conversions", async () => {
+      const meta = metaWith({ enabled: false })
+      const s = await setup(1, { meta })
+
+      const summary = await s.runJobs()
+
+      expect(meta.conversions.listDue).not.toHaveBeenCalled()
+      expect(meta.send).not.toHaveBeenCalled()
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 0 })
+    })
+
+    it("falha ao listar conta 1 erro, loga job.conversions.list_failed e a rodada termina", async () => {
+      const meta = metaWith({
+        conversions: {
+          listDue: vi.fn(async (): Promise<string[]> => {
+            throw new Error("db down")
+          }),
+        },
+      })
+      const s = await setup(1, { meta })
+
+      const summary = await s.runJobs()
+
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 1, conversions: 0 })
+      expect(s.log.error).toHaveBeenCalledWith("job.conversions.list_failed", { message: "db down" })
+    })
+
+    it("a exceção de um envio conta 1 erro, loga job.conversion.error e as demais seguem", async () => {
+      const sent: string[] = []
+      const meta = metaWith({
+        send: vi.fn(async (id: string) => {
+          if (id === "mc-1") throw new Error("boom")
+          sent.push(id)
+        }),
+      })
+      const s = await setup(0, { meta })
+
+      const summary = await s.runJobs()
+
+      expect(summary).toMatchObject({ errors: 1, conversions: 2 })
+      expect(sent).toEqual(["mc-2"])
+      expect(s.log.error).toHaveBeenCalledWith("job.conversion.error", { conversionId: "mc-1", message: "boom" })
+    })
+  })
+
+  describe("limpeza por retenção", () => {
+    const roundDone = (log: Logger) =>
+      (log.info as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === "job.round.done")
+
+    it("roda no fim da rodada, depois das notificações, e o total vai em purged no job.round.done", async () => {
+      const order: string[] = []
+      const s = await setup(1, {
+        wrapDispatch: (real) => async (id) => {
+          order.push("dispatch")
+          return real(id)
+        },
+        purge: async () => {
+          order.push("purge")
+          return 7
+        },
+      })
+
+      const summary = await s.runJobs()
+
+      expect(order).toEqual(["dispatch", "dispatch", "purge"])
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 0 })
+      const done = roundDone(s.log)
+      expect(done).toHaveLength(1)
+      expect(done[0][1]).toEqual({ ...summary, purged: 7, durationMs: expect.any(Number) })
+    })
+
+    it("sem purge, o job.round.done não tem purged", async () => {
+      const s = await setup(1)
+
+      await s.runJobs()
+
+      const done = roundDone(s.log)
+      expect(done).toHaveLength(1)
+      expect(done[0][1]).not.toHaveProperty("purged")
+    })
+
+    it("purge que rejeita conta 1 erro, loga job.purge.error e a rodada termina normalmente", async () => {
+      const s = await setup(1, {
+        purge: async () => {
+          throw new Error("db down")
+        },
+      })
+
+      const summary = await s.runJobs()
+
+      expect(summary).toEqual({ payments: 1, plans: 0, reminders: 0, notifications: 2, errors: 1 })
+      expect(s.log.error).toHaveBeenCalledWith("job.purge.error", { message: "db down" })
+      expect([...s.repos.state.notifications.values()].map((n) => n.status)).toEqual(["sent", "sent"])
+      const done = roundDone(s.log)
+      expect(done).toHaveLength(1)
+      expect(done[0][1]).toEqual({ ...summary, purged: 0, durationMs: expect.any(Number) })
+    })
+
+    it("a mensagem do erro da limpeza não vaza dados pessoais para o log", async () => {
+      const s = await setup(0, {
+        purge: async () => {
+          throw new Error("Failed query: delete ... params: ana@example.com,11999990000")
+        },
+      })
+
+      await s.runJobs()
+
+      const text = loggedText(s.log)
+      expect(text).toContain("job.purge.error")
+      expect(text).not.toContain("ana@example.com")
+      expect(text).not.toContain("11999990000")
+    })
   })
 })

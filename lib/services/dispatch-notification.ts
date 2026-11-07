@@ -6,6 +6,7 @@ import type { EmailSender } from "@/lib/notify/email"
 import {
   renderFirstAccess,
   renderPasswordReset,
+  renderPaymentDiscount,
   renderPaymentLink,
   renderPlanExpiring,
   renderPlanReady,
@@ -34,11 +35,13 @@ export class PermanentNotificationError extends Error {
 }
 
 /**
- * Envia uma notificação enfileirada (e-mail ou WhatsApp; `payment_link`, `plan_ready`, `password_reset` ou
- * `plan_expiring_d5|d2|d0`). O `payment_link` de quem já tem senha usa o texto da renovação. O WhatsApp é retomável: cada parte enviada
- * é gravada (`parts_sent`), então uma nova tentativa continua da próxima parte e não reenvia as anteriores.
+ * Envia uma notificação enfileirada (e-mail ou WhatsApp; `payment_link`, `payment_discount`, `plan_ready`,
+ * `password_reset` ou `plan_expiring_d5|d2|d0`). O `payment_link` e o `payment_discount` de quem já tem senha usam o
+ * texto da renovação. O WhatsApp é retomável: cada parte enviada é gravada (`parts_sent`), então uma nova tentativa
+ * continua da próxima parte e não reenvia as anteriores.
  * Falhas viram nova tentativa com backoff; a definitiva (erro permanente ou 5ª tentativa) alerta o admin.
- * O aviso de vencimento que perdeu a validade até o envio sai da fila sem ser enviado e sem alerta (`skipped`).
+ * O aviso de vencimento e a condição especial que perderam a validade até o envio saem da fila sem ser enviados
+ * e sem alerta (`skipped`).
  */
 export function createDispatchNotification(d: {
   notifications: NotificationRepo
@@ -126,6 +129,24 @@ export function createDispatchNotification(d: {
       return renderPaymentLink({ name: n.patientName, link: n.paymentUrl })
     }
 
+    // Condição especial: os valores e a data vêm da cobrança; sem eles (ou sem o link) não há o que enviar.
+    if (n.kind === "payment_discount") {
+      const pd = n.paymentDiscount
+      if (!n.paymentUrl) throw new PermanentNotificationError("payment_discount without url")
+      if (!pd || !pd.originalAmount || !pd.dueDate) {
+        throw new PermanentNotificationError("payment_discount without discount data")
+      }
+      return renderPaymentDiscount({
+        name: n.patientName,
+        link: n.paymentUrl,
+        originalAmount: pd.originalAmount,
+        amount: pd.amount,
+        dueDate: pd.dueDate,
+        // Quem já tem senha não recebe "dados de acesso": o último parágrafo muda, como no `payment_link`.
+        returning: Boolean(n.patientPasswordHash),
+      })
+    }
+
     // Aviso de vencimento: o plano dá a data e o link do formulário; a cobrança, quando ligada, troca a variante.
     if (n.kind === "plan_expiring_d5" || n.kind === "plan_expiring_d2" || n.kind === "plan_expiring_d0") {
       if (!n.mealPlan || !n.mealPlan.endDate) throw new PermanentNotificationError(`${n.kind} without meal plan`)
@@ -154,13 +175,27 @@ export function createDispatchNotification(d: {
   }
 
   /**
-   * Aviso de vencimento que perdeu a validade entre a fila e o envio (atraso por novas tentativas ou reabertura):
-   * plano que deixou de ser ativo, plano já vencido (nenhuma mensagem depois do vencimento) ou renovação já paga
-   * (spec §13: nunca pedir pagamento a quem já pagou). Devolve o motivo, ou null se o aviso ainda vale.
-   * Faltando 0 a 5 dias o aviso ainda vale mesmo que o estágio de hoje seja outro: d5 e d2 trazem a data explícita.
-   * Sem plano ou sem data, quem decide é `renderMessage` (falha definitiva).
+   * Mensagem que perdeu a validade entre a fila e o envio (atraso por novas tentativas ou reabertura). Devolve o
+   * motivo, ou null se ela ainda vale.
+   * - Condição especial (`payment_discount`): cobrança já paga, que deixou de estar em aberto (cancelada,
+   *   estornada...), cujo desconto não está aplicado ou cujo novo vencimento já passou (hoje em São Paulo): nunca
+   *   oferecer preço a quem já pagou, a quem não tem mais o valor baixo nem fora do prazo da oferta. Sem os dados da cobrança, quem decide é `renderMessage` (falha definitiva).
+   * - Aviso de vencimento: plano que deixou de ser ativo, plano já vencido (nenhuma mensagem depois do vencimento) ou
+   *   renovação já paga (spec §13: nunca pedir pagamento a quem já pagou). Faltando 0 a 5 dias o aviso ainda vale
+   *   mesmo que o estágio de hoje seja outro: d5 e d2 trazem a data explícita. Sem plano ou sem data, quem decide
+   *   é `renderMessage` (falha definitiva).
    */
   function staleReason(n: NotificationView): string | null {
+    if (n.kind === "payment_discount") {
+      const pd = n.paymentDiscount
+      if (!pd) return null
+      if (pd.paidAt !== null) return "payment already paid"
+      if (pd.paymentStatus !== "PENDING" && pd.paymentStatus !== "OVERDUE") return "payment no longer open"
+      if (pd.discountStatus !== "applied") return "discount not applied"
+      // O preço baixo só vale até o novo vencimento: depois dele a oferta seria falsa.
+      if (pd.dueDate !== null && pd.dueDate < todayInSaoPaulo(d.now())) return "discount expired"
+      return null
+    }
     if (n.kind !== "plan_expiring_d5" && n.kind !== "plan_expiring_d2" && n.kind !== "plan_expiring_d0") return null
     if (!n.mealPlan || !n.mealPlan.endDate) return null
     if (n.mealPlan.status !== "active") return "plan no longer active"
@@ -172,8 +207,8 @@ export function createDispatchNotification(d: {
   }
 
   /**
-   * Tira da fila, sem enviar e sem alertar o admin, o aviso que perdeu a validade: `failed` com o motivo em
-   * `last_error` (etapa `notify.stale`). Se a gravação falhar, a linha segue pendente e o próximo envio confere de novo.
+   * Tira da fila, sem enviar e sem alertar o admin, a mensagem que perdeu a validade (aviso de vencimento ou condição
+   * especial): `failed` com o motivo em `last_error` (etapa `notify.stale`). Se a gravação falhar, a linha segue pendente e o próximo envio confere de novo.
    */
   async function discardStale(n: NotificationView, reason: string): Promise<boolean> {
     const attempts = n.attempts + 1

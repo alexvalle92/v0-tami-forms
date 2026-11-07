@@ -1,14 +1,38 @@
 import { describe, expect, it } from "vitest"
-import { generatedPlanSchema, toPlanData, validatePlan, type GeneratedPlan } from "@/lib/meal-plan/plan"
+import { generatedPlanSchema, isLunch, toPlanData, validatePlan, type GeneratedPlan } from "@/lib/meal-plan/plan"
 
 const targets = { calories: 1650, calorieFloor: 1500 }
 
 const valid: GeneratedPlan = {
   meals: [
-    { name: "Café da manhã", time: "07:00", foods: "Ovo mexido — 100 g (2 un)\nPão integral — 50 g (2 fatias)", calories: 400 },
-    { name: "Almoço", time: "12:30", foods: "Arroz integral — 120 g (4 col. sopa)\nFrango grelhado — 150 g (1 filé)\nSalada à vontade", calories: 600 },
-    { name: "Lanche da tarde", time: "16:00", foods: "Iogurte natural — 170 g (1 pote)\nBanana — 100 g (1 un)", calories: 250 },
-    { name: "Jantar", time: "19:30", foods: "Omelete — 120 g (2 ovos)\nLegume sem amido a vontade", calories: 400 },
+    {
+      name: "Café da manhã",
+      time: "07:00",
+      foods: "Ovo mexido — 100 g (2 un)\nPão integral — 50 g (2 fatias)",
+      calories: 400,
+      substitutes: [{ foods: "Crepioca — 1 ovo + 20 g de tapioca\nQueijo — 30 g (1 fatia)", calories: 390 }],
+    },
+    {
+      name: "Almoço",
+      time: "12:30",
+      foods: "Arroz integral — 120 g (4 col. sopa)\nFrango grelhado — 150 g (1 filé)\nSalada à vontade",
+      calories: 600,
+      substitutes: [],
+    },
+    {
+      name: "Lanche da tarde",
+      time: "16:00",
+      foods: "Iogurte natural — 170 g (1 pote)\nBanana — 100 g (1 un)",
+      calories: 250,
+      substitutes: [{ foods: "Leite — 200 ml (1 copo)\nWhey — 30 g (1 scoop)", calories: 240 }],
+    },
+    {
+      name: "Jantar",
+      time: "19:30",
+      foods: "Omelete — 120 g (2 ovos)\nLegume sem amido a vontade",
+      calories: 400,
+      substitutes: [{ foods: "Rap10 — 1 un\nCarne moída — 100 g", calories: 410 }],
+    },
   ],
   calories: 1650,
   observations: "Beba bastante água ao longo do dia.",
@@ -42,18 +66,28 @@ describe("validatePlan", () => {
 
   it.each([1, 7])("%d refeições → meals_count", (count) => {
     const each = Math.floor(1650 / count)
-    const meals = Array.from({ length: count }, (_, i) => ({
-      name: `Refeição ${i + 1}`,
-      time: "08:00",
-      foods: "Ovo — 50 g (1 un)",
-      calories: i === count - 1 ? 1650 - each * (count - 1) : each,
-    }))
+    const meals = Array.from({ length: count }, (_, i) => {
+      const calories = i === count - 1 ? 1650 - each * (count - 1) : each
+      return {
+        name: `Refeição ${i + 1}`,
+        time: "08:00",
+        foods: "Ovo — 50 g (1 un)",
+        calories,
+        substitutes: [{ foods: "Ovo — 50 g (1 un)", calories }],
+      }
+    })
     expect(validatePlan({ ...valid, meals }, targets)).toEqual(["meals_count"])
   })
 
   it("2 e 6 refeições são aceitas", () => {
     const mealsOf = (kcals: number[]) =>
-      kcals.map((calories, i) => ({ name: `Refeição ${i + 1}`, time: "08:00", foods: "Ovo — 50 g (1 un)", calories }))
+      kcals.map((calories, i) => ({
+        name: `Refeição ${i + 1}`,
+        time: "08:00",
+        foods: "Ovo — 50 g (1 un)",
+        calories,
+        substitutes: [{ foods: "Ovo — 50 g (1 un)", calories }],
+      }))
     expect(validatePlan({ ...valid, meals: mealsOf([800, 850]) }, targets)).toEqual([])
     expect(validatePlan({ ...valid, meals: mealsOf([300, 300, 300, 300, 225, 225]) }, targets)).toEqual([])
   })
@@ -66,13 +100,13 @@ describe("validatePlan", () => {
     expect(validatePlan(withMeal(0, patch), targets)).toEqual(["meal_fields"])
   })
 
-  it.each([0, -10])("refeição com calorias %d → meal_fields", (kcal) => {
+  it.each([0, -10])("refeição com calorias %d → meal_fields (e a substituta fica longe dela)", (kcal) => {
     // a diferença vai para o almoço, para a soma continuar em 1650
     const plan: GeneratedPlan = {
       ...valid,
       meals: valid.meals.map((m, i) => (i === 0 ? { ...m, calories: kcal } : i === 1 ? { ...m, calories: 1000 - kcal } : m)),
     }
-    expect(validatePlan(plan, targets)).toEqual(["meal_fields"])
+    expect(validatePlan(plan, targets)).toEqual(["meal_fields", "substitute_calories_mismatch"])
   })
 
   it("linha de alimento sem quantidade → food_without_quantity", () => {
@@ -142,7 +176,7 @@ describe("toPlanData", () => {
     expect(
       toPlanData({
         ...valid,
-        meals: [{ name: " Café ", time: "07:00", foods: "Ovo — 50 g (1 un)\n", calories: 349.6 }],
+        meals: [{ name: " Café ", time: "07:00", foods: "Ovo — 50 g (1 un)\n", calories: 349.6, substitutes: [] }],
         calories: 349.6,
       }),
     ).toEqual({
@@ -165,5 +199,58 @@ describe("generatedPlanSchema", () => {
     expect(
       generatedPlanSchema.safeParse({ ...valid, meals: [{ ...valid.meals[0], calories: "400" }] }).success,
     ).toBe(false)
+  })
+})
+
+describe("isLunch", () => {
+  it.each(["Almoço", "ALMOÇO", "Almoco", "Almoço pós-treino"])("%s é almoço", (n) => expect(isLunch(n)).toBe(true))
+  it.each(["Café da manhã", "Lanche da tarde", "Jantar", "Ceia", "Pré-treino"])("%s não é almoço", (n) =>
+    expect(isLunch(n)).toBe(false),
+  )
+})
+
+describe("validatePlan — substitutas", () => {
+  const sub = (foods: string, calories: number) => [{ foods, calories }]
+
+  it("almoço com substituta → substitutes_count", () => {
+    expect(validatePlan(withMeal(1, { substitutes: sub("Arroz — 100 g", 600) }), targets)).toEqual(["substitutes_count"])
+  })
+
+  it("jantar sem substituta → substitutes_count", () => {
+    expect(validatePlan(withMeal(3, { substitutes: [] }), targets)).toEqual(["substitutes_count"])
+  })
+
+  it("duas substitutas → substitutes_count", () => {
+    const two = [...sub("Ovo — 1 un", 400), ...sub("Pão — 50 g", 400)]
+    expect(validatePlan(withMeal(0, { substitutes: two }), targets)).toEqual(["substitutes_count"])
+  })
+
+  it("10% de diferença passa; 11% → substitute_calories_mismatch", () => {
+    expect(validatePlan(withMeal(0, { substitutes: sub("Ovo — 1 un", 440) }), targets)).toEqual([])
+    expect(validatePlan(withMeal(0, { substitutes: sub("Ovo — 1 un", 444) }), targets)).toEqual(["substitute_calories_mismatch"])
+    expect(validatePlan(withMeal(0, { substitutes: sub("Ovo — 1 un", 356) }), targets)).toEqual(["substitute_calories_mismatch"])
+  })
+
+  it("linha da substituta sem quantidade → food_without_quantity", () => {
+    expect(validatePlan(withMeal(0, { substitutes: sub("Ovo — 1 un\nQueijo", 400) }), targets)).toEqual([
+      "food_without_quantity",
+    ])
+  })
+
+  it("substituta vazia ou com 0 kcal → meal_fields", () => {
+    expect(validatePlan(withMeal(0, { substitutes: sub("  ", 400) }), targets)).toContain("meal_fields")
+    expect(validatePlan(withMeal(0, { substitutes: sub("Ovo — 1 un", 0) }), targets)).toContain("meal_fields")
+  })
+
+  it("a soma do dia ignora as substitutas", () => {
+    expect(validatePlan(withMeal(0, { substitutes: sub("Ovo — 1 un", 360) }), targets)).toEqual([])
+  })
+})
+
+describe("toPlanData — substitutas", () => {
+  it("normaliza a substituta e omite a chave no almoço", () => {
+    const data = toPlanData(withMeal(0, { substitutes: [{ foods: " Ovo — 1 un \n\nPão — 50 g ", calories: 389.6 }] }))
+    expect(data.meals[0].substitutes).toEqual([{ foods: "Ovo — 1 un\nPão — 50 g", calories: "390" }])
+    expect("substitutes" in data.meals[1]).toBe(false)
   })
 })

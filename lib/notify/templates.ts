@@ -6,6 +6,10 @@ export const PLAN_READY_TITLE = "Seu novo Plano Alimentar está pronto"
 export const PASSWORD_RESET_TITLE = "Redefinição de senha do PlanA"
 export const RENEWAL_PAYMENT_LINK_TITLE = "Recebemos sua atualização! Falta só o pagamento"
 
+/** Assunto da condição especial; os valores chegam já formatados (`formatBRL`). */
+export const PAYMENT_DISCOUNT_TITLE = (original: string, amount: string) =>
+  `🎁 Condição especial: seu plano de ${original} por ${amount}`
+
 /** Título do aviso de vencimento de cada estágio (spec de vencimento e renovação, §6.2). */
 export const PLAN_EXPIRING_TITLES: Record<ExpiryStage, string> = {
   d5: "Seu plano alimentar está acabando",
@@ -150,6 +154,39 @@ export function renderRenewalPaymentLink(d: { name: string; link: string }): {
     `${escapeHtml(d.link)} <br><br>` +
     `Assim que o pagamento for confirmado, seu novo plano aparece no PlanA. É só entrar com seu CPF e a senha que você já usa. 💚`
   return { subject: RENEWAL_PAYMENT_LINK_TITLE, html, text: htmlToText(html) }
+}
+
+/** Decimal do banco (`"29.90"`, `"100"`) vira `R$ 29,90`: por regex sobre o texto, sem `Number`, para não arredondar. */
+export function formatBRL(decimal: string): string {
+  const m = /^(\d+)(?:\.(\d{1,2}))?$/.exec(decimal)
+  if (!m) throw new Error("invalid amount")
+  return `R$ ${m[1]},${(m[2] ?? "").padEnd(2, "0")}`
+}
+
+/**
+ * Condição especial numa cobrança em aberto (spec do desconto, §8): o valor já está baixo no Asaas e o link é o
+ * mesmo de antes. `returning` (paciente que já tem senha) troca só o último parágrafo, como no link de pagamento.
+ * `dueDate` vem em YYYY-MM-DD e os valores como decimais do banco.
+ */
+export function renderPaymentDiscount(d: {
+  name: string
+  link: string
+  originalAmount: string
+  amount: string
+  dueDate: string
+  returning: boolean
+}): { subject: string; html: string; text: string } {
+  const original = formatBRL(d.originalAmount)
+  const amount = formatBRL(d.amount)
+  const closing = d.returning
+    ? "Assim que o pagamento for confirmado, seu novo plano aparece no PlanA. É só entrar com seu CPF e a senha que você já usa. 💚"
+    : "Assim que o pagamento for confirmado, você recebe os dados de acesso ao seu plano. 💚"
+  const html =
+    `Olá ${escapeHtml(d.name)}! 👋 <br>Seu <strong>Plano Alimentar Personalizado</strong> já está pronto e só falta o pagamento para liberar. <br><br>` +
+    `Preparamos uma <strong>condição especial</strong> para você começar agora: o valor baixou de <strong>${original} para ${amount}</strong>. <br><br>` +
+    `Essa condição vale até <strong>${formatDateBR(d.dueDate)}</strong>. O link de pagamento é o mesmo de antes: <br>${escapeHtml(d.link)} <br><br>` +
+    closing
+  return { subject: PAYMENT_DISCOUNT_TITLE(original, amount), html, text: htmlToText(html) }
 }
 
 /** Porta o antigo `textoFormatado` do fluxo anterior: o html vira partes de texto no formato do WhatsApp. */

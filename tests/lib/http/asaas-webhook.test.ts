@@ -36,13 +36,18 @@ const processedPaid: HandledEvent = {
   outcome: "processed",
   pendingGeneration: { id: "gen-1", quizResponseId: "qr-1" },
   notice: null,
+  pendingConversion: null,
 }
 
-function setup(handled: HandledEvent | (() => Promise<HandledEvent>) = processedPaid) {
+function setup(
+  handled: HandledEvent | (() => Promise<HandledEvent>) = processedPaid,
+  sendMetaConversion?: (id: string) => Promise<void>,
+) {
   const calls = {
     handled: [] as PaymentEventInput[],
     generations: [] as string[],
     notices: [] as AdminNotice[],
+    conversions: [] as string[],
     deferred: [] as (() => Promise<void>)[],
   }
   const log = fakeLog()
@@ -58,6 +63,11 @@ function setup(handled: HandledEvent | (() => Promise<HandledEvent>) = processed
     noticeAdmin: async (n) => {
       calls.notices.push(n)
     },
+    sendMetaConversion:
+      sendMetaConversion ??
+      (async (id) => {
+        calls.conversions.push(id)
+      }),
     defer: (fn) => {
       calls.deferred.push(fn)
     },
@@ -93,6 +103,7 @@ describe("webhook do Asaas: autenticação", () => {
       handleEvent: vi.fn(),
       runPlanGeneration: vi.fn(),
       noticeAdmin: vi.fn(),
+      sendMetaConversion: vi.fn(),
       defer: vi.fn(),
       log: fakeLog(),
     })
@@ -158,7 +169,7 @@ describe("webhook do Asaas: tratamento e trabalho adiado", () => {
       event: "PAYMENT_REFUNDED",
       asaasPaymentId: "pay_1",
     }
-    const { handler, calls } = setup({ outcome: "processed", pendingGeneration: null, notice })
+    const { handler, calls } = setup({ outcome: "processed", pendingGeneration: null, notice, pendingConversion: null })
 
     const res = await handler(post(JSON.stringify({ ...PAID_BODY, event: "PAYMENT_REFUNDED" })))
 
@@ -173,7 +184,7 @@ describe("webhook do Asaas: tratamento e trabalho adiado", () => {
   })
 
   it("duplicado → 200 e nada é adiado", async () => {
-    const { handler, calls } = setup({ outcome: "duplicate", pendingGeneration: null, notice: null })
+    const { handler, calls } = setup({ outcome: "duplicate", pendingGeneration: null, notice: null, pendingConversion: null })
     const res = await handler(post(JSON.stringify(PAID_BODY)))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
@@ -181,7 +192,7 @@ describe("webhook do Asaas: tratamento e trabalho adiado", () => {
   })
 
   it("ignorado → 200 e nada é adiado", async () => {
-    const { handler, calls } = setup({ outcome: "ignored", pendingGeneration: null, notice: null })
+    const { handler, calls } = setup({ outcome: "ignored", pendingGeneration: null, notice: null, pendingConversion: null })
     const res = await handler(post(JSON.stringify(PAID_BODY)))
     expect(res.status).toBe(200)
     expect(calls.deferred).toEqual([])
@@ -218,13 +229,19 @@ describe("webhook do Asaas: tratamento e trabalho adiado", () => {
     const deferred: (() => Promise<void>)[] = []
     const handler = createAsaasWebhookHandler({
       token: TOKEN,
-      handleEvent: async () => ({ outcome: "processed", pendingGeneration: { id: "gen-1", quizResponseId: "qr-1" }, notice }),
+      handleEvent: async () => ({
+        outcome: "processed",
+        pendingGeneration: { id: "gen-1", quizResponseId: "qr-1" },
+        notice,
+        pendingConversion: null,
+      }),
       runPlanGeneration: async () => {
         throw new Error("ia fora do ar")
       },
       noticeAdmin: async () => {
         throw new Error("smtp down")
       },
+      sendMetaConversion: async () => {},
       defer: (fn) => {
         deferred.push(fn)
       },
@@ -247,5 +264,51 @@ describe("webhook do Asaas: tratamento e trabalho adiado", () => {
     const text = JSON.stringify(log.lines)
     expect(text).not.toContain(TOKEN)
     expect(text).not.toContain("Nome Secreto")
+  })
+})
+
+describe("webhook do Asaas: Purchase da Meta", () => {
+  const conversionOnly: HandledEvent = {
+    outcome: "processed",
+    pendingGeneration: null,
+    notice: null,
+    pendingConversion: { id: "mc-1" },
+  }
+
+  it("com conversão pendente responde 200 e envia o Purchase depois da resposta", async () => {
+    const { handler, calls } = setup(conversionOnly)
+
+    const res = await handler(post(JSON.stringify(PAID_BODY)))
+
+    expect(res.status).toBe(200)
+    expect(calls.deferred).toHaveLength(1)
+    expect(calls.conversions).toEqual([]) // só roda depois da resposta
+    await calls.deferred[0]()
+    expect(calls.conversions).toEqual(["mc-1"])
+  })
+
+  it("sem conversão pendente não envia nada à Meta", async () => {
+    const { handler, calls } = setup(processedPaid)
+
+    await handler(post(JSON.stringify(PAID_BODY)))
+    for (const fn of calls.deferred) await fn()
+
+    expect(calls.conversions).toEqual([])
+  })
+
+  it("falha no envio à Meta não muda a resposta e vira log sem dado pessoal", async () => {
+    const { handler, calls, log } = setup(conversionOnly, async () => {
+      throw new Error("meta fora do ar")
+    })
+
+    const res = await handler(post(JSON.stringify(PAID_BODY)))
+    expect(res.status).toBe(200)
+    await expect(calls.deferred[0]()).resolves.toBeUndefined()
+
+    expect(log.lines).toContainEqual({
+      level: "error",
+      event: "webhook.asaas.conversion_failed",
+      fields: { eventId: "evt_1", event: "PAYMENT_RECEIVED", paymentId: "pay-local-1", message: "meta fora do ar" },
+    })
   })
 })

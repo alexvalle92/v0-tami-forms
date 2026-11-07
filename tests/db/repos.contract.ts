@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import type {
   Channel,
+  FunnelEventRow,
+  FunnelSessionPatch,
+  MetaAttributionInput,
   NewSubmission,
   NotificationView,
   PaymentEventGroup,
@@ -1497,6 +1500,831 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
         const ids = await repos.notifications.listPendingIdsForQuizResponse(p.ref.quizResponseId)
         expect(ids).toHaveLength(2)
         for (const id of ids) expect((await repos.notifications.get(id))!.mealPlan).toBeNull()
+      })
+    })
+
+    describe("43. funil do quiz: AnalyticsRepo", () => {
+      const DAY = 86_400_000
+      const device = { deviceType: "mobile", os: "iOS", browser: "Instagram" }
+
+      const patch = (sessionId: string, over: Partial<FunnelSessionPatch> = {}): FunnelSessionPatch => ({
+        sessionId,
+        device,
+        checkoutClicked: false,
+        answers: {},
+        ...over,
+      })
+
+      const ev = (sessionId: string, event: string, now: Date, over: Partial<FunnelEventRow> = {}): FunnelEventRow => ({
+        sessionId,
+        event,
+        step: null,
+        stepSlug: null,
+        props: {},
+        clientTs: now,
+        createdAt: now,
+        ...over,
+      })
+
+      it("cria a sessão com tudo e grava os eventos na ordem enviada", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const now = new Date("2026-10-20T12:00:00.123Z")
+        const events = [
+          ev(sessionId, "session_start", now, { props: { referrerHost: "l.instagram.com" } }),
+          ev(sessionId, "step_view", now, { step: 1, stepSlug: "tipo_fisico", props: {} }),
+          ev(sessionId, "step_answer", now, {
+            step: 1,
+            stepSlug: "tipo_fisico",
+            props: { durationMs: 1500 },
+            clientTs: new Date("2026-10-20T11:59:59.000Z"),
+          }),
+        ]
+
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "ig" }, referrerHost: "l.instagram.com", viewportW: 390, viewportH: 844 },
+            lastStep: { step: 2, slug: "sono" },
+            maxStep: { step: 2, slug: "sono" },
+            answers: { tipo_fisico: "Gordinho(a)" },
+          }),
+          events,
+          now,
+        )
+
+        expect(await analytics.getSession(sessionId)).toEqual({
+          sessionId,
+          startedAt: now,
+          lastEventAt: now,
+          lastStep: 2,
+          lastStepSlug: "sono",
+          maxStep: 2,
+          maxStepSlug: "sono",
+          checkoutClicked: false,
+          utm: { source: "ig" },
+          referrerHost: "l.instagram.com",
+          deviceType: "mobile",
+          os: "iOS",
+          browser: "Instagram",
+          viewportW: 390,
+          viewportH: 844,
+          answers: { tipo_fisico: "Gordinho(a)" },
+        })
+        const rows = await analytics.listEvents(sessionId)
+        expect(rows).toHaveLength(3)
+        expect(rows).toEqual(events)
+      })
+
+      it("sessão inexistente: getSession devolve null e listEvents, lista vazia", async () => {
+        const { analytics } = await setup()
+        expect(await analytics.getSession(randomUUID())).toBeNull()
+        expect(await analytics.listEvents(randomUUID())).toEqual([])
+      })
+
+      it("max_step não diminui; last_step acompanha o último lote", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(
+          patch(sessionId, { lastStep: { step: 2, slug: "sono" }, maxStep: { step: 2, slug: "sono" } }),
+          [],
+          t1,
+        )
+        await analytics.recordBatch(
+          patch(sessionId, { lastStep: { step: 1, slug: "tipo_fisico" }, maxStep: { step: 1, slug: "tipo_fisico" } }),
+          [],
+          t2,
+        )
+
+        expect(await analytics.getSession(sessionId)).toMatchObject({
+          maxStep: 2,
+          maxStepSlug: "sono",
+          lastStep: 1,
+          lastStepSlug: "tipo_fisico",
+        })
+      })
+
+      it("max_step maior no segundo lote avança junto com o slug", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 1, slug: "tipo_fisico" } }), [], t1)
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 3, slug: "agua" } }), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ maxStep: 3, maxStepSlug: "agua" })
+      })
+
+      it("max_step igual ao anterior não troca o slug", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 2, slug: "sono" } }), [], t1)
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 2, slug: "outro" } }), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ maxStep: 2, maxStepSlug: "sono" })
+      })
+
+      it("lote sem etapa na criação deixa max_step nulo; o seguinte (etapa 0 inclusive) o define", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        expect(await analytics.getSession(sessionId)).toMatchObject({
+          maxStep: null,
+          maxStepSlug: null,
+          lastStep: null,
+          lastStepSlug: null,
+        })
+        await analytics.recordBatch(patch(sessionId, { maxStep: { step: 0, slug: "inicio" } }), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ maxStep: 0, maxStepSlug: "inicio" })
+      })
+
+      it("checkout_clicked vira true e não volta", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId, { checkoutClicked: true }), [], t1)
+        await analytics.recordBatch(patch(sessionId, { checkoutClicked: false }), [], t2)
+        expect((await analytics.getSession(sessionId))!.checkoutClicked).toBe(true)
+      })
+
+      it("UTMs, referrer e viewport não são sobrescritos", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "ig" }, referrerHost: "l.instagram.com", viewportW: 390, viewportH: 844 },
+          }),
+          [],
+          t1,
+        )
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "fb", campaign: "c1" }, referrerHost: "facebook.com", viewportW: 1, viewportH: 2 },
+          }),
+          [],
+          t2,
+        )
+
+        const session = (await analytics.getSession(sessionId))!
+        expect(session.utm.source).toBe("ig")
+        expect(session.referrerHost).toBe("l.instagram.com")
+        expect(session.viewportW).toBe(390)
+        expect(session.viewportH).toBe(844)
+      })
+
+      it("UTM ainda nula é preenchida por um lote posterior", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        await analytics.recordBatch(
+          patch(sessionId, {
+            start: { utm: { source: "fb", campaign: "c1" }, referrerHost: null, viewportW: null, viewportH: null },
+          }),
+          [],
+          t2,
+        )
+        const session = (await analytics.getSession(sessionId))!
+        expect(session.utm).toEqual({ source: "fb", campaign: "c1" })
+        expect(session.referrerHost).toBeNull()
+        expect(session.viewportW).toBeNull()
+      })
+
+      it("answers faz merge e a mesma chave é substituída", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const at = (min: number) => new Date(Date.UTC(2026, 9, 20, 12, min))
+        await analytics.recordBatch(patch(sessionId, { answers: { tipo_fisico: "Gordinho(a)" } }), [], at(0))
+        await analytics.recordBatch(patch(sessionId, { answers: { sono: "6h" } }), [], at(1))
+        expect((await analytics.getSession(sessionId))!.answers).toEqual({ tipo_fisico: "Gordinho(a)", sono: "6h" })
+
+        await analytics.recordBatch(patch(sessionId, { answers: { sono: "8h" } }), [], at(2))
+        expect((await analytics.getSession(sessionId))!.answers).toEqual({ tipo_fisico: "Gordinho(a)", sono: "8h" })
+
+        await analytics.recordBatch(patch(sessionId, { answers: { sintomas: ["a", "b"] } }), [], at(3))
+        await analytics.recordBatch(patch(sessionId, { answers: { sintomas: ["c"] } }), [], at(4))
+        expect((await analytics.getSession(sessionId))!.answers).toEqual({
+          tipo_fisico: "Gordinho(a)",
+          sono: "8h",
+          sintomas: ["c"],
+        })
+      })
+
+      it("lote sem lastStep preserva o lastStep anterior", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        await analytics.recordBatch(
+          patch(sessionId, { lastStep: { step: 4, slug: "agua" } }),
+          [],
+          new Date("2026-10-20T12:00:00.000Z"),
+        )
+        await analytics.recordBatch(patch(sessionId), [], new Date("2026-10-20T12:01:00.000Z"))
+        expect(await analytics.getSession(sessionId)).toMatchObject({ lastStep: 4, lastStepSlug: "agua" })
+      })
+
+      it("lastEventAt passa a ser o now do lote mais recente", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:05:00.456Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        await analytics.recordBatch(patch(sessionId), [], t2)
+        expect(await analytics.getSession(sessionId)).toMatchObject({ startedAt: t1, lastEventAt: t2 })
+      })
+
+      it("o aparelho é gravado na criação e não muda depois", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [], t1)
+        await analytics.recordBatch(
+          patch(sessionId, { device: { deviceType: "desktop", os: "Windows", browser: "Chrome" } }),
+          [],
+          t2,
+        )
+        expect(await analytics.getSession(sessionId)).toMatchObject({
+          deviceType: "mobile",
+          os: "iOS",
+          browser: "Instagram",
+        })
+      })
+
+      it("os eventos de lotes diferentes acumulam na ordem de gravação", async () => {
+        const { analytics } = await setup()
+        const sessionId = randomUUID()
+        const t1 = new Date("2026-10-20T12:00:00.000Z")
+        const t2 = new Date("2026-10-20T12:01:00.000Z")
+        await analytics.recordBatch(patch(sessionId), [ev(sessionId, "step_view", t1, { step: 1, stepSlug: "a" })], t1)
+        await analytics.recordBatch(
+          patch(sessionId),
+          [
+            ev(sessionId, "step_back", t2, { step: 1, stepSlug: "a" }),
+            ev(sessionId, "page_hide", t2, { props: { msOnStep: 10 } }),
+          ],
+          t2,
+        )
+        expect((await analytics.listEvents(sessionId)).map((e) => e.event)).toEqual([
+          "step_view",
+          "step_back",
+          "page_hide",
+        ])
+      })
+
+      it("purge do funil: remove só o antigo e devolve o total", async () => {
+        const { analytics } = await setup()
+        const oldSession = randomUUID()
+        const freshSession = randomUUID()
+        const old = new Date(Date.now() - 400 * DAY)
+        const fresh = new Date()
+        await analytics.recordBatch(
+          patch(oldSession),
+          [ev(oldSession, "session_start", old), ev(oldSession, "step_view", old, { step: 1, stepSlug: "a" })],
+          old,
+        )
+        await analytics.recordBatch(patch(freshSession), [ev(freshSession, "session_start", fresh)], fresh)
+
+        const removed = await analytics.purgeOlderThan(new Date(Date.now() - 365 * DAY), 1000)
+
+        expect(removed).toBeGreaterThanOrEqual(3) // 2 eventos + 1 sessão (um banco compartilhado pode ter mais antigos)
+        expect(await analytics.getSession(oldSession)).toBeNull()
+        expect(await analytics.listEvents(oldSession)).toEqual([])
+        expect(await analytics.getSession(freshSession)).not.toBeNull()
+        expect(await analytics.listEvents(freshSession)).toHaveLength(1)
+      })
+
+      it("purge do funil: o limite vale por tabela", async () => {
+        const { analytics } = await setup()
+        const a = randomUUID()
+        const b = randomUUID()
+        const old = new Date(Date.now() - 400 * DAY)
+        await analytics.recordBatch(patch(a), [ev(a, "session_start", old), ev(a, "step_view", old)], old)
+        await analytics.recordBatch(patch(b), [ev(b, "session_start", old), ev(b, "step_view", old)], old)
+        const cutoff = new Date(Date.now() - 365 * DAY)
+
+        // 4 eventos e 2 sessões velhas: com limit 1, no máximo 1 de cada tabela.
+        expect(await analytics.purgeOlderThan(cutoff, 1)).toBe(2)
+        const eventsLeft = (await analytics.listEvents(a)).length + (await analytics.listEvents(b)).length
+        expect(eventsLeft).toBe(3)
+        const sessionsLeft = [await analytics.getSession(a), await analytics.getSession(b)].filter(Boolean)
+        expect(sessionsLeft).toHaveLength(1)
+      })
+    })
+
+    describe("44. logs do app: AppLogRepo", () => {
+      const DAY = 86_400_000
+
+      it("insertMany e listByEvent devolvem as linhas por ts, com fields iguais", async () => {
+        const { appLogs } = await setup()
+        const event = `contrato.${randomUUID()}`
+        const t1 = new Date("2026-10-20T12:00:00.100Z")
+        const t2 = new Date("2026-10-20T12:00:00.200Z")
+        await appLogs.insertMany([
+          { ts: t2, level: "error", event, area: "contrato", fields: { paymentId: "p2", attempt: 2, nested: { a: [1, 2] } } },
+          { ts: t1, level: "warn", event, area: "contrato", fields: { paymentId: "p1" } },
+        ])
+
+        expect(await appLogs.listByEvent(event)).toEqual([
+          { ts: t1, level: "warn", event, area: "contrato", fields: { paymentId: "p1" } },
+          { ts: t2, level: "error", event, area: "contrato", fields: { paymentId: "p2", attempt: 2, nested: { a: [1, 2] } } },
+        ])
+        expect(await appLogs.listByEvent(`contrato.${randomUUID()}`)).toEqual([])
+      })
+
+      it("purge dos logs: apaga só as linhas anteriores ao corte e respeita o limite", async () => {
+        const { appLogs } = await setup()
+        const event = `contrato.${randomUUID()}`
+        const old = new Date(Date.now() - 100 * DAY)
+        const fresh = new Date()
+        await appLogs.insertMany([
+          { ts: old, level: "warn", event, area: "contrato", fields: {} },
+          { ts: new Date(old.getTime() + 1), level: "warn", event, area: "contrato", fields: {} },
+          { ts: fresh, level: "info", event, area: "contrato", fields: {} },
+        ])
+        const cutoff = new Date(Date.now() - 90 * DAY)
+
+        expect(await appLogs.purgeOlderThan(cutoff, 1)).toBe(1)
+        expect(await appLogs.listByEvent(event)).toHaveLength(2)
+
+        expect(await appLogs.purgeOlderThan(cutoff, 1000)).toBeGreaterThanOrEqual(1)
+        const rest = await appLogs.listByEvent(event)
+        expect(rest).toHaveLength(1)
+        expect(rest[0].level).toBe("info")
+      })
+
+      it("insertMany([]) não lança", async () => {
+        const { appLogs } = await setup()
+        await expect(appLogs.insertMany([])).resolves.toBeUndefined()
+      })
+    })
+
+    describe("45. atribuição da Meta: MetaAttributionRepo", () => {
+      const DAY = 86_400_000
+      const attribution: MetaAttributionInput = {
+        externalId: randomUUID(),
+        fbp: "fb.1.1700000000000.123",
+        fbc: null,
+        clientIp: "1.2.3.4",
+        userAgent: "UA",
+        eventSourceUrl: "https://quiz.example.com/",
+      }
+
+      it("save duas vezes para o mesmo envio não lança", async () => {
+        const { submissions, metaAttributions } = await setup()
+        const ref = expectRef(await submissions.create(newSub()))
+
+        await metaAttributions.save(ref.quizResponseId, attribution, new Date())
+        await expect(
+          metaAttributions.save(ref.quizResponseId, { ...attribution, clientIp: "9.9.9.9" }, new Date()),
+        ).resolves.toBeUndefined()
+      })
+
+      it("o purge apaga as antigas, respeita o limite e mantém as novas", async () => {
+        const { submissions, metaAttributions } = await setup()
+        const old = new Date(Date.now() - 91 * DAY)
+        for (let i = 0; i < 3; i++) {
+          const ref = expectRef(await submissions.create(newSub()))
+          await metaAttributions.save(ref.quizResponseId, attribution, old)
+        }
+        const fresh = expectRef(await submissions.create(newSub()))
+        await metaAttributions.save(fresh.quizResponseId, attribution, new Date())
+        const cutoff = new Date(Date.now() - 90 * DAY)
+
+        expect(await metaAttributions.purgeOlderThan(cutoff, 2)).toBe(2)
+        expect(await metaAttributions.purgeOlderThan(cutoff, 1000)).toBe(1)
+        expect(await metaAttributions.purgeOlderThan(cutoff, 1000)).toBe(0)
+      })
+    })
+
+    describe("46. Purchase da Meta: MetaConversionRepo", () => {
+      const attr = (clientIp: string): MetaAttributionInput => ({
+        externalId: randomUUID(),
+        fbp: "fb.1.1700000000000.123",
+        fbc: null,
+        clientIp,
+        userAgent: "UA",
+        eventSourceUrl: "https://quiz.example.com/",
+      })
+
+      /** Envio sincronizado com atribuição gravada, como o quiz deixa. */
+      async function attributedPayment(repos: Repos, clientIp = "1.2.3.4") {
+        const p = await syncedPayment(repos)
+        await repos.metaAttributions.save(p.ref.quizResponseId, attr(clientIp), new Date())
+        return p
+      }
+
+      const pay = async (repos: Repos, p: { ref: SubmissionRef; asaasId: string | null }, over = {}, when = new Date()) =>
+        expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", { ...on(p), ...over }), when))
+
+      it("o primeiro evento pago de cobrança com atribuição cria o Purchase com os dados do envio", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const when = new Date()
+
+        const r = await pay(repos, p, {}, when)
+
+        expect(r.pendingConversion).not.toBeNull()
+        const payload = await repos.metaConversions.loadPayload(r.pendingConversion!.id)
+        expect(payload).toMatchObject({
+          id: r.pendingConversion!.id,
+          paymentId: p.ref.paymentId,
+          eventId: `purchase:${p.ref.paymentId}`,
+          amount: "39.90",
+          attempts: 0,
+          patient: { name: p.sub.patient.name, email: p.sub.patient.email, phone: p.sub.patient.phone },
+          attribution: { clientIp: "1.2.3.4", userAgent: "UA", fbc: null },
+        })
+        expect(payload!.eventTime.getTime()).toBe(when.getTime())
+      })
+
+      it("PAYMENT_CONFIRMED e depois PAYMENT_RECEIVED geram uma conversão só", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+
+        const first = await pay(repos, p, { event: "PAYMENT_CONFIRMED", status: "CONFIRMED" })
+        const second = await pay(repos, p, { event: "PAYMENT_RECEIVED", status: "RECEIVED" })
+
+        expect(first.pendingConversion).not.toBeNull()
+        expect(second.pendingConversion).toBeNull()
+        const due = await repos.metaConversions.listDue(inMinutes(1), BIG)
+        expect(due.filter((id) => id === first.pendingConversion!.id)).toHaveLength(1)
+      })
+
+      it("cobrança sem atribuição (renovação) não gera conversão", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        expect((await pay(repos, p)).pendingConversion).toBeNull()
+      })
+
+      it("reversão e evento antes do pagamento não geram conversão", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const reversal = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("reversal", on(p)), new Date()))
+        const overdue = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("pre_payment", on(p)), new Date()))
+        expect(reversal.pendingConversion).toBeNull()
+        expect(overdue.pendingConversion).toBeNull()
+      })
+
+      it("o mesmo evento reenviado é duplicate e não cria outra conversão", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const event = ev("paid", on(p))
+
+        expectProcessed(await repos.webhooks.applyPaymentEvent(event, new Date()))
+        expect(await repos.webhooks.applyPaymentEvent(event, new Date())).toEqual({ outcome: "duplicate" })
+      })
+
+      it("uma segunda gravação da atribuição do mesmo envio não troca a primeira", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos, "1.2.3.4")
+        await repos.metaAttributions.save(p.ref.quizResponseId, attr("9.9.9.9"), new Date())
+
+        const r = await pay(repos, p)
+
+        expect((await repos.metaConversions.loadPayload(r.pendingConversion!.id))!.attribution.clientIp).toBe("1.2.3.4")
+      })
+
+      describe("cobrança reaproveitada por dois envios", () => {
+        async function twoSubmissions(repos: Awaited<ReturnType<typeof setup>>, ips: [string | null, string | null]) {
+          const cpf = randomCpf()
+          const first = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+          await sleep(5)
+          const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+          expect(second.paymentId).toBe(first.paymentId)
+          const data = synced("PENDING", "2026-10-14")
+          await repos.payments.markSynced(first.paymentId, data)
+          if (ips[0]) await repos.metaAttributions.save(first.quizResponseId, attr(ips[0]), new Date())
+          if (ips[1]) await repos.metaAttributions.save(second.quizResponseId, attr(ips[1]), new Date())
+          return { ref: first, asaasId: data.asaasId }
+        }
+
+        it("usa a atribuição do envio mais recente que tem uma, numa linha só", async () => {
+          const repos = await setup()
+          const p = await twoSubmissions(repos, ["1.1.1.1", "2.2.2.2"])
+
+          const r = await pay(repos, p)
+
+          expect((await repos.metaConversions.loadPayload(r.pendingConversion!.id))!.attribution.clientIp).toBe("2.2.2.2")
+        })
+
+        it("se só o envio mais antigo tem atribuição, usa a dele", async () => {
+          const repos = await setup()
+          const p = await twoSubmissions(repos, ["1.1.1.1", null])
+
+          const r = await pay(repos, p)
+
+          expect((await repos.metaConversions.loadPayload(r.pendingConversion!.id))!.attribution.clientIp).toBe("1.1.1.1")
+        })
+      })
+
+      it("loadPayload de um id inexistente devolve null", async () => {
+        const { metaConversions } = await setup()
+        expect(await metaConversions.loadPayload(UNKNOWN_ID)).toBeNull()
+      })
+
+      it("claim reserva a linha por 60 s e não deixa dois processos pegarem a mesma", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const id = (await pay(repos, p)).pendingConversion!.id
+        const now = new Date()
+
+        expect(await repos.metaConversions.claim(id, now)).toBe(true)
+        expect(await repos.metaConversions.claim(id, now)).toBe(false)
+        expect(await repos.metaConversions.claim(id, new Date(now.getTime() + 61_000))).toBe(true)
+      })
+
+      it("claim não pega linha que ainda não venceu nem uma que já foi enviada", async () => {
+        const repos = await setup()
+        const p = await attributedPayment(repos)
+        const id = (await pay(repos, p)).pendingConversion!.id
+
+        expect(await repos.metaConversions.claim(id, new Date(Date.now() - 60_000))).toBe(false)
+        await repos.metaConversions.markSent(id, new Date())
+        expect(await repos.metaConversions.claim(id, inMinutes(5))).toBe(false)
+      })
+
+      it("listDue respeita next_attempt_at, a reserva e o status", async () => {
+        const repos = await setup()
+        const { metaConversions } = repos
+        const p = await attributedPayment(repos)
+        const when = new Date()
+        const id = (await pay(repos, p, {}, when)).pendingConversion!.id
+        const now = new Date()
+
+        expect(await metaConversions.listDue(now, BIG)).toContain(id)
+        expect(await metaConversions.listDue(new Date(when.getTime() - 1000), BIG)).not.toContain(id)
+
+        expect(await metaConversions.claim(id, now)).toBe(true)
+        expect(await metaConversions.listDue(now, BIG)).not.toContain(id)
+
+        const later = inMinutes(10)
+        await metaConversions.markRetry(id, later, syncError("meta_capi"))
+        expect((await metaConversions.loadPayload(id))!.attempts).toBe(1)
+        expect(await metaConversions.listDue(now, BIG)).not.toContain(id)
+        expect(await metaConversions.listDue(new Date(later.getTime() + 1000), BIG)).toContain(id)
+
+        await metaConversions.markSent(id, new Date())
+        expect(await metaConversions.listDue(inMinutes(60 * 24), BIG)).not.toContain(id)
+      })
+
+      it("markFailed tira da fila, reopen devolve com as tentativas zeradas e reopen de linha enviada não faz nada", async () => {
+        const repos = await setup()
+        const { metaConversions } = repos
+        const failed = (await pay(repos, await attributedPayment(repos))).pendingConversion!.id
+        const sent = (await pay(repos, await attributedPayment(repos))).pendingConversion!.id
+
+        await metaConversions.markFailed(failed, syncError("meta_capi"))
+        await metaConversions.markSent(sent, new Date())
+
+        expect(await metaConversions.listDue(inMinutes(1), BIG)).not.toContain(failed)
+        expect(await metaConversions.reopen(sent)).toBe(false)
+        expect(await metaConversions.reopen(UNKNOWN_ID)).toBe(false)
+
+        expect(await metaConversions.reopen(failed)).toBe(true)
+        expect(await metaConversions.listDue(inMinutes(1), BIG)).toContain(failed)
+        expect((await metaConversions.loadPayload(failed))!.attempts).toBe(0)
+      })
+
+      it("reopenAllFailed reabre todas as falhas e devolve quantas", async () => {
+        const repos = await setup()
+        const { metaConversions } = repos
+        const id = (await pay(repos, await attributedPayment(repos))).pendingConversion!.id
+        await metaConversions.markFailed(id, syncError("meta_capi"))
+
+        expect(await metaConversions.reopenAllFailed()).toBeGreaterThanOrEqual(1)
+        expect(await metaConversions.listDue(inMinutes(1), BIG)).toContain(id)
+      })
+    })
+
+    describe("47. desconto na cobrança", () => {
+      // Janela em volta do relógio real: as cobranças criadas agora caem dentro dela.
+      const win = { fromUtc: inMinutes(-10), toUtc: inMinutes(10), discountAmount: "29.90", limit: BIG }
+      const discount = { amount: "29.90", originalAmount: "39.90", dueDate: "2026-11-05", status: "PENDING" }
+
+      /** As mensagens `payment_discount` dos envios, pendentes na fila. */
+      async function discountRows(repos: Repos, ...quizResponseIds: string[]): Promise<NotificationView[]> {
+        const ids = (
+          await Promise.all(quizResponseIds.map((q) => repos.notifications.listPendingIdsForQuizResponse(q)))
+        ).flat()
+        const views = await Promise.all(ids.map((id) => repos.notifications.get(id)))
+        return views.filter((n): n is NotificationView => n !== null && n.kind === "payment_discount")
+      }
+
+      /** Duas cobranças do mesmo paciente: a 1ª vencida em 06/10, a 2ª criada depois dela. */
+      async function twoPayments(repos: Repos) {
+        const cpf = randomCpf()
+        const first = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        await repos.payments.markSynced(first.paymentId, synced("PENDING", "2026-10-06"))
+        await sleep(5)
+        const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        expect(second.paymentId).not.toBe(first.paymentId)
+        await repos.payments.markSynced(second.paymentId, synced("PENDING", "2026-10-14"))
+        return { first, second }
+      }
+
+      it("lista a PENDING sincronizada dentro da janela", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        expect(await repos.payments.listDiscountEligible(win)).toContain(p.ref.paymentId)
+      })
+
+      it("fora da janela não entra", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        const future = { ...win, fromUtc: inMinutes(10), toUtc: inMinutes(20) }
+        const past = { ...win, fromUtc: inMinutes(-20), toUtc: inMinutes(-10) }
+        expect(await repos.payments.listDiscountEligible(future)).not.toContain(p.ref.paymentId)
+        expect(await repos.payments.listDiscountEligible(past)).not.toContain(p.ref.paymentId)
+      })
+
+      it("fica fora: PENDING_ASAAS, paga, ASAAS_FAILED, já avaliada", async () => {
+        const repos = await setup()
+        const created = expectRef(await repos.submissions.create(newSub()))
+        const paid = await syncedPayment(repos)
+        await repos.webhooks.applyPaymentEvent(ev("paid", on(paid)), new Date())
+        const failed = expectRef(await repos.submissions.create(newSub()))
+        await repos.payments.markSyncFailure(failed.paymentId, {
+          attempts: 5,
+          nextSyncAt: null,
+          failed: true,
+          error: syncError("create_payment"),
+        })
+        const skipped = await syncedPayment(repos)
+        await repos.payments.markDiscountSkipped(skipped.ref.paymentId, new Date())
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        for (const id of [created.paymentId, paid.ref.paymentId, failed.paymentId, skipped.ref.paymentId]) {
+          expect(ids).not.toContain(id)
+        }
+      })
+
+      it("OVERDUE entra", async () => {
+        const repos = await setup()
+        const ref = expectRef(await repos.submissions.create(newSub()))
+        await repos.payments.markSynced(ref.paymentId, synced("OVERDUE", "2026-10-01"))
+        expect(await repos.payments.listDiscountEligible(win)).toContain(ref.paymentId)
+      })
+
+      it("valor comparado como número", async () => {
+        const repos = await setup()
+        const big = await syncedPayment(repos, { amount: "100.00" })
+        const same = await syncedPayment(repos, { amount: "29.90" })
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        expect(ids).toContain(big.ref.paymentId)
+        expect(ids).not.toContain(same.ref.paymentId)
+
+        const lower = await repos.payments.listDiscountEligible({ ...win, discountAmount: "29.89" })
+        expect(lower).toContain(same.ref.paymentId)
+      })
+
+      it("uma por paciente: só a mais recente", async () => {
+        const repos = await setup()
+        const { first, second } = await twoPayments(repos)
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        expect(ids).toContain(second.paymentId)
+        expect(ids).not.toContain(first.paymentId)
+      })
+
+      it("a lista sai por created_at crescente e respeita o limite", async () => {
+        const repos = await setup()
+        const a = await syncedPayment(repos)
+        await sleep(5)
+        const b = await syncedPayment(repos)
+
+        const ids = await repos.payments.listDiscountEligible(win)
+        expect(ids.indexOf(a.ref.paymentId)).toBeGreaterThanOrEqual(0)
+        expect(ids.indexOf(a.ref.paymentId)).toBeLessThan(ids.indexOf(b.ref.paymentId))
+        expect(await repos.payments.listDiscountEligible({ ...win, limit: 1 })).toHaveLength(1)
+      })
+
+      it("paciente que já recebeu desconto fica fora", async () => {
+        const repos = await setup()
+        const { first, second } = await twoPayments(repos)
+        const patientId = (await repos.payments.get(first.paymentId))!.patientId
+        const other = await syncedPayment(repos)
+        const otherPatientId = (await repos.payments.get(other.ref.paymentId))!.patientId
+
+        await repos.payments.applyDiscount(first.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        const eligible = await repos.payments.listDiscountEligible(win)
+        expect(eligible).not.toContain(second.paymentId)
+        // A exclusão é por paciente: a cobrança elegível de outro paciente continua na lista.
+        expect(eligible).toContain(other.ref.paymentId)
+        expect(await repos.payments.hasAppliedDiscount(patientId)).toBe(true)
+        expect(await repos.payments.hasAppliedDiscount(otherPatientId)).toBe(false)
+      })
+
+      it("applyDiscount grava a cobrança e enfileira e-mail e WhatsApp", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos)
+
+        const r = await repos.payments.applyDiscount(ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        expect(r).toEqual({ notificationsEnqueued: 2 })
+        const view = await repos.payments.get(ref.paymentId)
+        expect(view).toMatchObject({ amount: "29.90", originalAmount: "39.90", discountStatus: "applied" })
+        const rows = await discountRows(repos, ref.quizResponseId)
+        expect(kindsOf(rows)).toEqual(["payment_discount:email", "payment_discount:whatsapp"])
+        for (const n of rows) {
+          expect(n).toMatchObject({ paymentId: ref.paymentId, quizResponseId: ref.quizResponseId, status: "pending" })
+        }
+      })
+
+      it("applyDiscount grava o status devolvido pelo Asaas (OVERDUE volta a PENDING)", async () => {
+        const repos = await setup()
+        const ref = expectRef(await repos.submissions.create(newSub()))
+        await repos.payments.markSynced(ref.paymentId, synced("OVERDUE", "2026-10-01"))
+        expect((await repos.payments.get(ref.paymentId))!.status).toBe("OVERDUE")
+
+        await repos.payments.applyDiscount(ref.paymentId, { ...discount, status: "PENDING", at: new Date(), channels: BOTH })
+
+        expect(await repos.payments.get(ref.paymentId)).toMatchObject({ status: "PENDING", discountStatus: "applied" })
+      })
+
+      it("applyDiscount de novo não duplica mensagens", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos)
+        const d = { ...discount, at: new Date(), channels: BOTH }
+
+        await repos.payments.applyDiscount(ref.paymentId, d)
+        expect(await repos.payments.applyDiscount(ref.paymentId, d)).toEqual({ notificationsEnqueued: 0 })
+
+        expect(await discountRows(repos, ref.quizResponseId)).toHaveLength(2)
+      })
+
+      it("paciente sem telefone: só e-mail", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos, { patient: { phone: "" } })
+
+        const r = await repos.payments.applyDiscount(ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        expect(r).toEqual({ notificationsEnqueued: 1 })
+        const rows = await discountRows(repos, ref.quizResponseId)
+        expect(rows).toHaveLength(1)
+        expect(rows[0].channel).toBe("email")
+      })
+
+      it("cobrança de dois quizzes: mensagens só no mais recente", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const first = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        await sleep(5)
+        const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        expect(second.paymentId).toBe(first.paymentId)
+        await repos.payments.markSynced(first.paymentId, synced("PENDING", "2026-10-14"))
+
+        await repos.payments.applyDiscount(first.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        const rows = await discountRows(repos, first.quizResponseId, second.quizResponseId)
+        expect(rows).toHaveLength(2)
+        expect(rows.every((n) => n.quizResponseId === second.quizResponseId)).toBe(true)
+      })
+
+      it("a mensagem relida traz os dados do desconto", async () => {
+        const repos = await setup()
+        const { ref } = await syncedPayment(repos)
+        await repos.notifications.enqueuePaymentLink({ paymentId: ref.paymentId }, ["email"])
+        const [linkId] = await repos.notifications.listPendingIdsForQuizResponse(ref.quizResponseId)
+
+        await repos.payments.applyDiscount(ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+
+        const rows = await discountRows(repos, ref.quizResponseId)
+        expect(rows).toHaveLength(2)
+        for (const n of rows) {
+          expect(n.paymentDiscount).toEqual({
+            paymentStatus: "PENDING",
+            paidAt: null,
+            discountStatus: "applied",
+            amount: "29.90",
+            originalAmount: "39.90",
+            dueDate: "2026-11-05",
+          })
+        }
+        const link = await repos.notifications.get(linkId)
+        expect(link).toMatchObject({ kind: "payment_link", paymentDiscount: null })
+      })
+
+      it("applyDiscount e markDiscountSkipped soltam o lock", async () => {
+        const repos = await setup()
+        const a = await syncedPayment(repos)
+        expect(await repos.payments.tryLock(a.ref.paymentId, 60_000)).toBe(true)
+        await repos.payments.applyDiscount(a.ref.paymentId, { ...discount, at: new Date(), channels: BOTH })
+        expect(await repos.payments.tryLock(a.ref.paymentId, 60_000)).toBe(true)
+
+        const b = await syncedPayment(repos)
+        expect(await repos.payments.tryLock(b.ref.paymentId, 60_000)).toBe(true)
+        await repos.payments.markDiscountSkipped(b.ref.paymentId, new Date())
+        expect(await repos.payments.tryLock(b.ref.paymentId, 60_000)).toBe(true)
+        expect((await repos.payments.get(b.ref.paymentId))!.discountStatus).toBe("skipped")
       })
     })
   })

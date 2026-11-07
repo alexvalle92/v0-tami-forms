@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto"
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm"
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, notExists, or, sql } from "drizzle-orm"
+import { alias } from "drizzle-orm/mysql-core"
 import type { Db } from "@/lib/db/client"
 import { daysLeft, expiryStage, renewalState, WARN_DAYS, type RenewalCharge } from "@/lib/renewal/rules"
 import { addDaysISO } from "@/lib/time"
 import {
+  appLogs,
   asaasWebhookEvents,
+  funnelEvents,
+  funnelSessions,
   mealPlans,
+  metaAttributions,
+  metaConversions,
   notifications,
   patients,
   payments,
@@ -13,9 +19,16 @@ import {
   quizResponses,
 } from "@/lib/db/schema"
 import type {
+  AnalyticsRepo,
+  AppLogRepo,
+  AppLogRow,
   Channel,
+  FunnelEventRow,
+  FunnelSessionView,
   MealPlanRepo,
   MealPlanView,
+  MetaAttributionRepo,
+  MetaConversionRepo,
   NewSubmission,
   NotificationKind,
   NotificationRepo,
@@ -43,6 +56,8 @@ const MYSQL_DUPLICATE_ENTRY = 1062
 const SUBMISSION_UNIQUE_KEY = "quiz_responses_submission_id_unique"
 /** Tentativas de uma transação que caiu em deadlock ou lock wait timeout. */
 const TX_MAX_ATTEMPTS = 3
+/** Quanto tempo `metaConversions.claim` reserva a linha para quem vai enviá-la. */
+const META_CONVERSION_LOCK_MS = 60_000
 
 type MysqlErrorLike = { errno: number; sqlMessage?: string; message?: string }
 
@@ -82,6 +97,11 @@ async function withTxRetry<T>(run: () => Promise<T>): Promise<T> {
     }
   }
 }
+
+/** Coluna da própria linha, para o ON DUPLICATE KEY UPDATE (sem prefixo de tabela). */
+const current = (column: string) => sql.raw("`" + column + "`")
+/** Valor que o INSERT tentou gravar nessa coluna. */
+const incoming = (column: string) => sql.raw("VALUES(`" + column + "`)")
 
 const affected = (result: unknown): number => (result as [{ affectedRows: number }])[0].affectedRows
 
@@ -264,6 +284,8 @@ export function createMysqlRepos(db: Db): Repos {
           paymentUrl: payments.paymentUrl,
           syncAttempts: payments.syncAttempts,
           paidAt: payments.paidAt,
+          discountStatus: payments.discountStatus,
+          originalAmount: payments.originalAmount,
           patient: {
             id: patients.id,
             name: patients.name,
@@ -368,6 +390,119 @@ export function createMysqlRepos(db: Db): Repos {
         .set(reopenPaymentSet(new Date()))
         .where(eq(payments.status, "ASAAS_FAILED"))
       return affected(result)
+    },
+
+    async listDiscountEligible(d) {
+      // Primeiro os filtros do spec §6; a janela ROW_NUMBER roda depois do WHERE, então a "uma por
+      // paciente" vale entre as elegíveis (a de created_at mais recente). O valor é comparado como
+      // DECIMAL, nunca como texto.
+      const other = alias(payments, "o")
+      const ranked = db
+        .select({
+          id: payments.id,
+          createdAt: payments.createdAt,
+          rn: sql<number>`ROW_NUMBER() OVER (PARTITION BY ${payments.patientId} ORDER BY ${payments.createdAt} DESC, ${payments.id} DESC)`.as(
+            "rn",
+          ),
+        })
+        .from(payments)
+        .where(
+          and(
+            gte(payments.createdAt, d.fromUtc),
+            lt(payments.createdAt, d.toUtc),
+            inArray(payments.status, ["PENDING", "OVERDUE"]),
+            sql`${payments.asaasId} IS NOT NULL`,
+            isNull(payments.paidAt),
+            isNull(payments.discountStatus),
+            sql`${payments.amount} > CAST(${d.discountAmount} AS DECIMAL(10,2))`,
+            notExists(
+              db
+                .select({ one: sql`1` })
+                .from(other)
+                .where(and(eq(other.patientId, payments.patientId), eq(other.discountStatus, "applied"))),
+            ),
+          ),
+        )
+        .as("ranked")
+      const rows = await db
+        .select({ id: ranked.id })
+        .from(ranked)
+        .where(eq(ranked.rn, 1))
+        .orderBy(asc(ranked.createdAt), asc(ranked.id))
+        .limit(d.limit)
+      return rows.map((r) => r.id)
+    },
+
+    async hasAppliedDiscount(patientId) {
+      const [row] = await db
+        .select({ id: payments.id })
+        .from(payments)
+        .where(and(eq(payments.patientId, patientId), eq(payments.discountStatus, "applied")))
+        .limit(1)
+      return row !== undefined
+    },
+
+    async applyDiscount(id, d) {
+      // Cobrança e mensagens na mesma transação: ou o desconto e o aviso entram juntos, ou nenhum
+      // (e a rodada seguinte, que começa pelo GET no Asaas, refaz tudo sem duplicar).
+      return withTxRetry(() =>
+        db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              amount: d.amount,
+              originalAmount: d.originalAmount,
+              dueDate: d.dueDate,
+              status: d.status,
+              discountStatus: "applied",
+              discountAppliedAt: d.at,
+              lockedUntil: null,
+              updatedAt: d.at,
+            })
+            .where(eq(payments.id, id))
+
+          // Cobrança de vários quizzes: a mensagem vai só no envio mais recente.
+          const [target] = await tx
+            .select({
+              quizResponseId: quizResponses.id,
+              patientId: patients.id,
+              email: patients.email,
+              phone: patients.phone,
+            })
+            .from(quizResponses)
+            .innerJoin(patients, eq(patients.id, quizResponses.patientId))
+            .where(eq(quizResponses.paymentId, id))
+            .orderBy(desc(quizResponses.createdAt), desc(quizResponses.id))
+            .limit(1)
+          if (!target) return { notificationsEnqueued: 0 }
+
+          const rows = addressed(d.channels, target).map(({ channel, recipient }) => ({
+            id: randomUUID(),
+            patientId: target.patientId,
+            quizResponseId: target.quizResponseId,
+            paymentId: id,
+            channel,
+            kind: "payment_discount",
+            recipient,
+            status: "pending" as const,
+            partsSent: 0,
+            attempts: 0,
+            nextAttemptAt: d.at,
+            createdAt: d.at,
+            updatedAt: d.at,
+          }))
+          if (rows.length === 0) return { notificationsEnqueued: 0 }
+          // UNIQUE (quiz_response_id, channel, kind): mensagens já enfileiradas são ignoradas.
+          return { notificationsEnqueued: affected(await tx.insert(notifications).ignore().values(rows)) }
+        }),
+      )
+    },
+
+    async markDiscountSkipped(id, at) {
+      await db
+        .update(payments)
+        .set({ discountStatus: "skipped", discountAppliedAt: at, lockedUntil: null, updatedAt: at })
+        .where(eq(payments.id, id))
     },
   }
 
@@ -512,6 +647,12 @@ export function createMysqlRepos(db: Db): Repos {
           patientName: patients.name,
           patientPasswordHash: patients.passwordHash,
           paymentUrl: payments.paymentUrl,
+          paymentStatus: payments.status,
+          paymentPaidAt: payments.paidAt,
+          paymentDiscountStatus: payments.discountStatus,
+          paymentAmount: payments.amount,
+          paymentOriginalAmount: payments.originalAmount,
+          paymentDueDate: payments.dueDate,
           payload: notifications.payload,
           mealPlanId: mealPlans.id,
           mealPlanEndDate: mealPlans.endDate,
@@ -525,7 +666,19 @@ export function createMysqlRepos(db: Db): Repos {
         .where(eq(notifications.id, id))
         .limit(1)
       if (!row) return null
-      const { mealPlanId, mealPlanEndDate, mealPlanStatus, mealPlanCreatedAt, ...rest } = row
+      const {
+        mealPlanId,
+        mealPlanEndDate,
+        mealPlanStatus,
+        mealPlanCreatedAt,
+        paymentStatus,
+        paymentPaidAt,
+        paymentDiscountStatus,
+        paymentAmount,
+        paymentOriginalAmount,
+        paymentDueDate,
+        ...rest
+      } = row
       const mealPlan =
         mealPlanId === null || mealPlanStatus === null || mealPlanCreatedAt === null
           ? null
@@ -541,6 +694,18 @@ export function createMysqlRepos(db: Db): Repos {
         // `kind` é VARCHAR no banco; só este repositório grava, sempre com um NotificationKind.
         kind: row.kind as NotificationKind,
         mealPlan,
+        // Só o `payment_discount` precisa do estado da cobrança; sem cobrança (leftJoin vazio) fica nulo.
+        paymentDiscount:
+          row.kind === "payment_discount" && paymentStatus !== null && paymentAmount !== null
+            ? {
+                paymentStatus,
+                paidAt: paymentPaidAt,
+                discountStatus: paymentDiscountStatus,
+                amount: paymentAmount,
+                originalAmount: paymentOriginalAmount,
+                dueDate: paymentDueDate,
+              }
+            : null,
       }
       return view
     },
@@ -722,6 +887,7 @@ export function createMysqlRepos(db: Db): Repos {
 
       let pendingGeneration: { id: string; quizResponseId: string } | null = null
       let missingQuizResponse = false
+      let pendingConversion: { id: string } | null = null
       if (e.group === "paid") {
         // Leitura sem lock: a geração só é criada com a cobrança travada, e o lock acima já
         // foi obtido, então esta leitura vê a de um evento anterior. Um lock aqui (gap lock
@@ -771,6 +937,35 @@ export function createMysqlRepos(db: Db): Repos {
             missingQuizResponse = true
           }
         }
+
+        // Purchase da Meta: só no primeiro evento pago (`p.paidAt` é o valor de antes do UPDATE) e só se
+        // algum envio da cobrança tem atribuição; o mais recente com atribuição vale. UNIQUE (payment_id)
+        // mantém uma linha por cobrança mesmo se esta leitura rodar duas vezes.
+        if (p.paidAt === null) {
+          const [attributed] = await tx
+            .select({ id: quizResponses.id })
+            .from(quizResponses)
+            .innerJoin(metaAttributions, eq(metaAttributions.quizResponseId, quizResponses.id))
+            .where(eq(quizResponses.paymentId, p.id))
+            .orderBy(desc(quizResponses.createdAt), desc(quizResponses.id))
+            .limit(1)
+          if (attributed) {
+            const conversionId = randomUUID()
+            const created = await tx.insert(metaConversions).ignore().values({
+              id: conversionId,
+              paymentId: p.id,
+              quizResponseId: attributed.id,
+              eventId: `purchase:${p.id}`,
+              eventTime: now,
+              status: "pending",
+              attempts: 0,
+              nextAttemptAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            if (affected(created) === 1) pendingConversion = { id: conversionId }
+          }
+        }
       }
 
       const [patient] = await tx
@@ -785,6 +980,7 @@ export function createMysqlRepos(db: Db): Repos {
         patientName: patient.name,
         pendingGeneration,
         missingQuizResponse,
+        pendingConversion,
       }
     })
   }
@@ -1058,6 +1254,296 @@ export function createMysqlRepos(db: Db): Repos {
     },
   }
 
+  const analyticsRepo: AnalyticsRepo = {
+    async recordBatch(patch, events, now) {
+      await withTxRetry(() =>
+        db.transaction(async (tx) => {
+          const start = patch.start
+          // No MySQL, cada atribuição do ON DUPLICATE KEY UPDATE já enxerga as anteriores, e o Drizzle as
+          // emite na ordem das colunas do schema. Por isso `max_step_slug` (declarada antes de `max_step`)
+          // compara com o `max_step` ainda antigo. Não reordene as duas colunas no schema.
+          await tx
+            .insert(funnelSessions)
+            .values({
+              sessionId: patch.sessionId,
+              startedAt: now,
+              lastEventAt: now,
+              lastStep: patch.lastStep?.step ?? null,
+              lastStepSlug: patch.lastStep?.slug ?? null,
+              maxStep: patch.maxStep?.step ?? null,
+              maxStepSlug: patch.maxStep?.slug ?? null,
+              checkoutClicked: patch.checkoutClicked,
+              utmSource: start?.utm.source ?? null,
+              utmMedium: start?.utm.medium ?? null,
+              utmCampaign: start?.utm.campaign ?? null,
+              utmContent: start?.utm.content ?? null,
+              utmTerm: start?.utm.term ?? null,
+              referrerHost: start?.referrerHost ?? null,
+              deviceType: patch.device.deviceType,
+              os: patch.device.os,
+              browser: patch.device.browser,
+              viewportW: start?.viewportW ?? null,
+              viewportH: start?.viewportH ?? null,
+              answers: patch.answers,
+            })
+            .onDuplicateKeyUpdate({
+              set: {
+                lastEventAt: sql`GREATEST(${current("last_event_at")}, ${incoming("last_event_at")})`,
+                lastStep: sql`COALESCE(${incoming("last_step")}, ${current("last_step")})`,
+                lastStepSlug: sql`COALESCE(${incoming("last_step_slug")}, ${current("last_step_slug")})`,
+                maxStepSlug: sql`IF(${incoming("max_step")} > COALESCE(${current("max_step")}, -1), ${incoming("max_step_slug")}, ${current("max_step_slug")})`,
+                maxStep: sql`IF(${incoming("max_step")} > COALESCE(${current("max_step")}, -1), ${incoming("max_step")}, ${current("max_step")})`,
+                checkoutClicked: sql`(${current("checkout_clicked")} OR ${incoming("checkout_clicked")})`,
+                utmSource: sql`COALESCE(${current("utm_source")}, ${incoming("utm_source")})`,
+                utmMedium: sql`COALESCE(${current("utm_medium")}, ${incoming("utm_medium")})`,
+                utmCampaign: sql`COALESCE(${current("utm_campaign")}, ${incoming("utm_campaign")})`,
+                utmContent: sql`COALESCE(${current("utm_content")}, ${incoming("utm_content")})`,
+                utmTerm: sql`COALESCE(${current("utm_term")}, ${incoming("utm_term")})`,
+                referrerHost: sql`COALESCE(${current("referrer_host")}, ${incoming("referrer_host")})`,
+                viewportW: sql`COALESCE(${current("viewport_w")}, ${incoming("viewport_w")})`,
+                viewportH: sql`COALESCE(${current("viewport_h")}, ${incoming("viewport_h")})`,
+                answers: sql`JSON_MERGE_PATCH(${current("answers")}, ${incoming("answers")})`,
+              },
+            })
+
+          if (events.length > 0) {
+            await tx.insert(funnelEvents).values(
+              events.map((e) => ({
+                sessionId: e.sessionId,
+                event: e.event,
+                step: e.step,
+                stepSlug: e.stepSlug,
+                props: e.props,
+                clientTs: e.clientTs,
+                createdAt: e.createdAt,
+              })),
+            )
+          }
+        }),
+      )
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const events = await db.execute(
+        sql`DELETE FROM ${funnelEvents} WHERE ${funnelEvents.createdAt} < ${sql.param(cutoff, funnelEvents.createdAt)} ORDER BY ${funnelEvents.createdAt} LIMIT ${limit}`,
+      )
+      const sessions = await db.execute(
+        sql`DELETE FROM ${funnelSessions} WHERE ${funnelSessions.lastEventAt} < ${sql.param(cutoff, funnelSessions.lastEventAt)} ORDER BY ${funnelSessions.lastEventAt} LIMIT ${limit}`,
+      )
+      return affected(events) + affected(sessions)
+    },
+
+    async getSession(sessionId) {
+      const [r] = await db.select().from(funnelSessions).where(eq(funnelSessions.sessionId, sessionId))
+      if (!r) return null
+      const utm: FunnelSessionView["utm"] = {}
+      if (r.utmSource !== null) utm.source = r.utmSource
+      if (r.utmMedium !== null) utm.medium = r.utmMedium
+      if (r.utmCampaign !== null) utm.campaign = r.utmCampaign
+      if (r.utmContent !== null) utm.content = r.utmContent
+      if (r.utmTerm !== null) utm.term = r.utmTerm
+      return {
+        sessionId: r.sessionId,
+        startedAt: r.startedAt,
+        lastEventAt: r.lastEventAt,
+        lastStep: r.lastStep,
+        lastStepSlug: r.lastStepSlug,
+        maxStep: r.maxStep,
+        maxStepSlug: r.maxStepSlug,
+        checkoutClicked: r.checkoutClicked,
+        utm,
+        referrerHost: r.referrerHost,
+        deviceType: r.deviceType,
+        os: r.os,
+        browser: r.browser,
+        viewportW: r.viewportW,
+        viewportH: r.viewportH,
+        answers: r.answers,
+      }
+    },
+
+    async listEvents(sessionId) {
+      const rows = await db
+        .select()
+        .from(funnelEvents)
+        .where(eq(funnelEvents.sessionId, sessionId))
+        .orderBy(asc(funnelEvents.id))
+      return rows.map(
+        (r): FunnelEventRow => ({
+          sessionId: r.sessionId,
+          event: r.event,
+          step: r.step,
+          stepSlug: r.stepSlug,
+          props: r.props,
+          clientTs: r.clientTs,
+          createdAt: r.createdAt,
+        }),
+      )
+    },
+  }
+
+  const appLogsRepo: AppLogRepo = {
+    async insertMany(rows) {
+      if (rows.length === 0) return
+      await db
+        .insert(appLogs)
+        .values(rows.map((r) => ({ ts: r.ts, level: r.level, event: r.event, area: r.area, fields: r.fields })))
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const result = await db.execute(
+        sql`DELETE FROM ${appLogs} WHERE ${appLogs.ts} < ${sql.param(cutoff, appLogs.ts)} ORDER BY ${appLogs.ts} LIMIT ${limit}`,
+      )
+      return affected(result)
+    },
+
+    async listByEvent(event) {
+      const rows = await db
+        .select()
+        .from(appLogs)
+        .where(eq(appLogs.event, event))
+        .orderBy(asc(appLogs.ts), asc(appLogs.id))
+      return rows.map(
+        (r): AppLogRow => ({
+          ts: r.ts,
+          level: r.level as AppLogRow["level"],
+          event: r.event,
+          area: r.area,
+          fields: r.fields,
+        }),
+      )
+    },
+  }
+
+  const metaAttributionsRepo: MetaAttributionRepo = {
+    async save(quizResponseId, a, now) {
+      await db.insert(metaAttributions).ignore().values({ quizResponseId, ...a, createdAt: now })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const result = await db.execute(
+        sql`DELETE FROM ${metaAttributions} WHERE ${metaAttributions.createdAt} < ${sql.param(cutoff, metaAttributions.createdAt)} ORDER BY ${metaAttributions.createdAt} LIMIT ${limit}`,
+      )
+      return affected(result)
+    },
+  }
+
+  const metaConversionUnlockedAt = (now: Date) =>
+    or(isNull(metaConversions.lockedUntil), lt(metaConversions.lockedUntil, now))
+  const metaConversionDue = (now: Date) =>
+    and(eq(metaConversions.status, "pending"), lte(metaConversions.nextAttemptAt, now), metaConversionUnlockedAt(now))
+  const addAttempt = sql`${metaConversions.attempts} + 1`
+  const reopenMetaConversionSet = (now: Date) => ({
+    status: "pending" as const,
+    attempts: 0,
+    nextAttemptAt: now,
+    lastError: null,
+    lockedUntil: null,
+    updatedAt: now,
+  })
+
+  const metaConversionsRepo: MetaConversionRepo = {
+    async listDue(now, limit) {
+      const rows = await db
+        .select({ id: metaConversions.id })
+        .from(metaConversions)
+        .where(metaConversionDue(now))
+        .orderBy(asc(metaConversions.nextAttemptAt), asc(metaConversions.id))
+        .limit(limit)
+      return rows.map((r) => r.id)
+    },
+
+    async claim(id, now) {
+      const result = await db
+        .update(metaConversions)
+        .set({ lockedUntil: new Date(now.getTime() + META_CONVERSION_LOCK_MS), updatedAt: now })
+        .where(and(eq(metaConversions.id, id), metaConversionDue(now)))
+      return affected(result) === 1
+    },
+
+    async loadPayload(id) {
+      const [row] = await db
+        .select({
+          id: metaConversions.id,
+          paymentId: metaConversions.paymentId,
+          eventId: metaConversions.eventId,
+          eventTime: metaConversions.eventTime,
+          attempts: metaConversions.attempts,
+          amount: payments.amount,
+          name: patients.name,
+          email: patients.email,
+          phone: patients.phone,
+          externalId: metaAttributions.externalId,
+          fbp: metaAttributions.fbp,
+          fbc: metaAttributions.fbc,
+          clientIp: metaAttributions.clientIp,
+          userAgent: metaAttributions.userAgent,
+          eventSourceUrl: metaAttributions.eventSourceUrl,
+        })
+        .from(metaConversions)
+        .innerJoin(payments, eq(payments.id, metaConversions.paymentId))
+        .innerJoin(patients, eq(patients.id, payments.patientId))
+        .innerJoin(metaAttributions, eq(metaAttributions.quizResponseId, metaConversions.quizResponseId))
+        .where(eq(metaConversions.id, id))
+        .limit(1)
+      if (!row) return null
+      return {
+        id: row.id,
+        paymentId: row.paymentId,
+        eventId: row.eventId,
+        eventTime: row.eventTime,
+        attempts: row.attempts,
+        amount: row.amount,
+        patient: { email: row.email, phone: row.phone, name: row.name },
+        attribution: {
+          externalId: row.externalId,
+          fbp: row.fbp,
+          fbc: row.fbc,
+          clientIp: row.clientIp,
+          userAgent: row.userAgent,
+          eventSourceUrl: row.eventSourceUrl,
+        },
+      }
+    },
+
+    async markSent(id, now) {
+      await db
+        .update(metaConversions)
+        .set({ status: "sent", sentAt: now, attempts: addAttempt, lockedUntil: null, updatedAt: now })
+        .where(eq(metaConversions.id, id))
+    },
+
+    async markRetry(id, nextAttemptAt, lastError) {
+      await db
+        .update(metaConversions)
+        .set({ nextAttemptAt, lastError, attempts: addAttempt, lockedUntil: null, updatedAt: new Date() })
+        .where(eq(metaConversions.id, id))
+    },
+
+    async markFailed(id, lastError) {
+      await db
+        .update(metaConversions)
+        .set({ status: "failed", lastError, attempts: addAttempt, lockedUntil: null, updatedAt: new Date() })
+        .where(eq(metaConversions.id, id))
+    },
+
+    async reopen(id) {
+      const result = await db
+        .update(metaConversions)
+        .set(reopenMetaConversionSet(new Date()))
+        .where(and(eq(metaConversions.id, id), eq(metaConversions.status, "failed")))
+      return affected(result) === 1
+    },
+
+    async reopenAllFailed() {
+      const result = await db
+        .update(metaConversions)
+        .set(reopenMetaConversionSet(new Date()))
+        .where(eq(metaConversions.status, "failed"))
+      return affected(result)
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -1065,5 +1551,9 @@ export function createMysqlRepos(db: Db): Repos {
     webhooks,
     planGenerations: planGenerationsRepo,
     mealPlans: mealPlansRepo,
+    analytics: analyticsRepo,
+    appLogs: appLogsRepo,
+    metaAttributions: metaAttributionsRepo,
+    metaConversions: metaConversionsRepo,
   }
 }

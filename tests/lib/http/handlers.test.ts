@@ -46,6 +46,7 @@ function post(body: string, headers: Record<string, string> = {}): Request {
 function setupSubmit(opts: { result?: SubmitResult | (() => Promise<SubmitResult>); limiter?: { hit(k: string): boolean } } = {}) {
   const calls = {
     submitQuiz: [] as ParsedSubmission[],
+    contexts: [] as unknown[],
     dispatch: [] as string[],
     deferred: [] as (() => Promise<void>)[],
     hits: [] as string[],
@@ -54,8 +55,9 @@ function setupSubmit(opts: { result?: SubmitResult | (() => Promise<SubmitResult
   const limiter = opts.limiter ?? { hit: () => true }
   const log = fakeLog()
   const handler = createSubmitQuizHandler({
-    submitQuiz: async (input) => {
+    submitQuiz: async (input, ctx) => {
       calls.submitQuiz.push(input)
+      calls.contexts.push(ctx)
       return typeof result === "function" ? result() : result
     },
     dispatchForQuizResponse: async (id) => {
@@ -173,6 +175,22 @@ describe("submit-quiz handler: respostas por caso", () => {
     const res = await handler(post("{"))
     expect(res.status).toBe(429)
     expect(calls.submitQuiz).toEqual([])
+  })
+})
+
+describe("submit-quiz handler: contexto do pedido para a atribuição da Meta", () => {
+  it("passa o primeiro IP de x-forwarded-for e o User-Agent ao serviço", async () => {
+    const { handler, calls } = setupSubmit()
+    await handler(
+      post(JSON.stringify(validBody()), { "x-forwarded-for": "9.9.9.9, 10.0.0.1", "user-agent": "UA-X" }),
+    )
+    expect(calls.contexts).toEqual([{ clientIp: "9.9.9.9", userAgent: "UA-X" }])
+  })
+
+  it("sem os cabeçalhos, o IP é 'unknown' e o User-Agent fica ausente", async () => {
+    const { handler, calls } = setupSubmit()
+    await handler(post(JSON.stringify(validBody())))
+    expect(calls.contexts).toEqual([{ clientIp: "unknown", userAgent: undefined }])
   })
 })
 
@@ -383,6 +401,23 @@ describe("jobs/retry handler", () => {
     expect(await res.json()).toEqual({ ok: true, reopened: 1 })
     expect(calls.retryFailed).toEqual([{ planGenerationId: "g-1" }])
     expect(calls.deferred).toHaveLength(1)
+  })
+
+  it('POST /api/jobs/retry aceita { "metaConversionId": "…" }', async () => {
+    const { handler, calls } = setupRetry(1)
+    const res = await handler(jobsReq("retry", { auth, body: '{"metaConversionId":"mc-1"}' }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, reopened: 1 })
+    expect(calls.retryFailed).toEqual([{ metaConversionId: "mc-1" }])
+  })
+
+  it("{ metaConversionId } com id vazio ou junto de outro alvo → 400", async () => {
+    const { handler, calls } = setupRetry()
+    for (const body of ['{"metaConversionId":""}', '{"metaConversionId":"mc-1","paymentId":"x"}']) {
+      const res = await handler(jobsReq("retry", { auth, body }))
+      expect(res.status).toBe(400)
+    }
+    expect(calls.retryFailed).toEqual([])
   })
 
   it("{ planGenerationId } com id vazio ou junto de outro alvo → 400", async () => {

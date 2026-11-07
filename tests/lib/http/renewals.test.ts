@@ -249,9 +249,10 @@ describe("POST /api/renewals", () => {
       payments: repos.payments,
       notifications: repos.notifications,
       syncPayment,
+      metaAttributions: repos.metaAttributions,
       log,
       now: () => new Date("2026-10-12T15:00:00Z"),
-      config: { amount: "39.90", channels: ["email", "whatsapp"], requestBudgetMs: 20_000 },
+      config: { amount: "39.90", channels: ["email", "whatsapp"], requestBudgetMs: 20_000, metaEnabled: false },
     })
     const handler = createRenewalsHandler({
       token: TOKEN,

@@ -31,6 +31,16 @@ describe("SYSTEM_PROMPT", () => {
     expect(SYSTEM_PROMPT).toContain("e sim pular linha (\\n)") // barra invertida + n, literais
     expect(SYSTEM_PROMPT.trimEnd().endsWith("Café sem açúcar — 200 ml")).toBe(true)
   })
+
+  it("pede uma substituta por refeição, menos no almoço", () => {
+    expect(SYSTEM_PROMPT).toContain("# Opções de substituição")
+    expect(SYSTEM_PROMPT).toContain("exatamente 1 opção de substituição")
+    expect(SYSTEM_PROMPT).toContain("O almoço não tem substituição")
+    expect(SYSTEM_PROMPT).toContain("no máximo 10%")
+    expect(SYSTEM_PROMPT.indexOf("# Opções de substituição")).toBeLessThan(
+      SYSTEM_PROMPT.indexOf("# Formato obrigatório de saída"),
+    )
+  })
 })
 
 describe("buildUserMessage", () => {

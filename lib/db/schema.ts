@@ -2,6 +2,7 @@
 // atualizada com "pnpm db:sync-schema" (que copia este arquivo).
 import { sql } from "drizzle-orm"
 import {
+  bigint,
   boolean,
   char,
   datetime,
@@ -12,7 +13,9 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  smallint,
   text,
+  tinyint,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
@@ -72,6 +75,13 @@ export const payments = mysqlTable(
     paidAt: dateTime("paid_at"),
     paymentDate: date("payment_date", { mode: "string" }),
     lastEvent: varchar("last_event", { length: 64 }),
+    // Desconto automático na cobrança não paga; nulo = ainda não avaliada. O tipo fica inline porque
+    // este arquivo é copiado para o PlanA e não pode importar de lib/db/repos/types.ts.
+    discountStatus: varchar("discount_status", { length: 16 }).$type<"applied" | "skipped">(),
+    // Quando a oferta foi aplicada ou descartada (UTC).
+    discountAppliedAt: dateTime("discount_applied_at"),
+    // Valor antes do desconto; só preenchido com `applied`.
+    originalAmount: decimal("original_amount", { precision: 10, scale: 2 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -79,6 +89,8 @@ export const payments = mysqlTable(
     uniqueIndex("payments_asaas_id_unique").on(t.asaasId),
     index("payments_status_next_sync_at_idx").on(t.status, t.nextSyncAt),
     index("payments_patient_id_idx").on(t.patientId),
+    index("payments_discount_status_patient_idx").on(t.discountStatus, t.patientId),
+    index("payments_created_at_idx").on(t.createdAt),
   ],
 )
 
@@ -313,3 +325,124 @@ export const appSettings = mysqlTable("app_settings", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 })
+
+// ---------------------------------------------------------------------------
+// Observabilidade (spec 2026-10-24-observabilidade-funil, §7). Só este app grava; o Metabase lê.
+// ---------------------------------------------------------------------------
+
+// Uma linha por visita ao quiz: etapa mais avançada, origem, aparelho e respostas permitidas.
+export const funnelSessions = mysqlTable(
+  "funnel_sessions",
+  {
+    sessionId: char("session_id", { length: 36 }).primaryKey(),
+    startedAt: dateTime("started_at").notNull(),
+    lastEventAt: dateTime("last_event_at").notNull(),
+    lastStep: tinyint("last_step"),
+    lastStepSlug: varchar("last_step_slug", { length: 40 }),
+    // `max_step_slug` vem ANTES de `max_step` de propósito: o Drizzle monta o ON DUPLICATE KEY UPDATE na
+    // ordem das colunas, e no MySQL cada atribuição já enxerga as anteriores. O slug precisa comparar com o
+    // `max_step` antigo, então tem de ser atribuído primeiro (ver AnalyticsRepo.recordBatch).
+    maxStepSlug: varchar("max_step_slug", { length: 40 }),
+    maxStep: tinyint("max_step"),
+    checkoutClicked: boolean("checkout_clicked").notNull().default(false),
+    utmSource: varchar("utm_source", { length: 100 }),
+    utmMedium: varchar("utm_medium", { length: 100 }),
+    utmCampaign: varchar("utm_campaign", { length: 100 }),
+    utmContent: varchar("utm_content", { length: 100 }),
+    utmTerm: varchar("utm_term", { length: 100 }),
+    referrerHost: varchar("referrer_host", { length: 100 }),
+    deviceType: varchar("device_type", { length: 20 }).notNull(),
+    os: varchar("os", { length: 20 }).notNull(),
+    browser: varchar("browser", { length: 20 }).notNull(),
+    viewportW: smallint("viewport_w"),
+    viewportH: smallint("viewport_h"),
+    answers: json("answers").$type<Record<string, string | string[]>>().notNull().default(sql`(JSON_OBJECT())`),
+  },
+  (t) => [index("funnel_sessions_started_at_idx").on(t.startedAt), index("funnel_sessions_last_event_at_idx").on(t.lastEventAt)],
+)
+
+// Um evento do quiz por linha. Sem chave estrangeira para a sessão: o purge em lotes não depende de ordem.
+export const funnelEvents = mysqlTable(
+  "funnel_events",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    sessionId: char("session_id", { length: 36 }).notNull(),
+    event: varchar("event", { length: 32 }).notNull(),
+    step: tinyint("step"),
+    stepSlug: varchar("step_slug", { length: 40 }),
+    props: json("props").$type<Record<string, unknown>>().notNull(),
+    clientTs: dateTime("client_ts").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("funnel_events_session_id_idx").on(t.sessionId),
+    index("funnel_events_event_created_at_idx").on(t.event, t.createdAt),
+    index("funnel_events_created_at_idx").on(t.createdAt),
+  ],
+)
+
+// Logs do backend que valem ser consultados (todo warn/error e poucos info), já passados pelo redact.
+export const appLogs = mysqlTable(
+  "app_logs",
+  {
+    id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
+    ts: dateTime("ts").notNull(),
+    level: varchar("level", { length: 5 }).notNull(),
+    event: varchar("event", { length: 100 }).notNull(),
+    // Texto antes do primeiro ponto do evento.
+    area: varchar("area", { length: 40 }).notNull(),
+    fields: json("fields").$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [index("app_logs_ts_idx").on(t.ts), index("app_logs_area_level_ts_idx").on(t.area, t.level, t.ts)],
+)
+
+// ---------------------------------------------------------------------------
+// Meta (spec 2026-10-24-meta-pixel-capi, §8). Só este app grava.
+// ---------------------------------------------------------------------------
+
+// Atribuição de um envio do quiz ao anúncio: o que o Purchase do servidor usa para casar com o clique.
+// Contém IP e User-Agent, por isso o purge apaga a linha com 90 dias.
+export const metaAttributions = mysqlTable(
+  "meta_attributions",
+  {
+    quizResponseId: char("quiz_response_id", { length: 36 })
+      .primaryKey()
+      .references(() => quizResponses.id),
+    externalId: char("external_id", { length: 36 }),
+    fbp: varchar("fbp", { length: 500 }),
+    fbc: varchar("fbc", { length: 500 }),
+    clientIp: varchar("client_ip", { length: 45 }),
+    userAgent: varchar("user_agent", { length: 500 }),
+    eventSourceUrl: varchar("event_source_url", { length: 500 }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("meta_attributions_created_at_idx").on(t.createdAt)],
+)
+
+// Fila do Purchase: uma linha por cobrança paga com atribuição. Não guarda dado pessoal, e o envio a
+// monta de payments, patients e meta_attributions. Sem chave estrangeira para quiz_responses, de
+// propósito: o purge da atribuição não pode depender desta tabela.
+export const metaConversions = mysqlTable(
+  "meta_conversions",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    paymentId: char("payment_id", { length: 36 })
+      .notNull()
+      .references(() => payments.id),
+    quizResponseId: char("quiz_response_id", { length: 36 }).notNull(),
+    eventId: varchar("event_id", { length: 80 }).notNull(),
+    eventTime: dateTime("event_time").notNull(),
+    status: mysqlEnum("status", ["pending", "sent", "failed"]).notNull(),
+    attempts: int("attempts").notNull().default(0),
+    nextAttemptAt: dateTime("next_attempt_at").notNull(),
+    lockedUntil: dateTime("locked_until"),
+    lastError: json("last_error"),
+    sentAt: dateTime("sent_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("meta_conversions_payment_id_unique").on(t.paymentId),
+    index("meta_conversions_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
+  ],
+)
