@@ -698,5 +698,3 @@ Faça num deploy de teste no Easypanel, com `ASAAS_ENV=sandbox` e a chave do san
 - O CPF ainda é pedido no formulário. Existe uma alternativa, deixar a pessoa informar o CPF na página de pagamento do Asaas (Checkout), descrita como experimento futuro na seção 12 do documento de design. Antes de decidir, meça o abandono na etapa do CPF.
 - A fórmula das metas (Harris-Benedict original, 1919) e os pisos de calorias (1.200 feminino e 1.500 masculino) em `lib/meal-plan/targets.ts` ainda precisam ser confirmados pela nutricionista. Trocar é mudar constantes naquele arquivo.
 - Documentos de design e plano de implementação: `docs/superpowers/specs` e `docs/superpowers/plans`.
-
-
