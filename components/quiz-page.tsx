@@ -64,7 +64,7 @@ import AutoEstima from "@/src/img/auto-estima.png"
 import Peso from "@/src/img/peso.png"
 import Janta from "@/src/img/jantar.png"
 import Fogo from "@/src/img/fogo.gif"
-import Nutri from "@/src/img/nutri.jpeg"
+import Nutri from "@/src/img/nutri-2.png"
 import Agua from "@/src/img/agua.gif"
 
 // Teto de tempo que o servidor aceita num evento (24 h)
@@ -1065,11 +1065,13 @@ export function QuizPage({ price }: { price: string }) {
               <div className="space-y-6">
                 {/* Nutritionist Photo */}
                 <Image
-                  src={Nutri || "/placeholder.svg"}
-                  alt="Nutricionista"
+                  src={Nutri}
+                  alt="Nutricionista Tâmili Valle"
                   width={400}
-                  height={300}
-                  className="mx-auto"
+                  height={533}
+                  sizes="(max-width: 448px) 100vw, 400px"
+                  placeholder="blur"
+                  className="mx-auto w-full max-w-[400px] aspect-[3/4] object-cover object-top"
                 />
 
                 {/* Nutritionist Info */}
