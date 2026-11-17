@@ -11,6 +11,9 @@ export const metadata: Metadata = {
   title: 'PlanA - Seu Plano Alimentar Personalizado',
   description: '',
   generator: '',
+  other: {
+    'facebook-domain-verification': 'yrvtt15485ge0agi33b3jexs6qlayn',
+  },
 }
 
 export default function RootLayout({
