@@ -321,7 +321,7 @@ export function QuizPage({ price }: { price: string }) {
                 </span>
               }
               question="Escolha sua faixa etária para começar"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
+              counter="⏱ Leva cerca de 2 minutos"
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -343,7 +343,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 1 && (
             <QuizStep
               title="Qual é o seu sexo biológico?"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -378,7 +377,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 2 && (
             <QuizStep
               title="Qual dessas opções representa melhor o seu tipo físico atual?"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -438,7 +436,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 3 && (
             <QuizStep
               title="o que você pode esperar:"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -494,7 +491,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="Como o seu peso costuma se comportar ao longo do tempo?"
               image={PesoMedida}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -537,7 +533,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 5 && (
             <QuizStep
               title="Prepare-se para alcançar a sua melhor versão!"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -572,7 +567,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="O que você quer comer no café da manhã?"
               image={CafeManha}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -627,7 +621,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="O que você quer comer no almoço?"
               image={Almoco}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -682,7 +675,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="O que você quer comer no lanche da tarde?"
               image={CafeTarde}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -738,7 +730,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="O que você quer comer no jantar?"
               image={Janta}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -793,7 +784,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="Você quer ter uma opção de sobremesa no seu plano alimentar?"
               image={Sobremesa}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -824,7 +814,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="Equilíbrio sem culpa"
               image={PessoaComendo}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -843,7 +832,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 12 && (
             <QuizStep
               title="Como você descreveria sua rotina durante o dia?"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -887,7 +875,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="Quantas horas você costuma dormir por noite?"
               image={ContarCarneirinhos}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -920,7 +907,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="Qual é a sua média de consumo de água por dia?"
               image={Agua}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -957,7 +943,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="Você se identifica com algum desses hábitos alimentares? 🤦🏾‍♀️"
               subtitle="(selecione os que se aplicam)"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1010,7 +995,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 16 && (
             <QuizStep
               title="Veja os resultados que você poderá perceber rapidamente na sua saúde e bem-estar:"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1057,7 +1041,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 17 && (
             <QuizStep
               title="Conheça sua nutricionista"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1123,7 +1106,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 18 && (
             <QuizStep
               title="Qual é a sua altura (em centímetros)?"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1141,7 +1123,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 19 && (
             <QuizStep
               title="Informe seu peso atual (em kg):"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1155,7 +1136,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 20 && (
             <QuizStep
               title="Qual é a sua meta de peso?"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1175,7 +1155,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 21 && (
             <QuizStep
               title="Aqui está o seu perfil de bem-estar"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1205,7 +1184,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 22 && (
             <QuizStep
               title="Rumo ao seu objetivo!"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1226,7 +1204,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 23 && (
             <QuizStep
               title="Digite seu e-mail para receber seu plano alimentar personalizado:"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1253,7 +1230,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 24 && (
             <QuizStep
               title="Informe seu número de WhatsApp:"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1276,7 +1252,6 @@ export function QuizPage({ price }: { price: string }) {
             <QuizStep
               title="Qual seu nome?"
               subtitle="(nome completo)"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1303,7 +1278,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 26 && (
             <QuizStep
               title="Informe seu CPF:"
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onNext={handleContinue}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
@@ -1328,7 +1302,6 @@ export function QuizPage({ price }: { price: string }) {
           {currentStep === 28 && (
             <QuizStep
               title={`${answers.nome_completo?.split(" ")[0] || ""} a nutri vai preparar seu plano alimentar exclusivo!`}
-              counter={`Etapa ${currentStep + 1} de ${totalSteps}`}
               onPrev={prevStep}
               canGoBack={currentStep > 0 && !isSubmitting}
             >

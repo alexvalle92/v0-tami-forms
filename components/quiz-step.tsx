@@ -10,7 +10,7 @@ interface QuizStepProps {
   subtitle?: ReactNode
   image?: string | StaticImageData
   question?: string
-  counter: string
+  counter?: string
   children: ReactNode
   onNext?: () => void
   onPrev?: () => void
@@ -70,7 +70,7 @@ export function QuizStep({
         )}
       </div>
 
-      <div className="text-center text-[#888] text-sm md:text-base font-medium mt-4 py-2">{counter}</div>
+      {counter && <div className="text-center text-[#888] text-sm md:text-base font-medium mt-4 py-2">{counter}</div>}
     </div>
   )
 }
