@@ -45,8 +45,8 @@ import {
   Award,
   AlertTriangle,
   Loader,
-  ShieldCheck,
 } from "lucide-react"
+import { GuaranteeSeal } from "@/components/guarantee-seal"
 import CorpoMagra from "@/src/img/magra.jpg"
 import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
 import CorpoGordinha from "@/src/img/gordinha.jpg"
@@ -1342,18 +1342,12 @@ export function QuizPage({ price }: { price: string }) {
 
                 <div
                   role="note"
-                  aria-label="Garantia de 7 dias"
-                  className="relative overflow-hidden flex items-center gap-4 bg-white border-2 border-dashed border-[#4f6e2c] p-4 md:p-5 rounded-xl shadow-sm"
+                  className="flex items-center gap-4 md:gap-5 bg-gradient-to-br from-[#161c2d] to-[#0d111c] border-2 border-[#d4ab45] p-4 md:p-5 rounded-xl shadow-lg"
                 >
-                  <div className="relative flex-shrink-0 w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-[#d9b23a] to-[#bb951c] p-1 shadow-md">
-                    <div className="w-full h-full rounded-full bg-gradient-to-br from-[#5f8236] to-[#3f5a22] flex flex-col items-center justify-center text-white">
-                      <ShieldCheck className="w-7 h-7 md:w-8 md:h-8" strokeWidth={2.25} aria-hidden="true" />
-                      <span className="text-[10px] md:text-xs font-bold leading-none mt-0.5">7 DIAS</span>
-                    </div>
-                  </div>
+                  <GuaranteeSeal className="flex-shrink-0 w-24 h-24 md:w-28 md:h-28 drop-shadow-[0_4px_8px_rgba(0,0,0,0.45)]" />
                   <div className="text-left">
-                    <p className="font-bold text-[#2f4a18] text-base md:text-lg leading-tight">Garantia de 7 dias</p>
-                    <p className="text-sm md:text-base text-[#4a5a3a] leading-snug mt-1">
+                    <p className="font-extrabold text-[#f3d57a] text-lg md:text-xl leading-tight">Garantia de 7 dias</p>
+                    <p className="text-sm md:text-base text-[#e8e4d8] leading-snug mt-1.5">
                       Se não gostar, devolvemos seu dinheiro.
                     </p>
                   </div>
