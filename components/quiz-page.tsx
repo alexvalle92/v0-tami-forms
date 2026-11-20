@@ -45,6 +45,7 @@ import {
   Award,
   AlertTriangle,
   Loader,
+  ShieldCheck,
 } from "lucide-react"
 import CorpoMagra from "@/src/img/magra.jpg"
 import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
@@ -1337,6 +1338,25 @@ export function QuizPage({ price }: { price: string }) {
                     Investimento único
                   </p>
                   <p className="text-4xl md:text-5xl font-bold text-[#4f6e2c] mb-2">{price}</p>
+                </div>
+
+                <div
+                  role="note"
+                  aria-label="Garantia de 7 dias"
+                  className="relative overflow-hidden flex items-center gap-4 bg-white border-2 border-dashed border-[#4f6e2c] p-4 md:p-5 rounded-xl shadow-sm"
+                >
+                  <div className="relative flex-shrink-0 w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-[#d9b23a] to-[#bb951c] p-1 shadow-md">
+                    <div className="w-full h-full rounded-full bg-gradient-to-br from-[#5f8236] to-[#3f5a22] flex flex-col items-center justify-center text-white">
+                      <ShieldCheck className="w-7 h-7 md:w-8 md:h-8" strokeWidth={2.25} aria-hidden="true" />
+                      <span className="text-[10px] md:text-xs font-bold leading-none mt-0.5">7 DIAS</span>
+                    </div>
+                  </div>
+                  <div className="text-left">
+                    <p className="font-bold text-[#2f4a18] text-base md:text-lg leading-tight">Garantia de 7 dias</p>
+                    <p className="text-sm md:text-base text-[#4a5a3a] leading-snug mt-1">
+                      Se não gostar, devolvemos seu dinheiro.
+                    </p>
+                  </div>
                 </div>
               </div>
 
