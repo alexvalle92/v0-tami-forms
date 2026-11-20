@@ -45,8 +45,11 @@ import {
   Award,
   AlertTriangle,
   Loader,
+  Gift,
+  Tag,
 } from "lucide-react"
 import { GuaranteeSeal } from "@/components/guarantee-seal"
+import type { PriceOffer } from "@/lib/price-display"
 import CorpoMagra from "@/src/img/magra.jpg"
 import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
 import CorpoGordinha from "@/src/img/gordinha.jpg"
@@ -71,7 +74,7 @@ import Agua from "@/src/img/agua.gif"
 // Teto de tempo que o servidor aceita num evento (24 h)
 const MAX_EVENT_MS = 86_400_000
 
-export function QuizPage({ price }: { price: string }) {
+export function QuizPage({ offer }: { offer: PriceOffer }) {
   const [currentStep, setCurrentStep] = useState(0)
   const [answers, setAnswers] = useState<Record<string, any>>({})
   const [showJSON, setShowJSON] = useState(false)
@@ -1333,11 +1336,40 @@ export function QuizPage({ price }: { price: string }) {
                   </ul>
                 </div>
 
-                <div className="bg-gradient-to-r from-[#fff8e6] to-[#fffbf0] border-2 border-[#bb951c] p-5 rounded-xl text-center shadow-sm">
-                  <p className="text-sm text-[#6a5414] mb-1 uppercase tracking-wide font-semibold">
-                    Investimento único
-                  </p>
-                  <p className="text-4xl md:text-5xl font-bold text-[#4f6e2c] mb-2">{price}</p>
+                <div className="overflow-hidden bg-gradient-to-b from-[#fffbf0] to-white border-2 border-[#bb951c] rounded-xl text-center shadow-md">
+                  <div className="flex items-center justify-center gap-2 bg-gradient-to-r from-[#a8841a] via-[#d4ab45] to-[#a8841a] text-white py-2.5 px-4">
+                    <Gift className="w-5 h-5 md:w-6 md:h-6 flex-shrink-0" aria-hidden="true" />
+                    <span className="font-extrabold uppercase tracking-wider text-sm md:text-base">
+                      {offer.fromPrice || offer.discountPercent ? "Condição especial" : "Investimento único"}
+                    </span>
+                  </div>
+
+                  <div className="px-5 pt-4 pb-5 md:px-6">
+                    {offer.fromPrice && (
+                      <p className="text-base md:text-lg text-[#8a8a8a]">
+                        De{" "}
+                        <span className="line-through decoration-[#c0392b] decoration-2">{offer.fromPrice}</span>
+                      </p>
+                    )}
+
+                    <p className="flex items-baseline justify-center gap-2 text-[#2f4a18]">
+                      {offer.fromPrice && <span className="text-lg md:text-xl font-semibold">Por</span>}
+                      <span className="text-5xl md:text-6xl font-extrabold text-[#4f6e2c] tracking-tight">
+                        {offer.price}
+                      </span>
+                    </p>
+
+                    {offer.discountPercent && (
+                      <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#4f6e2c] text-white px-4 py-1.5 text-sm md:text-base font-bold shadow-sm">
+                        <Tag className="w-4 h-4" aria-hidden="true" />
+                        Desconto de {offer.discountPercent}%
+                      </span>
+                    )}
+
+                    <p className="mt-3 text-sm text-[#6a5414]">
+                      Pagamento único · equivale a <strong>{offer.perDay} por dia</strong>
+                    </p>
+                  </div>
                 </div>
 
                 <div

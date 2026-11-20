@@ -63,6 +63,8 @@ Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e l
 | `ASAAS_ENV` | sim | `sandbox` (testes) ou `production` |
 | `ASAAS_API_KEY` | sim | Chave do Asaas do ambiente escolhido em `ASAAS_ENV` |
 | `PAYMENT_AMOUNT` | não | Valor da cobrança, com ponto e até 2 casas. Padrão `39.90` |
+| `PAYMENT_DISPLAY_FROM_AMOUNT` | não | Só exibição: o "De R$ ..." riscado no card de preço do quiz, com ponto e até 2 casas. Não muda a cobrança. Ausente, inválido ou não maior que `PAYMENT_AMOUNT`: a linha some |
+| `PAYMENT_DISPLAY_DISCOUNT_PERCENT` | não | Só exibição: o selo "Desconto de xx%" no card de preço, inteiro de 1 a 99 (sem `%`). Não muda a cobrança. Ausente ou inválido: o selo some |
 | `PAYMENT_DUE_DAYS` | não | Dias até o vencimento. Padrão `2` |
 | `PAYMENT_SUCCESS_URL` | sim | Endereço para onde o Asaas leva a pessoa após pagar (URL completa) |
 | `SMTP_HOST` | sim | Servidor de e-mail |
