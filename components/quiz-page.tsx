@@ -49,6 +49,7 @@ import {
   Tag,
 } from "lucide-react"
 import { GuaranteeSeal } from "@/components/guarantee-seal"
+import { BeforeAfterCarousel, type BeforeAfterResult } from "@/components/before-after-carousel"
 import type { PriceOffer } from "@/lib/price-display"
 import CorpoMagra from "@/src/img/magra.jpg"
 import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
@@ -70,6 +71,32 @@ import Janta from "@/src/img/jantar.png"
 import Fogo from "@/src/img/fogo.gif"
 import Nutri from "@/src/img/nutri-2.png"
 import Agua from "@/src/img/agua.gif"
+
+// Etapa 16: fotos de exemplo (placeholder) até chegarem as fotos reais autorizadas.
+// Para trocar, importe a imagem de src/img e coloque no lugar da URL.
+const placeholderPhoto = (label: string, bg: string) =>
+  `https://placehold.co/300x400/${bg}/4f6e2c.png?text=${encodeURIComponent(label)}&font=montserrat`
+
+const BEFORE_AFTER_RESULTS: BeforeAfterResult[] = [
+  {
+    name: "Mariana, 34 anos",
+    detail: "12 semanas de acompanhamento",
+    before: placeholderPhoto("Foto antes", "e9ece5"),
+    after: placeholderPhoto("Foto depois", "dfe9d2"),
+  },
+  {
+    name: "Juliana, 41 anos",
+    detail: "16 semanas de acompanhamento",
+    before: placeholderPhoto("Foto antes", "e9ece5"),
+    after: placeholderPhoto("Foto depois", "dfe9d2"),
+  },
+  {
+    name: "Carla, 28 anos",
+    detail: "10 semanas de acompanhamento",
+    before: placeholderPhoto("Foto antes", "e9ece5"),
+    after: placeholderPhoto("Foto depois", "dfe9d2"),
+  },
+]
 
 // Teto de tempo que o servidor aceita num evento (24 h)
 const MAX_EVENT_MS = 86_400_000
@@ -1003,7 +1030,10 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <div className="space-y-4">
+              <BeforeAfterCarousel results={BEFORE_AFTER_RESULTS} />
+
+              <p className="mt-8 mb-3 font-semibold text-[#2f4a18]">Além do corpo, você pode sentir:</p>
+              <div className="space-y-3">
                 {[
                   {
                     label: "Melhorar disposição e saúde no geral",
@@ -1026,13 +1056,13 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
                   return (
                     <div
                       key={index}
-                      className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-5 border border-[#e5e5e5]"
+                      className="bg-gradient-to-br from-[#f5f9f1] to-white rounded-xl p-4 border border-[#e5e5e5]"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#4f6e2c] to-[#6a8f3a] flex items-center justify-center flex-shrink-0">
-                          <IconComponent className="w-6 h-6 text-white" />
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4f6e2c] to-[#6a8f3a] flex items-center justify-center flex-shrink-0">
+                          <IconComponent className="w-5 h-5 text-white" />
                         </div>
-                        <span className="text-base text-gray-700 leading-relaxed">{item.label}</span>
+                        <span className="text-[15px] text-gray-700 leading-snug">{item.label}</span>
                       </div>
                     </div>
                   )
