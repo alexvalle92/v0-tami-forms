@@ -6,8 +6,8 @@ import useEmblaCarousel from "embla-carousel-react"
 import { ArrowRight } from "lucide-react"
 
 export type BeforeAfterResult = {
-  /** Primeiro nome (ou iniciais) de quem autorizou a foto. */
-  name: string
+  /** Primeiro nome (ou iniciais) de quem autorizou a foto. Sem nome nem detalhe, o card mostra só as fotos. */
+  name?: string
   /** Uma linha curta de contexto, ex.: "12 semanas de acompanhamento". */
   detail?: string
   before: string | StaticImageData
@@ -42,10 +42,12 @@ function ResultCard({ result }: { result: BeforeAfterResult }) {
           <ArrowRight className="w-4 h-4 text-white" />
         </div>
       </div>
-      <div className="pt-3 px-1">
-        <p className="font-semibold text-[#2f4a18]">{result.name}</p>
-        {result.detail && <p className="text-sm text-gray-600">{result.detail}</p>}
-      </div>
+      {(result.name || result.detail) && (
+        <div className="pt-3 px-1">
+          {result.name && <p className="font-semibold text-[#2f4a18]">{result.name}</p>}
+          {result.detail && <p className="text-sm text-gray-600">{result.detail}</p>}
+        </div>
+      )}
     </div>
   )
 }

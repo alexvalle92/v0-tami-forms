@@ -71,31 +71,18 @@ import Janta from "@/src/img/jantar.png"
 import Fogo from "@/src/img/fogo.gif"
 import Nutri from "@/src/img/nutri-2.png"
 import Agua from "@/src/img/agua.gif"
+import Resultado1Antes from "@/src/img/resultado-1-antes.jpg"
+import Resultado1Depois from "@/src/img/resultado-1-depois.jpg"
+import Resultado2Antes from "@/src/img/resultado-2-antes.jpg"
+import Resultado2Depois from "@/src/img/resultado-2-depois.jpg"
+import Resultado3Antes from "@/src/img/resultado-3-antes.jpg"
+import Resultado3Depois from "@/src/img/resultado-3-depois.jpg"
 
-// Etapa 16: fotos de exemplo (placeholder) até chegarem as fotos reais autorizadas.
-// Para trocar, importe a imagem de src/img e coloque no lugar da URL.
-const placeholderPhoto = (label: string, bg: string) =>
-  `https://placehold.co/300x400/${bg}/4f6e2c.png?text=${encodeURIComponent(label)}&font=montserrat`
-
+// Etapa 16: fotos de antes e depois (src/img/resultado-N-antes|depois.jpg, 900x1200, 3:4), sem legenda.
 const BEFORE_AFTER_RESULTS: BeforeAfterResult[] = [
-  {
-    name: "Mariana, 34 anos",
-    detail: "12 semanas de acompanhamento",
-    before: placeholderPhoto("Foto antes", "e9ece5"),
-    after: placeholderPhoto("Foto depois", "dfe9d2"),
-  },
-  {
-    name: "Juliana, 41 anos",
-    detail: "16 semanas de acompanhamento",
-    before: placeholderPhoto("Foto antes", "e9ece5"),
-    after: placeholderPhoto("Foto depois", "dfe9d2"),
-  },
-  {
-    name: "Carla, 28 anos",
-    detail: "10 semanas de acompanhamento",
-    before: placeholderPhoto("Foto antes", "e9ece5"),
-    after: placeholderPhoto("Foto depois", "dfe9d2"),
-  },
+  { before: Resultado1Antes, after: Resultado1Depois },
+  { before: Resultado2Antes, after: Resultado2Depois },
+  { before: Resultado3Antes, after: Resultado3Depois },
 ]
 
 // Teto de tempo que o servidor aceita num evento (24 h)

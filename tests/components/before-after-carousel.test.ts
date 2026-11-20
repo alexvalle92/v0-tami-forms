@@ -32,6 +32,14 @@ describe("BeforeAfterCarousel", () => {
     expect(html).toContain("Carla")
   })
 
+  it("sem nome nem detalhe, mostra só as fotos, sem o bloco de legenda", () => {
+    const html = render([{ before: "/antes.png", after: "/depois.png" }])
+
+    expect(html).toContain("Antes")
+    expect(html).toContain("Depois")
+    expect(html).not.toContain("pt-3 px-1")
+  })
+
   it("sem resultados, não renderiza nada", () => {
     expect(render([])).toBe("")
   })
