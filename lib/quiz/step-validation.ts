@@ -96,10 +96,18 @@ export function stepValidation(step: number, answers: Record<string, any>): Step
       return null
     case 24:
       if (!answers.whatsapp) return vazio("Por favor, informe seu número de WhatsApp.")
-      if (answers.whatsapp.replace(/\D/g, "").length < 10) {
+      const phoneDigits = answers.whatsapp.replace(/\D/g, "")
+      if (phoneDigits.length < 10) {
         return {
           reason: "telefone_invalido",
           message: "Por favor, insira um telefone válido com DDD (exemplo: (11) 98765-4321)",
+        }
+      }
+      // O Asaas recusa o cadastro com "telefone inválido" para números como (99) 9 9999-9999.
+      if (/^(\d)\1+$/.test(phoneDigits)) {
+        return {
+          reason: "telefone_invalido",
+          message: "Por favor, insira um número de WhatsApp válido. Números com todos os dígitos iguais não são aceitos.",
         }
       }
       return null

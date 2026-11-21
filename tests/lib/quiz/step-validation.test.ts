@@ -56,6 +56,16 @@ describe("stepValidation", () => {
     expect(stepValidation(24, { whatsapp: "(11) 98765-4321" })).toBeNull()
   })
 
+  it("telefone com todos os dígitos iguais é inválido (o Asaas recusa)", () => {
+    const esperado = {
+      reason: "telefone_invalido",
+      message: "Por favor, insira um número de WhatsApp válido. Números com todos os dígitos iguais não são aceitos.",
+    }
+    expect(stepValidation(24, { whatsapp: "(99) 9 9999-9999" })).toEqual(esperado)
+    expect(stepValidation(24, { whatsapp: "(11) 1111-1111" })).toEqual(esperado)
+    expect(stepValidation(24, { whatsapp: "(98) 9 9898-9898" })).toBeNull()
+  })
+
   it("nome em branco fica vazio", () => {
     expect(stepValidation(25, { nome_completo: "   " })).toEqual({
       reason: "vazio",
