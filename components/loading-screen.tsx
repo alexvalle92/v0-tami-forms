@@ -189,7 +189,7 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
             <p className="animate-pulse delay-200">✓ Personalizando recomendações</p>
           </div>
 
-          <TestimonialRotator testimonials={LOADING_TESTIMONIALS} />
+          <TestimonialRotator testimonials={LOADING_TESTIMONIALS} shuffle />
         </>
       )}
 

@@ -1,15 +1,25 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Quote, Star } from "lucide-react"
+import { Heart, Quote, Star } from "lucide-react"
 
 export type Testimonial = {
-  /** Iniciais de quem deu o depoimento, ex.: "M.S." */
-  initials: string
+  /** Iniciais de quem deu o depoimento, ex.: "M.S.". Sem elas, o círculo mostra um coração. */
+  initials?: string
   text: string
 }
 
 const INTERVAL_MS = 4000
+
+/** Cópia embaralhada da lista (Fisher-Yates). A original não muda. */
+export function shuffled<T>(list: readonly T[], random: () => number = Math.random): T[] {
+  const out = [...list]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1))
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
 
 function Stars() {
   return (
@@ -24,8 +34,21 @@ function Stars() {
 /**
  * Depoimentos em texto que trocam sozinhos a cada 4 s. Todos os cards ocupam a mesma
  * célula do grid, então a altura é a do maior texto e a tela não pula na troca.
+ *
+ * Com `shuffle`, a ordem é sorteada a cada vez que o componente aparece. Como só cabem uns
+ * 4 depoimentos no tempo de carregamento, cada pessoa vê uma seleção diferente. Só use
+ * `shuffle` onde o componente não vem renderizado do servidor (a tela de carregamento só
+ * aparece depois de responder o quiz), senão a ordem do servidor e do navegador não bate.
  */
-export function TestimonialRotator({ testimonials }: { testimonials: Testimonial[] }) {
+export function TestimonialRotator({
+  testimonials: source,
+  shuffle = false,
+}: {
+  testimonials: Testimonial[]
+  shuffle?: boolean
+}) {
+  // sorteado uma vez por montagem: a ordem não muda enquanto a tela está aberta
+  const [testimonials] = useState(() => (shuffle ? shuffled(source) : source))
   const [active, setActive] = useState(0)
 
   useEffect(() => {
@@ -67,7 +90,7 @@ export function TestimonialRotator({ testimonials }: { testimonials: Testimonial
 
               <figcaption className="mt-4 flex items-center gap-3">
                 <span className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4f6e2c] to-[#6a8f3a] text-white text-sm font-bold flex items-center justify-center flex-shrink-0 shadow-sm">
-                  {t.initials}
+                  {t.initials || <Heart className="w-4 h-4 fill-white" aria-hidden />}
                 </span>
                 <span className="text-sm">
                   <span className="block font-semibold text-[#2f4a18]">Paciente da Dra. Tâmili</span>

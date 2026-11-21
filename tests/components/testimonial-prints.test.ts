@@ -33,6 +33,17 @@ describe("TestimonialPrints", () => {
     expect(html.match(/aria-label="Ver print \d+"/g)).toHaveLength(3)
   })
 
+  it("usa o resumo do print como texto alternativo, quando informado", () => {
+    const html = render([{ ...whats, alt: "Paciente perdeu 3 kg" }, insta])
+
+    expect(html).toContain('alt="Paciente perdeu 3 kg"')
+    expect(html).toContain('alt="Depoimento por Instagram 2"')
+  })
+
+  it("avisa que resultados individuais podem variar", () => {
+    expect(render([whats])).toContain("Resultados individuais podem variar")
+  })
+
   it("com um print, não mostra bolinhas", () => {
     expect(render([whats])).not.toContain('aria-label="Ver print')
   })

@@ -1098,9 +1098,9 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
 
                 {/* Prints de depoimentos (lib/quiz/testimonials.ts) */}
                 <div className="pt-2">
-                  <h3 className="text-lg font-bold text-[#2f4a18] text-center">Mensagens de quem já está no plano</h3>
+                  <h3 className="text-lg font-bold text-[#2f4a18] text-center">O que minhas pacientes me contam</h3>
                   <p className="text-sm text-gray-600 text-center mt-1 mb-4">
-                    Recebidas pelo WhatsApp e pelo Instagram
+                    Mensagens recebidas pelo WhatsApp e pelo Instagram
                   </p>
                   <TestimonialPrints prints={NUTRI_PRINTS} />
                 </div>
