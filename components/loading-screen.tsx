@@ -6,6 +6,8 @@ import { GENERIC_SUBMIT_ERROR, newSubmissionId, submitQuizRequest } from "@/lib/
 import { getMeta } from "@/lib/client/meta"
 import { getTracker } from "@/lib/client/track"
 import type { SubmitOutcome } from "@/lib/analytics/events"
+import { TestimonialRotator } from "@/components/testimonial-rotator"
+import { LOADING_TESTIMONIALS } from "@/lib/quiz/testimonials"
 
 interface LoadingScreenProps {
   onComplete: () => void
@@ -186,6 +188,8 @@ export function LoadingScreen({ onComplete, onGoBack, answers }: LoadingScreenPr
             <p className="animate-pulse delay-100">✓ Calculando necessidades nutricionais</p>
             <p className="animate-pulse delay-200">✓ Personalizando recomendações</p>
           </div>
+
+          <TestimonialRotator testimonials={LOADING_TESTIMONIALS} />
         </>
       )}
 

@@ -50,6 +50,8 @@ import {
 } from "lucide-react"
 import { GuaranteeSeal } from "@/components/guarantee-seal"
 import { BeforeAfterCarousel, type BeforeAfterResult } from "@/components/before-after-carousel"
+import { TestimonialPrints } from "@/components/testimonial-prints"
+import { NUTRI_PRINTS } from "@/lib/quiz/testimonials"
 import type { PriceOffer } from "@/lib/price-display"
 import CorpoMagra from "@/src/img/magra.jpg"
 import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
@@ -1092,6 +1094,15 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
                     Seu plano alimentar será desenvolvido especialmente para você, considerando suas necessidades e
                     objetivos únicos.
                   </p>
+                </div>
+
+                {/* Prints de depoimentos (lib/quiz/testimonials.ts) */}
+                <div className="pt-2">
+                  <h3 className="text-lg font-bold text-[#2f4a18] text-center">Mensagens de quem já está no plano</h3>
+                  <p className="text-sm text-gray-600 text-center mt-1 mb-4">
+                    Recebidas pelo WhatsApp e pelo Instagram
+                  </p>
+                  <TestimonialPrints prints={NUTRI_PRINTS} />
                 </div>
               </div>
             </QuizStep>
