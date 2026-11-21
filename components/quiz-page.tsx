@@ -64,9 +64,7 @@ import PessoaComendo from "@/src/img/pessoaComendo.png"
 import ContarCarneirinhos from "@/src/img/contarCarneirinho.gif"
 import Masculino from "@/src/img/masculino.png"
 import Feminino from "@/src/img/feminino.png"
-import Saude from "@/src/img/saude.png"
-import AutoEstima from "@/src/img/auto-estima.png"
-import Peso from "@/src/img/peso.png"
+import { AppDemoShowcase } from "@/components/app-demo"
 import Janta from "@/src/img/jantar.png"
 import Fogo from "@/src/img/fogo.gif"
 import Nutri from "@/src/img/nutri-2.png"
@@ -453,55 +451,31 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
 
           {currentStep === 3 && (
             <QuizStep
-              title="o que você pode esperar:"
+              title="O que você pode esperar:"
+              subtitle="Seu plano chega pronto no app PlanA. É só abrir no celular e seguir."
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
             >
-              <div className="space-y-4">
-                <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#eef6e8] to-white rounded-xl border-2 border-[#e5f3dd]">
-                  <Image
-                    src={Saude || "/placeholder.svg"}
-                    alt=""
-                    width={60}
-                    height={60}
-                    className="flex-shrink-0 rounded-lg"
-                  />
-                  <div className="flex-1 flex items-center">
-                    <p className="text-base md:text-lg font-medium text-[#2f4a18]">- Saúde e bem-estar</p>
-                  </div>
-                </div>
+              <AppDemoShowcase />
 
-                <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#f6f0d8] to-white rounded-xl border-2 border-[#e5f3dd]">
-                  <Image
-                    src={Peso || "/placeholder.svg"}
-                    alt=""
-                    width={60}
-                    height={60}
-                    className="flex-shrink-0 rounded-lg"
-                  />
-                  <div className="flex-1 flex items-center">
-                    <p className="text-base md:text-lg font-medium text-[#2f4a18]">
-                      - Perda de peso sustentável e saudável a longo prazo
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-[#eef6e8] to-white rounded-xl border-2 border-[#e5f3dd]">
-                  <Image
-                    src={AutoEstima || "/placeholder.svg"}
-                    alt=""
-                    width={60}
-                    height={60}
-                    className="flex-shrink-0 rounded-lg"
-                  />
-                  <div className="flex-1 flex items-center">
-                    <p className="text-base md:text-lg font-medium text-[#2f4a18]">
-                      - Mais confiança e autoestima renovada
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <ul className="mt-5 grid gap-2 px-1 md:grid-cols-3 md:gap-3 md:px-0">
+                {[
+                  "Cardápio feito para o seu perfil, com horários",
+                  "Opção de troca nas refeições, para não enjoar",
+                  "Receitas práticas e plano em PDF para baixar",
+                ].map((benefit) => (
+                  <li
+                    key={benefit}
+                    className="flex items-center gap-3 text-[15px] font-medium text-[#2f4a18] md:rounded-xl md:border-2 md:border-[#e5f3dd] md:bg-gradient-to-br md:from-[#eef6e8] md:to-white md:p-3.5"
+                  >
+                    <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-[#4f6e2c] text-white">
+                      <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                    </span>
+                    {benefit}
+                  </li>
+                ))}
+              </ul>
             </QuizStep>
           )}
 

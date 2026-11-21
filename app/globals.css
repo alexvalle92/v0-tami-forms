@@ -138,6 +138,44 @@
   animation: fade-in 0.34s ease;
 }
 
+/* Demonstração do app PlanA (components/app-demo.tsx) */
+@keyframes demo-tap {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  35% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+@keyframes demo-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes demo-caret {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
 /* Added bounce-slow animation for confirmation page success icon */
 @keyframes bounce-slow {
   0%,
