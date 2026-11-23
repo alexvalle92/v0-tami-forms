@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { CheckCircle, Mail, Clock } from "lucide-react"
+import { CheckCircle, Mail, MessageCircle } from "lucide-react"
 
 export default function ConfirmationPage() {
 
@@ -28,9 +28,9 @@ export default function ConfirmationPage() {
 
               <div className="bg-gradient-to-br from-[#f5f9f1] to-white border-2 border-[#e5f3dd] rounded-xl p-6 space-y-3">
                 <div className="flex items-start gap-3">
-                  <Mail className="w-6 h-6 text-[#4f6e2c] flex-shrink-0 mt-1" />
+                  <MessageCircle className="w-6 h-6 text-[#4f6e2c] flex-shrink-0 mt-1" />
                   <p className="text-base md:text-lg text-gray-700 text-left">
-                    <strong>Em alguns instantes</strong>, você receberá um <strong>e-mail</strong> com todas as
+                    <strong>Em até 2 horas</strong>, você receberá no seu <strong>WhatsApp</strong> todas as
                     informações necessárias para:
                   </p>
                 </div>
@@ -44,8 +44,10 @@ export default function ConfirmationPage() {
               </div>
 
               <div className="flex items-center justify-center gap-2 text-gray-600 mt-6">
-                <Clock className="w-5 h-5 text-[#bb951c]" />
-                <p className="text-sm md:text-base">Fique de olho na sua caixa de entrada e também na pasta de spam</p>
+                <Mail className="w-5 h-5 text-[#bb951c] flex-shrink-0" />
+                <p className="text-sm md:text-base">
+                  Pelo <strong>e-mail</strong>, fique de olho na sua caixa de entrada e também na pasta de spam
+                </p>
               </div>
             </div>
 
