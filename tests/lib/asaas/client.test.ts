@@ -227,7 +227,7 @@ describe("asaas client: createCustomer", () => {
     await expect(t.client.createCustomer(customerInput, opts())).resolves.toEqual({ id: "cus_9" })
     expect(t.calls[0].url).toBe("https://api-sandbox.asaas.com/v3/customers")
     expect(t.calls[0].method).toBe("POST")
-    expect(JSON.parse(t.calls[0].body!)).toEqual(customerInput)
+    expect(JSON.parse(t.calls[0].body!)).toEqual({ ...customerInput, notificationDisabled: true })
   })
 
   it("resposta sem id rejeita como transiente", async () => {

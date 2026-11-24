@@ -257,7 +257,11 @@ export function createAsaasClient(cfg: {
     updatePayment,
     createCustomer: (i, o) =>
       postWithRecovery(
-        async () => toCustomer(await request("/customers", { method: "POST", body: JSON.stringify(i) }, o, 1)),
+        async () => {
+          // notificationDisabled: o Asaas não manda e-mail nem SMS ao cliente; a comunicação é nossa.
+          const body = JSON.stringify({ ...i, notificationDisabled: true })
+          return toCustomer(await request("/customers", { method: "POST", body }, o, 1))
+        },
         () => findCustomerByCpf(i.cpfCnpj, o),
         o,
       ),
