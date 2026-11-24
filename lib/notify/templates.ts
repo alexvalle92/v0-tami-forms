@@ -41,8 +41,7 @@ const htmlToText = (html: string) => unescapeHtml(html.replaceAll("<br>", "\n").
 export const NUTRI_INSTAGRAM_URL = "https://www.instagram.com/p/DfRyVqQoKHV/"
 
 /** Legenda do vídeo "como funciona", enviado no WhatsApp da cobrança. */
-export const PAYMENT_VIDEO_CAPTION =
-  "Gravei este vídeo para te explicar como funciona: quando eu começo seu plano, os 30 dias de acompanhamento e como tirar suas dúvidas. 🎥"
+export const PAYMENT_VIDEO_CAPTION = "Gravei este vídeo para te explicar como funcionam os 30 dias de acompanhamento"
 
 /** Uma mensagem (balão) do WhatsApp: texto puro, ou vídeo com legenda. */
 export type WhatsAppPart = { kind: "text"; text: string } | { kind: "video"; url: string; caption: string }
@@ -57,16 +56,18 @@ export function renderPaymentLink(d: { name: string; link: string; videoOnWhatsA
   html: string
   text: string
 } {
-  const meet = d.videoOnWhatsApp
-    ? "Também te mandei um vídeo curtinho no WhatsApp explicando como funciona. Vale assistir! E se quiser me conhecer melhor, veja este post no Instagram: <br>"
-    : "Quer me conhecer melhor antes de começar? Veja este post no Instagram: <br>"
+  const video = d.videoOnWhatsApp
+    ? "Também te mandei no WhatsApp um vídeo explicando como funcionam os 30 dias de acompanhamento. Vale assistir! <br><br>"
+    : ""
   const html =
     `Oi, ${escapeHtml(d.name)}! 👋 <br>Aqui é a Nutri Tâmili Valle. Recebi suas respostas do questionário e já tenho tudo o que preciso para montar seu <strong>Plano Alimentar Personalizado</strong>. <br><br>` +
-    `Assim que o pagamento for confirmado, começo o seu plano e você recebe os dados de acesso ao aplicativo, com <strong>30 dias de acompanhamento</strong>. <br><br>` +
-    `Para concluir o pagamento, acesse o link abaixo: <br>${escapeHtml(d.link)} <br><br>` +
-    `🛡️ <strong>Garantia de 7 dias:</strong> se não gostar, é só me avisar em até 7 dias depois do pagamento que eu devolvo seu dinheiro. <br><br>` +
-    `${meet}${NUTRI_INSTAGRAM_URL} <br><br>` +
-    `Um abraço, <br>Nutri Tâmili Valle 💚`
+    `Para eu começar o seu plano, é só concluir o pagamento por aqui: <br>${escapeHtml(d.link)} <br><br>` +
+    `Assim que o pagamento for confirmado, a nutri já começará a fazer sua dieta. Em até 2 horas você recebe os dados de acesso ao aplicativo, com <strong>30 dias de acompanhamento</strong>. 💚 <br><br>` +
+    `🛡️ <strong>Garantia de 7 dias:</strong> se não gostar, é só me avisar em até 7 dias depois do pagamento e eu devolvo seu dinheiro. <br><br>` +
+    video +
+    `Aqui conto um pouco sobre mim e meu trabalho como nutricionista: <br>${NUTRI_INSTAGRAM_URL} <br>` +
+    `Aproveitando, te convido a me seguir e acompanhar no Instagram 😊 <br><br>` +
+    `Um abraço, <br>Nutri Tâmili Valle`
   return { subject: PAYMENT_LINK_TITLE, html, text: htmlToText(html) }
 }
 
@@ -88,14 +89,16 @@ export function renderPaymentLinkWhatsApp(d: { name: string; link: string; video
   parts.push(
     {
       kind: "text",
-      text: `Quer me conhecer melhor antes de começar? Neste post eu conto um pouco sobre mim e meu trabalho como nutricionista:\n${NUTRI_INSTAGRAM_URL}`,
+      text:
+        `Aqui conto um pouco sobre mim e meu trabalho como nutricionista\n\n${NUTRI_INSTAGRAM_URL}\n\n` +
+        `Aproveitando te convido a me seguir e acompanhar no Instagram 😊`,
     },
     {
       kind: "text",
       text:
         `Para eu começar o seu plano, é só concluir o pagamento por aqui:\n${d.link}\n\n` +
-        `🛡️ *Garantia de 7 dias:* se não gostar, é só me avisar aqui em até 7 dias depois do pagamento que eu devolvo seu dinheiro.\n\n` +
-        `Assim que o pagamento for confirmado, você recebe aqui mesmo os dados de acesso ao aplicativo. 💚`,
+        `Assim que o pagamento for confirmado, a nutri já começará a fazer sua dieta. Em até 2 horas você recebe aqui mesmo os dados de acesso ao aplicativo. 💚\n\n` +
+        `🛡️ *Garantia de 7 dias:* se não gostar, é só me avisar em até 7 dias depois do pagamento e eu devolvo seu dinheiro.`,
     },
   )
   return parts

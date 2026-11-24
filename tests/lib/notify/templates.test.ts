@@ -45,18 +45,21 @@ describe("renderPaymentLink", () => {
     const { html } = renderPaymentLink({ name: "Ana", link: "https://asaas/i/1" })
     expect(html).toBe(
       "Oi, Ana! 👋 <br>Aqui é a Nutri Tâmili Valle. Recebi suas respostas do questionário e já tenho tudo o que preciso para montar seu <strong>Plano Alimentar Personalizado</strong>. <br><br>" +
-        "Assim que o pagamento for confirmado, começo o seu plano e você recebe os dados de acesso ao aplicativo, com <strong>30 dias de acompanhamento</strong>. <br><br>" +
-        "Para concluir o pagamento, acesse o link abaixo: <br>https://asaas/i/1 <br><br>" +
-        "🛡️ <strong>Garantia de 7 dias:</strong> se não gostar, é só me avisar em até 7 dias depois do pagamento que eu devolvo seu dinheiro. <br><br>" +
-        "Quer me conhecer melhor antes de começar? Veja este post no Instagram: <br>https://www.instagram.com/p/DfRyVqQoKHV/ <br><br>" +
-        "Um abraço, <br>Nutri Tâmili Valle 💚",
+        "Para eu começar o seu plano, é só concluir o pagamento por aqui: <br>https://asaas/i/1 <br><br>" +
+        "Assim que o pagamento for confirmado, a nutri já começará a fazer sua dieta. Em até 2 horas você recebe os dados de acesso ao aplicativo, com <strong>30 dias de acompanhamento</strong>. 💚 <br><br>" +
+        "🛡️ <strong>Garantia de 7 dias:</strong> se não gostar, é só me avisar em até 7 dias depois do pagamento e eu devolvo seu dinheiro. <br><br>" +
+        "Aqui conto um pouco sobre mim e meu trabalho como nutricionista: <br>https://www.instagram.com/p/DfRyVqQoKHV/ <br>" +
+        "Aproveitando, te convido a me seguir e acompanhar no Instagram 😊 <br><br>" +
+        "Um abraço, <br>Nutri Tâmili Valle",
     )
   })
 
-  it("com o vídeo no WhatsApp, convida a assistir; sem ele, não fala de vídeo", () => {
+  it("com o vídeo no WhatsApp, convida a assistir antes do Instagram; sem ele, não fala de vídeo", () => {
     const withVideo = renderPaymentLink({ name: "Ana", link: "https://asaas/i/1", videoOnWhatsApp: true })
     expect(withVideo.html).toContain(
-      "Também te mandei um vídeo curtinho no WhatsApp explicando como funciona. Vale assistir! E se quiser me conhecer melhor, veja este post no Instagram: <br>" +
+      "🛡️ <strong>Garantia de 7 dias:</strong> se não gostar, é só me avisar em até 7 dias depois do pagamento e eu devolvo seu dinheiro. <br><br>" +
+        "Também te mandei no WhatsApp um vídeo explicando como funcionam os 30 dias de acompanhamento. Vale assistir! <br><br>" +
+        "Aqui conto um pouco sobre mim e meu trabalho como nutricionista: <br>" +
         NUTRI_INSTAGRAM_URL,
     )
     expect(renderPaymentLink({ name: "Ana", link: "https://asaas/i/1" }).html).not.toContain("vídeo")
@@ -79,6 +82,10 @@ describe("renderPaymentLinkWhatsApp", () => {
   const LINK = "https://asaas/i/1"
   const VIDEO = "https://forms.test/videos/como-funciona.mp4"
 
+  it("a legenda do vídeo é só a frase dos 30 dias de acompanhamento", () => {
+    expect(PAYMENT_VIDEO_CAPTION).toBe("Gravei este vídeo para te explicar como funcionam os 30 dias de acompanhamento")
+  })
+
   it("com vídeo: apresentação, vídeo, Instagram e, por último, o link com a garantia", () => {
     const parts = renderPaymentLinkWhatsApp({ name: "Ana", link: LINK, videoUrl: VIDEO })
     expect(parts).toEqual([
@@ -92,15 +99,16 @@ describe("renderPaymentLinkWhatsApp", () => {
       {
         kind: "text",
         text:
-          "Quer me conhecer melhor antes de começar? Neste post eu conto um pouco sobre mim e meu trabalho como nutricionista:\n" +
-          "https://www.instagram.com/p/DfRyVqQoKHV/",
+          "Aqui conto um pouco sobre mim e meu trabalho como nutricionista\n\n" +
+          "https://www.instagram.com/p/DfRyVqQoKHV/\n\n" +
+          "Aproveitando te convido a me seguir e acompanhar no Instagram 😊",
       },
       {
         kind: "text",
         text:
           "Para eu começar o seu plano, é só concluir o pagamento por aqui:\nhttps://asaas/i/1\n\n" +
-          "🛡️ *Garantia de 7 dias:* se não gostar, é só me avisar aqui em até 7 dias depois do pagamento que eu devolvo seu dinheiro.\n\n" +
-          "Assim que o pagamento for confirmado, você recebe aqui mesmo os dados de acesso ao aplicativo. 💚",
+          "Assim que o pagamento for confirmado, a nutri já começará a fazer sua dieta. Em até 2 horas você recebe aqui mesmo os dados de acesso ao aplicativo. 💚\n\n" +
+          "🛡️ *Garantia de 7 dias:* se não gostar, é só me avisar em até 7 dias depois do pagamento e eu devolvo seu dinheiro.",
       },
     ])
   })
