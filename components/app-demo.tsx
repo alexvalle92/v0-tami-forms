@@ -14,7 +14,7 @@ import {
   Users,
   Utensils,
 } from "lucide-react"
-import PlanaLogo from "@/src/img/plana-logo.png"
+import PlanaLogo from "@/src/img/plana-logo.webp"
 
 /*
  * Demonstração animada do app PlanA (etapa "O que você pode esperar").

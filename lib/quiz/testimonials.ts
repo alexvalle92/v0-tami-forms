@@ -18,27 +18,27 @@ export const LOADING_TESTIMONIALS: Testimonial[] = [
 ]
 
 // Etapa 18 (Conheça sua nutricionista): prints de mensagens, na ordem em que aparecem
-// (o primeiro é o que mais chama atenção). Para adicionar, coloque a imagem em
+// (o primeiro é o que mais chama atenção). Para adicionar, converta a imagem para WebP (~900 px de largura), coloque em
 // public/depoimentos/ e inclua uma linha aqui. Prints em pé (~2:3) ficam melhores.
 // Borre nome, foto e número de quem não autorizou aparecer.
 export const NUTRI_PRINTS: TestimonialPrint[] = [
   {
-    src: "/depoimentos/depoimentosWhats2.jpeg",
+    src: "/depoimentos/depoimentosWhats2.webp",
     source: "whatsapp",
     alt: "Paciente conta que nem acreditou no quanto emagreceu e que não fica mais pensando na próxima refeição: menos 2,9 kg em uma semana.",
   },
   {
-    src: "/depoimentos/depoimentosInsta1.jpeg",
+    src: "/depoimentos/depoimentosInsta1.webp",
     source: "instagram",
     alt: "Paciente manda foto na balança e diz: eu tô muito feliz, ninguém me para mais.",
   },
   {
-    src: "/depoimentos/depoimentosWhats3.jpeg",
+    src: "/depoimentos/depoimentosWhats3.webp",
     source: "whatsapp",
     alt: "Paciente mostra 60,8 kg na balança e diz que está se sentindo leve e que a autoestima está voltando.",
   },
   {
-    src: "/depoimentos/depoimentosWhats1.jpeg",
+    src: "/depoimentos/depoimentosWhats1.webp",
     source: "whatsapp",
     alt: "Paciente diz que achou que ia sentir muita fome, mas não sente, e que agora presta atenção no que come.",
   },

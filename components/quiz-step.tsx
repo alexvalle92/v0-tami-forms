@@ -1,14 +1,46 @@
 "use client"
 
-import type { ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import Image from "next/image"
 import { StaticImageData } from "next/image"
+
+const MEDIA_BOX = "relative w-full h-48 md:h-64 mb-6 rounded-xl overflow-hidden border-2 border-[#e5e5e5] shadow-sm"
+
+/** Animação no lugar de GIF: MP4 é 10 a 30x menor. O poster aparece enquanto carrega. */
+export type StepVideo = { src: string; poster: StaticImageData }
+
+function LoopVideo({ src, poster }: StepVideo) {
+  const ref = useRef<HTMLVideoElement>(null)
+  // O React nem sempre põe `muted` no elemento antes do autoplay, e sem ele o iOS não toca.
+  // Se o navegador bloquear (ex.: modo economia de energia do iPhone), fica o poster.
+  useEffect(() => {
+    const video = ref.current
+    if (!video) return
+    video.muted = true
+    video.play().catch(() => {})
+  }, [src])
+  return (
+    <video
+      ref={ref}
+      src={src}
+      poster={poster.src}
+      autoPlay
+      muted
+      loop
+      playsInline
+      preload="auto"
+      aria-hidden="true"
+      className="absolute inset-0 h-full w-full object-cover"
+    />
+  )
+}
 
 interface QuizStepProps {
   kicker?: string
   title: string
   subtitle?: ReactNode
   image?: string | StaticImageData
+  video?: StepVideo
   question?: string
   counter?: string
   children: ReactNode
@@ -23,6 +55,7 @@ export function QuizStep({
   title,
   subtitle,
   image,
+  video,
   question,
   counter,
   children,
@@ -40,8 +73,14 @@ export function QuizStep({
       {subtitle && <p className="text-[#555] text-base md:text-lg mb-5 leading-relaxed">{subtitle}</p>}
 
       {image && (
-        <div className="relative w-full h-48 md:h-64 mb-6 rounded-xl overflow-hidden border-2 border-[#e5e5e5] shadow-sm">
+        <div className={MEDIA_BOX}>
           <Image src={image || "/placeholder.svg"} alt="Quiz image" fill className="object-cover" />
+        </div>
+      )}
+
+      {video && (
+        <div className={MEDIA_BOX}>
+          <LoopVideo {...video} />
         </div>
       )}
 

@@ -53,32 +53,35 @@ import { BeforeAfterCarousel, type BeforeAfterResult } from "@/components/before
 import { TestimonialPrints } from "@/components/testimonial-prints"
 import { NUTRI_PRINTS } from "@/lib/quiz/testimonials"
 import type { PriceOffer } from "@/lib/price-display"
-import CorpoMagra from "@/src/img/magra.jpg"
-import CorpoFalsaMagra from "@/src/img/falsaMagra.jpg"
-import CorpoGordinha from "@/src/img/gordinha.jpg"
-import CorpoMuitoGordinha from "@/src/img/muitoGordinha.jpg"
-import PesoMedida from "@/src/img/PesoMedida.png"
-import Almoco from "@/src/img/almoco.png"
-import CafeManha from "@/src/img/cafeManha.png"
-import CafeTarde from "@/src/img/cafeTarde.png"
-import Sobremesa from "@/src/img/sobremesa.png"
-import PessoaComendo from "@/src/img/pessoaComendo.png"
-import ContarCarneirinhos from "@/src/img/contarCarneirinho.gif"
+// Imagens em WebP no tamanho em que aparecem na tela. GIF longo vira MP4 em public/videos/ (prop `video` do QuizStep);
+// GIF curto (água, fogo) virou WebP animado.
+// Imagem nova: converta para WebP antes de importar; PNG/GIF de foto pesa 10x mais.
+import CorpoMagra from "@/src/img/magra.webp"
+import CorpoFalsaMagra from "@/src/img/falsaMagra.webp"
+import CorpoGordinha from "@/src/img/gordinha.webp"
+import CorpoMuitoGordinha from "@/src/img/muitoGordinha.webp"
+import PesoMedida from "@/src/img/PesoMedida.webp"
+import Almoco from "@/src/img/almoco.webp"
+import CafeManha from "@/src/img/cafeManha.webp"
+import CafeTarde from "@/src/img/cafeTarde.webp"
+import Sobremesa from "@/src/img/sobremesa.webp"
+import PessoaComendo from "@/src/img/pessoaComendo.webp"
+import CarneirinhoPoster from "@/src/img/contarCarneirinho-poster.webp"
 import Masculino from "@/src/img/masculino.png"
 import Feminino from "@/src/img/feminino.png"
 import { AppDemoShowcase } from "@/components/app-demo"
-import Janta from "@/src/img/jantar.png"
-import Fogo from "@/src/img/fogo.gif"
-import Nutri from "@/src/img/nutri-2.png"
-import Agua from "@/src/img/agua.gif"
-import Resultado1Antes from "@/src/img/resultado-1-antes.jpg"
-import Resultado1Depois from "@/src/img/resultado-1-depois.jpg"
-import Resultado2Antes from "@/src/img/resultado-2-antes.jpg"
-import Resultado2Depois from "@/src/img/resultado-2-depois.jpg"
-import Resultado3Antes from "@/src/img/resultado-3-antes.jpg"
-import Resultado3Depois from "@/src/img/resultado-3-depois.jpg"
+import Janta from "@/src/img/jantar.webp"
+import Fogo from "@/src/img/fogo.webp"
+import Nutri from "@/src/img/nutri-2.webp"
+import Agua from "@/src/img/agua.webp"
+import Resultado1Antes from "@/src/img/resultado-1-antes.webp"
+import Resultado1Depois from "@/src/img/resultado-1-depois.webp"
+import Resultado2Antes from "@/src/img/resultado-2-antes.webp"
+import Resultado2Depois from "@/src/img/resultado-2-depois.webp"
+import Resultado3Antes from "@/src/img/resultado-3-antes.webp"
+import Resultado3Depois from "@/src/img/resultado-3-depois.webp"
 
-// Etapa 16: fotos de antes e depois (src/img/resultado-N-antes|depois.jpg, 900x1200, 3:4), sem legenda.
+// Etapa 16: fotos de antes e depois (src/img/resultado-N-antes|depois.webp, 600x800, 3:4), sem legenda.
 const BEFORE_AFTER_RESULTS: BeforeAfterResult[] = [
   { before: Resultado1Antes, after: Resultado1Depois },
   { before: Resultado2Antes, after: Resultado2Depois },
@@ -868,7 +871,7 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
           {currentStep === 13 && (
             <QuizStep
               title="Quantas horas você costuma dormir por noite?"
-              image={ContarCarneirinhos}
+              video={{ src: "/videos/contar-carneirinho.mp4", poster: CarneirinhoPoster }}
               onNext={handleNext}
               onPrev={prevStep}
               canGoBack={currentStep > 0}
