@@ -130,6 +130,8 @@ function buildContainer(): Container {
     sleep,
     access: { tempPassword, verifyPassword },
     appUrl: env.PLANA_APP_URL,
+    // Sem WhatsApp ligado o vídeo não sai, e o e-mail não pode dizer que ele foi enviado.
+    paymentVideoUrl: env.NOTIFY_WHATSAPP_ENABLED ? env.PAYMENT_VIDEO_URL : undefined,
   })
   const submitQuiz = createSubmitQuiz({
     submissions,

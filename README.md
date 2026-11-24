@@ -67,6 +67,7 @@ Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e l
 | `PAYMENT_DISPLAY_DISCOUNT_PERCENT` | não | Só exibição: o selo "Desconto de xx%" no card de preço, inteiro de 1 a 99 (sem `%`). Não muda a cobrança. Ausente ou inválido: o selo some |
 | `PAYMENT_DUE_DAYS` | não | Dias até o vencimento. Padrão `2` |
 | `PAYMENT_SUCCESS_URL` | sim | Endereço para onde o Asaas leva a pessoa após pagar (URL completa) |
+| `PAYMENT_VIDEO_URL` | não | URL pública do vídeo "como funciona" (MP4) enviado no WhatsApp do link de pagamento do 1º quiz. O arquivo está em `public/videos/como-funciona.mp4`, então o endereço é `https://<domínio do quiz>/videos/como-funciona.mp4`. Em branco: o WhatsApp sai sem o vídeo e o e-mail não fala dele. Se o envio do vídeo falhar, ele é pulado (log `notification.dispatch.video_skipped`) e o resto da mensagem sai normalmente |
 | `SMTP_HOST` | sim | Servidor de e-mail |
 | `SMTP_PORT` | sim | Porta do servidor de e-mail (ex.: `587`) |
 | `SMTP_USER` | sim | Usuário do e-mail |
@@ -692,7 +693,7 @@ Faça num deploy de teste no Easypanel, com `ASAAS_ENV=sandbox` e a chave do san
 - [ ] **Estorno:** estorne a cobrança de teste no sandbox. O status da cobrança muda, o e-mail `[tami-forms] Pagamento revertido` chega em `ADMIN_ALERT_EMAIL`, e o plano e a senha continuam como estavam.
 - [ ] **Falha da IA e retry:** com uma `ANTHROPIC_API_KEY` inválida, pague outra cobrança de teste. A chave recusada (401) é falha definitiva na hora: `plan_generations` fica `failed`, o alerta chega (`kind = meal_plan`) e nenhuma mensagem de acesso é enviada. Corrija a chave, reinicie o app e reabra com `/api/jobs/retry` (`planGenerationId`). O plano é gerado e as mensagens saem.
 - [ ] **Plano com a nutricionista:** mostre o plano gerado para a nutricionista e confira a meta de calorias, a faixa de proteína e as linhas de alimentos (cada linha com quantidade). Ela também deve confirmar a fórmula e os pisos (seção 10).
-- [ ] **Evolution API:** confirme que o formato usado funciona na sua instância. O app faz `POST /message/sendText/{instância}` com o corpo `{ number, text }`, que é o formato da v2. Se a sua versão for outra, o WhatsApp falhará nesse teste.
+- [ ] **Evolution API:** confirme que o formato usado funciona na sua instância. O app faz `POST /message/sendText/{instância}` com o corpo `{ number, text }` e, para o vídeo da cobrança, `POST /message/sendMedia/{instância}` com `{ number, mediatype: "video", mimetype, caption, media: <URL>, fileName }`, que são os formatos da v2. Se a sua versão for outra, o WhatsApp falhará nesse teste. Confira também que o vídeo chega: a Evolution precisa conseguir baixar `PAYMENT_VIDEO_URL`.
 - [ ] Só então suba o deploy de produção com `ASAAS_ENV=production`, a chave **nova** de produção e um **banco novo e vazio** (nunca o banco usado no sandbox). Se precisar reaproveitar o banco do teste, apague antes o conteúdo das tabelas `asaas_webhook_events`, `notifications`, `plan_generations`, `meal_plans`, `quiz_responses`, `payments`, `allowed_meal_items`, `meal_categories`, `recipes`, `app_settings`, `password_reset_tokens`, `admins` e `patients`, nessa ordem.
 
 ## 10. Notas

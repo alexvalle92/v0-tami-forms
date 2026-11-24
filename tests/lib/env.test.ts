@@ -68,6 +68,14 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...valid, ANTHROPIC_API_KEY: undefined })).toThrow("ANTHROPIC_API_KEY")
   })
 
+  it("PAYMENT_VIDEO_URL: opcional, em branco vale como ausente e, se vier, precisa ser URL", () => {
+    expect(parseEnv(valid).PAYMENT_VIDEO_URL).toBeUndefined()
+    expect(parseEnv({ ...valid, PAYMENT_VIDEO_URL: "  " }).PAYMENT_VIDEO_URL).toBeUndefined()
+    const url = "https://forms.nutritamilivalle.com.br/videos/como-funciona.mp4"
+    expect(parseEnv({ ...valid, PAYMENT_VIDEO_URL: url }).PAYMENT_VIDEO_URL).toBe(url)
+    expect(() => parseEnv({ ...valid, PAYMENT_VIDEO_URL: "nao-e-url" })).toThrow("PAYMENT_VIDEO_URL")
+  })
+
   it("PLANA_APP_URL precisa ser URL", () => {
     expect(() => parseEnv({ ...valid, PLANA_APP_URL: "nao-e-url" })).toThrow("PLANA_APP_URL")
   })

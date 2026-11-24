@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest"
 import {
   FIRST_ACCESS_TITLE,
+  NUTRI_INSTAGRAM_URL,
   PASSWORD_RESET_TITLE,
+  PAYMENT_VIDEO_CAPTION,
   PAYMENT_DISCOUNT_TITLE,
   PAYMENT_LINK_TITLE,
   PLAN_EXPIRING_TITLES,
@@ -12,6 +14,7 @@ import {
   renderPasswordReset,
   renderPaymentDiscount,
   renderPaymentLink,
+  renderPaymentLinkWhatsApp,
   renderPlanExpiring,
   renderPlanReady,
   renderRenewalPaymentLink,
@@ -25,41 +28,94 @@ const TEMP_PASSWORD = "SWSC8VWD8T"
 describe("renderPaymentLink", () => {
   it("escapa o nome no html, mantém o link literal e o texto mostra o nome real", () => {
     const r = renderPaymentLink({ name: "Ana <b>", link: "https://asaas/i/1" })
-    expect(r.html).toContain("Olá Ana &lt;b&gt;!")
+    expect(r.html).toContain("Oi, Ana &lt;b&gt;!")
     expect(r.html).toContain("https://asaas/i/1")
     expect(r.subject).toBe(PAYMENT_LINK_TITLE)
     expect(r.text).not.toMatch(/<\/?(br|strong)>/)
-    expect(r.text).toContain("Olá Ana <b>!")
+    expect(r.text).toContain("Oi, Ana <b>!")
   })
 
-  it("gera o html exatamente como no fluxo antigo", () => {
+  it("o assunto não promete plano pronto: ele só é montado depois do pagamento", () => {
+    expect(PAYMENT_LINK_TITLE).toBe("✅ Recebi suas respostas! Falta só um passo para o seu plano")
+    const r = renderPaymentLink({ name: "Ana", link: "https://asaas/i/1" })
+    expect(r.html).not.toMatch(/já está pronto/)
+  })
+
+  it("html exato, sem o vídeo: garantia de 7 dias e Instagram", () => {
     const { html } = renderPaymentLink({ name: "Ana", link: "https://asaas/i/1" })
     expect(html).toBe(
-      "Olá Ana! 👋 <br>Recebemos seu cadastro com sucesso! 🎉 Seu <strong>Plano Alimentar Personalizado já está pronto</strong> e aguardando apenas a confirmação do pagamento. <br><br>Para liberar seu acesso, basta efetuar o pagamento pelo link abaixo: <br>\n" +
-        "https://asaas/i/1 <br><br>\n" +
-        "Assim que o pagamento for confirmado, você receberá as informações de acesso para fazer login e visualizar seu Plano Alimentar Personalizado. 💚",
+      "Oi, Ana! 👋 <br>Aqui é a Nutri Tâmili Valle. Recebi suas respostas do questionário e já tenho tudo o que preciso para montar seu <strong>Plano Alimentar Personalizado</strong>. <br><br>" +
+        "Assim que o pagamento for confirmado, começo o seu plano e você recebe os dados de acesso ao aplicativo, com <strong>30 dias de acompanhamento</strong>. <br><br>" +
+        "Para concluir o pagamento, acesse o link abaixo: <br>https://asaas/i/1 <br><br>" +
+        "🛡️ <strong>Garantia de 7 dias:</strong> se não gostar, é só me avisar em até 7 dias depois do pagamento que eu devolvo seu dinheiro. <br><br>" +
+        "Quer me conhecer melhor antes de começar? Veja este post no Instagram: <br>https://www.instagram.com/p/DfRyVqQoKHV/ <br><br>" +
+        "Um abraço, <br>Nutri Tâmili Valle 💚",
     )
   })
 
-  it.each(["D'Ávila", "Maria & João", 'Ana "Nana" Souza'])(
-    "não deixa entidades HTML no texto nem no WhatsApp para %s",
-    (name) => {
-      const r = renderPaymentLink({ name, link: "https://asaas/i/1" })
-      const parts = toWhatsAppParts(PAYMENT_LINK_TITLE, r.html)
-      expect(r.text).toContain(`Olá ${name}!`)
-      expect(parts[0]).toContain(`Olá ${name}!`)
-      for (const channel of [r.text, ...parts]) {
-        for (const e of ENTITIES) expect(channel).not.toContain(e)
-      }
-    },
-  )
+  it("com o vídeo no WhatsApp, convida a assistir; sem ele, não fala de vídeo", () => {
+    const withVideo = renderPaymentLink({ name: "Ana", link: "https://asaas/i/1", videoOnWhatsApp: true })
+    expect(withVideo.html).toContain(
+      "Também te mandei um vídeo curtinho no WhatsApp explicando como funciona. Vale assistir! E se quiser me conhecer melhor, veja este post no Instagram: <br>" +
+        NUTRI_INSTAGRAM_URL,
+    )
+    expect(renderPaymentLink({ name: "Ana", link: "https://asaas/i/1" }).html).not.toContain("vídeo")
+  })
 
-  it("um nome com o texto literal &lt; volta como &lt; nos canais de texto", () => {
+  it.each(["D'Ávila", "Maria & João", 'Ana "Nana" Souza'])("não deixa entidades HTML no texto para %s", (name) => {
+    const r = renderPaymentLink({ name, link: "https://asaas/i/1" })
+    expect(r.text).toContain(`Oi, ${name}!`)
+    for (const e of ENTITIES) expect(r.text).not.toContain(e)
+  })
+
+  it("um nome com o texto literal &lt; volta como &lt; no texto", () => {
     const r = renderPaymentLink({ name: "A &lt; B", link: "https://asaas/i/1" })
-    const parts = toWhatsAppParts(PAYMENT_LINK_TITLE, r.html)
-    expect(r.html).toContain("Olá A &amp;lt; B!")
-    expect(r.text).toContain("Olá A &lt; B!")
-    expect(parts[0]).toContain("Olá A &lt; B!")
+    expect(r.html).toContain("Oi, A &amp;lt; B!")
+    expect(r.text).toContain("Oi, A &lt; B!")
+  })
+})
+
+describe("renderPaymentLinkWhatsApp", () => {
+  const LINK = "https://asaas/i/1"
+  const VIDEO = "https://forms.test/videos/como-funciona.mp4"
+
+  it("com vídeo: apresentação, vídeo, Instagram e, por último, o link com a garantia", () => {
+    const parts = renderPaymentLinkWhatsApp({ name: "Ana", link: LINK, videoUrl: VIDEO })
+    expect(parts).toEqual([
+      {
+        kind: "text",
+        text:
+          "*Recebi suas respostas! Falta só um passo para o seu plano*\n" +
+          "Oi, Ana! 👋 Aqui é a Nutri Tâmili Valle. Recebi suas respostas do questionário e já tenho tudo o que preciso para montar seu *Plano Alimentar Personalizado*.",
+      },
+      { kind: "video", url: VIDEO, caption: PAYMENT_VIDEO_CAPTION },
+      {
+        kind: "text",
+        text:
+          "Quer me conhecer melhor antes de começar? Neste post eu conto um pouco sobre mim e meu trabalho como nutricionista:\n" +
+          "https://www.instagram.com/p/DfRyVqQoKHV/",
+      },
+      {
+        kind: "text",
+        text:
+          "Para eu começar o seu plano, é só concluir o pagamento por aqui:\nhttps://asaas/i/1\n\n" +
+          "🛡️ *Garantia de 7 dias:* se não gostar, é só me avisar aqui em até 7 dias depois do pagamento que eu devolvo seu dinheiro.\n\n" +
+          "Assim que o pagamento for confirmado, você recebe aqui mesmo os dados de acesso ao aplicativo. 💚",
+      },
+    ])
+  })
+
+  it("sem vídeo: os mesmos balões de texto, sem o do vídeo", () => {
+    const parts = renderPaymentLinkWhatsApp({ name: "Ana", link: LINK })
+    expect(parts.map((p) => p.kind)).toEqual(["text", "text", "text"])
+    expect(parts).toEqual(
+      renderPaymentLinkWhatsApp({ name: "Ana", link: LINK, videoUrl: VIDEO }).filter((p) => p.kind === "text"),
+    )
+  })
+
+  it.each(["D'Ávila", "Maria & João", "A &lt; B"])("o nome sai literal, sem entidades HTML, para %s", (name) => {
+    const [first] = renderPaymentLinkWhatsApp({ name, link: LINK })
+    expect(first.kind === "text" && first.text).toContain(`Oi, ${name}!`)
   })
 })
 
@@ -147,14 +203,11 @@ describe("renderPlanReady", () => {
 
 describe("toWhatsAppParts", () => {
   it("divide o html em 3 partes no formato do WhatsApp", () => {
-    const { html } = renderPaymentLink({ name: "Ana", link: "https://asaas/i/1" })
-    const parts = toWhatsAppParts(PAYMENT_LINK_TITLE, html)
+    const html =
+      "Olá Ana! 👋 <br>Seu <strong>Plano Alimentar</strong> &amp; mais. <br><br>Link: <br>https://asaas/i/1 <br><br>Até logo. 💚"
+    const parts = toWhatsAppParts("Título", html)
 
-    expect(parts).toHaveLength(3)
-    expect(parts[0].startsWith("*✅ Recebemos seu cadastro! Seu plano alimentar está pronto*\nOlá Ana! 👋")).toBe(true)
-    expect(parts[0]).toContain("*Plano Alimentar Personalizado já está pronto*")
-    expect(parts[1]).toContain("https://asaas/i/1")
-    expect(parts[2].endsWith("💚")).toBe(true)
+    expect(parts).toEqual(["*Título*\nOlá Ana! 👋 \nSeu *Plano Alimentar* & mais.", "Link: \nhttps://asaas/i/1", "Até logo. 💚"])
     for (const p of parts) expect(p).not.toContain("<")
   })
 })
@@ -369,9 +422,10 @@ describe("renderPaymentDiscount", () => {
     expect(r.subject).toBe("🎁 Condição especial: seu plano de R$ 39,90 por R$ 29,90")
     expect(PAYMENT_DISCOUNT_TITLE("R$ 39,90", "R$ 29,90")).toBe(r.subject)
     expect(r.html).toBe(
-      "Olá Maria! 👋 <br>Seu <strong>Plano Alimentar Personalizado</strong> já está pronto e só falta o pagamento para liberar. <br><br>" +
+      "Olá Maria! 👋 <br>Seu <strong>Plano Alimentar Personalizado</strong> está a um passo: só falta o pagamento para eu começar a montar. <br><br>" +
         "Preparamos uma <strong>condição especial</strong> para você começar agora: o valor baixou de <strong>R$ 39,90 para R$ 29,90</strong>. <br><br>" +
         "Essa condição vale até <strong>05/11/2026</strong>. O link de pagamento é o mesmo de antes: <br>https://asaas.test/i/1 <br><br>" +
+        "🛡️ <strong>E continua com garantia de 7 dias:</strong> se não gostar, eu devolvo seu dinheiro. <br><br>" +
         "Assim que o pagamento for confirmado, você recebe os dados de acesso ao seu plano. 💚",
     )
     expect(r.text).not.toMatch(/<\/?(br|strong)>/)
@@ -393,10 +447,15 @@ describe("renderPaymentDiscount", () => {
     expect(r.text).toContain("Olá <b>Maria</b>!")
   })
 
-  it("toWhatsAppParts gera 4 partes, a primeira com o título em negrito", () => {
+  it("renovação também leva a garantia de 7 dias", () => {
+    expect(renderPaymentDiscount({ ...base, returning: true }).html).toContain("garantia de 7 dias")
+  })
+
+  it("toWhatsAppParts gera 5 partes, a primeira com o título em negrito", () => {
     const r = renderPaymentDiscount(base)
     const parts = toWhatsAppParts(r.subject, r.html)
-    expect(parts).toHaveLength(4)
+    expect(parts).toHaveLength(5)
+    expect(parts[3]).toBe("🛡️ *E continua com garantia de 7 dias:* se não gostar, eu devolvo seu dinheiro.")
     expect(parts[0].startsWith(`*${r.subject}*\n`)).toBe(true)
     expect(parts[2]).toContain("https://asaas.test/i/1")
     for (const p of parts) expect(p).not.toMatch(/<\/?(br|strong)>|&lt;|&gt;/)

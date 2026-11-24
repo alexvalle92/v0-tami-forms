@@ -42,6 +42,31 @@ describe("createEvolutionWhatsAppSender", () => {
     expect(JSON.parse(calls[0].body as string)).toEqual({ number: "5544991651250", text: "oi" })
   })
 
+  it("sendVideo: POST em sendMedia com o vídeo por URL e a legenda (formato v2)", async () => {
+    const { sender, calls } = setup([new Response("{}", { status: 201 })])
+    await sender.sendVideo("5544991651250", "https://forms.test/videos/como-funciona.mp4", "legenda")
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe("https://evo.example/message/sendMedia/Suporte%20Nutri%20Tamili%20Valle")
+    expect(calls[0].method).toBe("POST")
+    expect(calls[0].headers.apikey).toBe("segredo-123")
+    expect(calls[0].redirect).toBe("error")
+    expect(JSON.parse(calls[0].body as string)).toEqual({
+      number: "5544991651250",
+      mediatype: "video",
+      mimetype: "video/mp4",
+      caption: "legenda",
+      media: "https://forms.test/videos/como-funciona.mp4",
+      fileName: "video.mp4",
+    })
+  })
+
+  it("sendVideo rejeita com HttpError em 400", async () => {
+    const { sender } = setup([new Response("bad", { status: 400 })])
+    const err = await sender.sendVideo("5544991651250", "https://x.test/v.mp4", "l").catch((e) => e)
+    expect(err).toBeInstanceOf(HttpError)
+  })
+
   it("rejeita com HttpError não transiente em 400", async () => {
     const { sender, calls } = setup([new Response("bad", { status: 400 })])
     const err = await sender.sendText("5544991651250", "oi").catch((e) => e)

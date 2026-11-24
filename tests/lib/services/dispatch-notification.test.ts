@@ -16,6 +16,7 @@ import {
   renderPasswordReset,
   renderPaymentDiscount,
   renderPaymentLink,
+  renderPaymentLinkWhatsApp,
   renderPlanExpiring,
   renderPlanReady,
   renderRenewalPaymentLink,
@@ -36,7 +37,9 @@ const ACCESS_SECRET = "segredo-de-teste-com-mais-de-32-caracteres"
 const tempPasswordOf = (patientId: string) => deriveTempPassword(ACCESS_SECRET, patientId)
 
 const seedError: LastError = { step: "seed", message: "seed", attempt: 1, at: NOW.toISOString() }
-const PARTS = toWhatsAppParts(PAYMENT_LINK_TITLE, renderPaymentLink({ name: NAME, link: PAY_URL }).html)
+const VIDEO_URL = "https://forms.test/videos/como-funciona.mp4"
+/** Balões do link de pagamento do 1º quiz sem vídeo (o setup padrão não configura `paymentVideoUrl`). */
+const PARTS = renderPaymentLinkWhatsApp({ name: NAME, link: PAY_URL }).map((p) => (p.kind === "text" ? p.text : ""))
 
 type Setup = Awaited<ReturnType<typeof setup>>
 
@@ -45,6 +48,7 @@ async function setup(
     synced?: boolean
     wrap?: (repos: ReturnType<typeof createMemoryRepos>) => NotificationRepo
     tempPassword?: (patientId: string) => string
+    paymentVideoUrl?: string
   } = {},
 ) {
   const repos = createMemoryRepos()
@@ -75,7 +79,10 @@ async function setup(
   >
 
   const email = { send: vi.fn(async (_m: Parameters<EmailSender["send"]>[0]) => {}) }
-  const whatsapp = { sendText: vi.fn(async (_n: string, _t: string) => {}) }
+  const whatsapp = {
+    sendText: vi.fn(async (_n: string, _t: string) => {}),
+    sendVideo: vi.fn(async (_n: string, _u: string, _c: string) => {}),
+  }
   const alertAdmin = vi.fn(async (_a: unknown) => {})
   const log: Logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const sleeps: number[] = []
@@ -91,6 +98,7 @@ async function setup(
     },
     access: { tempPassword: opts.tempPassword ?? tempPasswordOf, verifyPassword },
     appUrl: APP_URL,
+    paymentVideoUrl: opts.paymentVideoUrl,
   })
   return { repos, ids, paymentId: created.paymentId, email, whatsapp, alertAdmin, log, sleeps, dispatch }
 }
@@ -941,7 +949,7 @@ describe("createDispatchNotification", () => {
       expect(s.whatsapp.sendText.mock.calls).toEqual(parts.map((p) => [RECIPIENT_WA, p]))
     })
 
-    it("para paciente sem senha mantém o texto atual", async () => {
+    it("para paciente sem senha usa o texto do 1º quiz", async () => {
       const s = await setup()
 
       expect(await s.dispatch(s.ids.email)).toBe("sent")
@@ -949,6 +957,82 @@ describe("createDispatchNotification", () => {
       const sent = s.email.send.mock.calls[0][0]
       expect(sent.subject).toBe(PAYMENT_LINK_TITLE)
       expect(sent.html).toBe(renderPaymentLink({ name: NAME, link: PAY_URL }).html)
+    })
+
+    it("paciente com senha não recebe o vídeo, mesmo configurado", async () => {
+      const s = await setup({ wrap: withPassword, paymentVideoUrl: VIDEO_URL })
+
+      expect(await s.dispatch(s.ids.whatsapp)).toBe("sent")
+
+      expect(s.whatsapp.sendVideo).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("payment_link com o vídeo \"como funciona\"", () => {
+    const VIDEO_PARTS = renderPaymentLinkWhatsApp({ name: NAME, link: PAY_URL, videoUrl: VIDEO_URL })
+
+    it("WhatsApp: apresentação, vídeo, Instagram e link, com 3 s entre eles", async () => {
+      const s = await setup({ paymentVideoUrl: VIDEO_URL })
+      const order: string[] = []
+      s.whatsapp.sendText.mockImplementation(async () => {
+        order.push("text")
+      })
+      s.whatsapp.sendVideo.mockImplementation(async () => {
+        order.push("video")
+      })
+
+      expect(await s.dispatch(s.ids.whatsapp)).toBe("sent")
+
+      expect(order).toEqual(["text", "video", "text", "text"])
+      expect(s.whatsapp.sendVideo.mock.calls).toEqual([[RECIPIENT_WA, VIDEO_URL, VIDEO_PARTS[1].kind === "video" ? VIDEO_PARTS[1].caption : ""]])
+      expect(s.whatsapp.sendText.mock.calls).toEqual(
+        VIDEO_PARTS.flatMap((p) => (p.kind === "text" ? [[RECIPIENT_WA, p.text]] : [])),
+      )
+      expect(s.sleeps).toEqual([3000, 3000, 3000])
+      expect(row(s, "whatsapp")).toMatchObject({ status: "sent", partsSent: 4 })
+    })
+
+    it("e-mail convida a ver o vídeo do WhatsApp", async () => {
+      const s = await setup({ paymentVideoUrl: VIDEO_URL })
+
+      expect(await s.dispatch(s.ids.email)).toBe("sent")
+
+      const sent = s.email.send.mock.calls[0][0]
+      expect(sent.html).toBe(renderPaymentLink({ name: NAME, link: PAY_URL, videoOnWhatsApp: true }).html)
+    })
+
+    it("vídeo que falha é pulado: o resto sai, sem nova tentativa nem alerta, e o log não leva URL nem destinatário", async () => {
+      const s = await setup({ paymentVideoUrl: VIDEO_URL })
+      s.whatsapp.sendVideo.mockImplementation(async () => {
+        throw new HttpError("evolution 400", { transient: false, status: 400, body: "SEGREDO-CORPO" })
+      })
+
+      expect(await s.dispatch(s.ids.whatsapp)).toBe("sent")
+
+      expect(s.whatsapp.sendText).toHaveBeenCalledTimes(3)
+      expect(s.whatsapp.sendText.mock.calls.at(-1)![1]).toContain(PAY_URL)
+      expect(row(s, "whatsapp")).toMatchObject({ status: "sent", partsSent: 4, attempts: 0 })
+      expect(s.alertAdmin).not.toHaveBeenCalled()
+      expect(s.log.warn).toHaveBeenCalledWith(
+        "notification.dispatch.video_skipped",
+        expect.objectContaining({ notificationId: s.ids.whatsapp, part: 2, httpStatus: 400 }),
+      )
+      const logged = loggedText(s.log)
+      expect(logged).not.toContain("SEGREDO-CORPO")
+      expect(logged).not.toContain(VIDEO_URL)
+      expect(logged).not.toContain(PHONE)
+    })
+
+    it("retomada depois do vídeo: não reenvia a apresentação nem o vídeo", async () => {
+      const s = await setup({ paymentVideoUrl: VIDEO_URL })
+      await s.repos.notifications.markPartSent(s.ids.whatsapp, 2)
+
+      expect(await s.dispatch(s.ids.whatsapp)).toBe("sent")
+
+      expect(s.whatsapp.sendVideo).not.toHaveBeenCalled()
+      expect(s.whatsapp.sendText.mock.calls.map((c) => c[1])).toEqual(
+        VIDEO_PARTS.slice(2).map((p) => (p.kind === "text" ? p.text : "")),
+      )
     })
   })
 

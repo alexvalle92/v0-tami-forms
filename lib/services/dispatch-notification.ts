@@ -8,10 +8,12 @@ import {
   renderPasswordReset,
   renderPaymentDiscount,
   renderPaymentLink,
+  renderPaymentLinkWhatsApp,
   renderPlanExpiring,
   renderPlanReady,
   renderRenewalPaymentLink,
   toWhatsAppParts,
+  type WhatsAppPart,
 } from "@/lib/notify/templates"
 import { daysLeft, renewalState, type ExpiryStage } from "@/lib/renewal/rules"
 import type { WhatsAppSender } from "@/lib/notify/whatsapp"
@@ -58,6 +60,11 @@ export function createDispatchNotification(d: {
   }
   /** Endereço do PlanA, o `PLANA_APP_URL`. */
   appUrl: string
+  /**
+   * URL pública do vídeo "como funciona" (`PAYMENT_VIDEO_URL`), enviado no WhatsApp do link de pagamento do 1º quiz.
+   * Ausente: o WhatsApp sai sem vídeo e o e-mail não fala dele.
+   */
+  paymentVideoUrl?: string
 }): DispatchNotification {
   async function recordFailure(
     n: NotificationView,
@@ -121,12 +128,18 @@ export function createDispatchNotification(d: {
    * formato, que `verifyPassword` recusa) → plano novo disponível. Sem credencial é erro (vira nova tentativa).
    * A senha temporária só existe nesta função e no corpo da mensagem: nunca em log nem em erro.
    */
-  async function renderMessage(n: NotificationView): Promise<{ subject: string; html: string; text: string }> {
+  async function renderMessage(
+    n: NotificationView,
+  ): Promise<{ subject: string; html: string; text: string; whatsapp?: WhatsAppPart[] }> {
     if (n.kind === "payment_link") {
       if (!n.paymentUrl) throw new Error("payment without url")
       // Quem já tem senha é paciente que renova (ou que refez o quiz): o texto do cadastro novo não serve.
       if (n.patientPasswordHash) return renderRenewalPaymentLink({ name: n.patientName, link: n.paymentUrl })
-      return renderPaymentLink({ name: n.patientName, link: n.paymentUrl })
+      // 1º quiz: o WhatsApp tem balões próprios (com o vídeo), diferentes do texto do e-mail.
+      return {
+        ...renderPaymentLink({ name: n.patientName, link: n.paymentUrl, videoOnWhatsApp: Boolean(d.paymentVideoUrl) }),
+        whatsapp: renderPaymentLinkWhatsApp({ name: n.patientName, link: n.paymentUrl, videoUrl: d.paymentVideoUrl }),
+      }
     }
 
     // Condição especial: os valores e a data vêm da cobrança; sem eles (ou sem o link) não há o que enviar.
@@ -267,12 +280,29 @@ export function createDispatchNotification(d: {
             text: message.text,
           })
         } else {
-          const parts = toWhatsAppParts(message.subject, message.html)
+          const parts: WhatsAppPart[] =
+            message.whatsapp ?? toWhatsAppParts(message.subject, message.html).map((text) => ({ kind: "text", text }))
           const start = n.partsSent
           for (let i = start; i < parts.length; i++) {
             if (i > start) await d.sleep(WHATSAPP_PART_GAP_MS)
             step = "notify.whatsapp"
-            await d.whatsapp.sendText(n.recipient, parts[i])
+            const part = parts[i]
+            if (part.kind === "text") {
+              await d.whatsapp.sendText(n.recipient, part.text)
+            } else {
+              // O vídeo é um extra: se falhar (URL fora do ar, arquivo recusado), segue sem ele para que o link de
+              // pagamento, que vem depois, não fique preso em novas tentativas.
+              try {
+                await d.whatsapp.sendVideo(n.recipient, part.url, part.caption)
+              } catch (err) {
+                d.log.warn("notification.dispatch.video_skipped", {
+                  notificationId: n.id,
+                  part: i + 1,
+                  httpStatus: err instanceof HttpError ? err.status : undefined,
+                  message: safeErrorMessage(err),
+                })
+              }
+            }
             // Se a gravação falhar depois que a parte saiu, a nova tentativa a reenvia (parte duplicada):
             // aceito, é o custo de não perder nenhuma parte sem transação com o provedor.
             step = "db.mark_part_sent"

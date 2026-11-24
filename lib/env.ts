@@ -32,6 +32,8 @@ const envSchema = z.object({
     .default("39.90"),
   PAYMENT_DUE_DAYS: z.coerce.number().int().positive().default(2),
   PAYMENT_SUCCESS_URL: z.string().url(),
+  // Vídeo "como funciona" no WhatsApp da cobrança; em branco ou ausente, a mensagem sai sem o vídeo.
+  PAYMENT_VIDEO_URL: z.preprocess(blankAsMissing, z.string().url().optional()),
   SMTP_HOST: required,
   SMTP_PORT: z.coerce.number().int().positive(),
   SMTP_USER: required,

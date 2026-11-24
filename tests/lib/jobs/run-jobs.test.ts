@@ -99,7 +99,10 @@ async function setup(patientCount = 1, o: Overrides = {}) {
   const asaas = createFakeAsaas()
   const log: Logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   const email = { send: vi.fn(async (_m: unknown) => {}) }
-  const whatsapp = { sendText: vi.fn(async (_n: string, _t: string) => {}) }
+  const whatsapp = {
+    sendText: vi.fn(async (_n: string, _t: string) => {}),
+    sendVideo: vi.fn(async (_n: string, _u: string, _c: string) => {}),
+  }
   const now = o.now ?? (() => new Date())
   const paymentIds: string[] = []
   for (let i = 0; i < patientCount; i++) {
