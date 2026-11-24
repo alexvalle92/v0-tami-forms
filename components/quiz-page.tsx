@@ -1094,8 +1094,8 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
 
                 <div className="bg-[#4f6e2c]/10 rounded-xl p-4 text-center">
                   <p className="text-sm text-gray-700">
-                    Seu plano alimentar será desenvolvido especialmente para você, considerando suas necessidades e
-                    objetivos únicos.
+                    Sou eu que leio suas respostas e monto seu plano. Nada de cardápio pronto: cada refeição é pensada
+                    para a sua rotina.
                   </p>
                 </div>
 
@@ -1332,13 +1332,34 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
                     </li>
                     <li className="flex items-start gap-3">
                       <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
-                      <span>Cardápio personalizado baseado no seu perfil</span>
+                      <span>Plano montado pela Dra. Tâmili (CRN 18263), a partir das suas respostas</span>
                     </li>
                     <li className="flex items-start gap-3">
                       <Check className="w-6 h-6 flex-shrink-0 mt-0.5 text-[#4f6e2c]" />
                       <span>Acesso ao aplicativo</span>
                     </li>
                   </ul>
+                </div>
+
+                <div className="bg-white border-2 border-[#e5f3dd] p-5 md:p-6 rounded-xl">
+                  <p className="font-bold text-[#2f4a18] mb-4 text-lg">Como funciona depois do pagamento</p>
+                  <ol className="text-base text-[#2f4a18] space-y-3">
+                    {[
+                      "Você confirma o pagamento",
+                      "Eu leio suas respostas, uma a uma",
+                      "Em até 2 horas úteis, seu plano chega no WhatsApp, com acesso ao app",
+                    ].map((text, i) => (
+                      <li key={i} className="flex items-start gap-3">
+                        <span
+                          aria-hidden="true"
+                          className="w-7 h-7 flex-shrink-0 rounded-full bg-[#4f6e2c] text-white text-sm font-bold flex items-center justify-center"
+                        >
+                          {i + 1}
+                        </span>
+                        <span className="pt-0.5">{text}</span>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
 
                 <div className="overflow-hidden bg-gradient-to-b from-[#fffbf0] to-white border-2 border-[#bb951c] rounded-xl text-center shadow-md">

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { CheckCircle, Mail, Clock } from "lucide-react"
+import { CheckCircle, Mail, Clock, MessageCircle } from "lucide-react"
 
 export default function ConfirmationPage() {
   const [userName, setUserName] = useState("Cliente")
@@ -65,6 +65,14 @@ export default function ConfirmationPage() {
                     <span>Acessar o aplicativo e começar sua transformação</span>
                   </li>
                 </ul>
+
+                <div className="flex items-start gap-3 pt-3 border-t border-[#e5f3dd]">
+                  <MessageCircle className="w-6 h-6 text-[#4f6e2c] flex-shrink-0 mt-1" />
+                  <p className="text-base md:text-lg text-gray-700 text-left">
+                    Assim que o pagamento for confirmado, eu leio suas respostas e, <strong>em até 2 horas úteis</strong>,
+                    te envio seu plano pelo <strong>WhatsApp</strong>, com acesso ao app.
+                  </p>
+                </div>
               </div>
 
               <div className="flex items-center justify-center gap-2 text-gray-600 mt-6">
