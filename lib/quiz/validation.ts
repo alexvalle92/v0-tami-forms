@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { parseSubmitGoogleAds, type SubmitGoogleAdsInput } from "@/lib/google-ads/attribution"
 import { parseSubmitMeta, type SubmitMetaInput } from "@/lib/meta/events"
 
 export type ParsedSubmission = {
@@ -7,6 +8,8 @@ export type ParsedSubmission = {
   answers: Record<string, unknown>
   /** Atribuição da Meta, quando o navegador mandou e ela é válida. */
   meta?: SubmitMetaInput
+  /** Clique no anúncio do Google (gclid/gbraid/wbraid), quando o navegador mandou um válido. */
+  googleAds?: SubmitGoogleAdsInput
 }
 
 export function isValidCpf(raw: string): boolean {
@@ -74,6 +77,7 @@ export function parseSubmitRequest(
 
   const { submissionId, answers } = parsed.data
   const meta = parseSubmitMeta((body as { meta?: unknown }).meta)
+  const googleAds = parseSubmitGoogleAds((body as { googleAds?: unknown }).googleAds)
   return {
     ok: true,
     value: {
@@ -87,6 +91,7 @@ export function parseSubmitRequest(
       // Objeto original completo, sem as transformações de trim/lowercase.
       answers: (body as { answers: Record<string, unknown> }).answers,
       ...(meta ? { meta } : {}),
+      ...(googleAds ? { googleAds } : {}),
     },
   }
 }

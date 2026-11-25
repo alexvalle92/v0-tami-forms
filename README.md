@@ -55,7 +55,7 @@ O servidor abre em `http://localhost:5000` (a porta é sempre 5000). As migratio
 
 O modelo está em `.env.example`. Nenhuma variável começa com `NEXT_PUBLIC_`: todas ficam só no servidor.
 
-Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e lista o que está errado. Para usar o valor padrão, **remova** a variável; não deixe `NOME=` em branco. A exceção são as `META_*`: em branco contam como ausentes e, com `META_TRACKING_ENABLED` desligado, nem são conferidas.
+Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e lista o que está errado. Para usar o valor padrão, **remova** a variável; não deixe `NOME=` em branco. A exceção são as `META_*` e as `GOOGLE_ADS_*`: em branco contam como ausentes e, com a chave correspondente desligada, nem são conferidas.
 
 | Variável | Obrigatória | Para que serve |
 |---|---|---|
@@ -94,6 +94,16 @@ Uma variável **vazia** é tratada como inválida. O app se recusa a iniciar e l
 | `META_CAPI_TOKEN` | se `META_TRACKING_ENABLED=true` | Token de acesso da API de Conversões |
 | `META_API_VERSION` | não | Versão da Graph API. Padrão `v24.0` |
 | `META_TEST_EVENT_CODE` | não | Código da aba "Testar eventos" da Meta. Só para testar; remova em produção |
+| `GOOGLE_ADS_TRACKING_ENABLED` | não | `true` liga a tag do Google Ads no navegador e a gravação do clique (`gclid`); `false` (padrão) desliga. Veja a seção "Google Ads" |
+| `GOOGLE_ADS_TAG_ID` | se `GOOGLE_ADS_TRACKING_ENABLED=true` | Id da tag do Google Ads, formato `AW-123456789` |
+| `GOOGLE_ADS_LEAD_LABEL` / `GOOGLE_ADS_CHECKOUT_LABEL` | não | Rótulos das conversões de Lead e de início de checkout (o texto depois da barra no `send_to`). Sem rótulo, a conversão não é enviada |
+| `GOOGLE_ADS_UPLOAD_ENABLED` | não | `true` liga o envio do `Purchase` pelo servidor (Data Manager API); `false` (padrão) desliga |
+| `GOOGLE_ADS_CUSTOMER_ID` | se `GOOGLE_ADS_UPLOAD_ENABLED=true` | Id da conta do Google Ads dona da ação de conversão (`123-456-7890`) |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | não | Id da conta de administrador (MCC), se o acesso da conta de serviço vier por ela |
+| `GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID` | se `GOOGLE_ADS_UPLOAD_ENABLED=true` | Id da ação de conversão "Compra" do tipo importação de cliques |
+| `GOOGLE_ADS_SERVICE_ACCOUNT_JSON` | se `GOOGLE_ADS_UPLOAD_ENABLED=true` | JSON da chave da conta de serviço do Google Cloud, de preferência em base64 |
+| `GOOGLE_ADS_ENHANCED_CONVERSIONS` | não | `true` manda e-mail e telefone (com hash) junto do `Purchase`. Só ligue depois de aceitar os termos de dados do cliente no Google Ads |
+| `GOOGLE_ADS_VALIDATE_ONLY` | não | `true` faz o Google só validar o envio, sem importar. Só para testar |
 
 Para gerar um `JOBS_TOKEN`: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
@@ -206,6 +216,57 @@ ORDER BY created_at DESC;
 ```
 
 Para reabrir uma conversão `failed`, veja "Rodar o job na mão e reabrir falhas".
+
+## Google Ads
+
+O quiz avisa o Google Ads de quem chegou por um anúncio e comprou, para a campanha otimizar por quem converte. São duas chaves independentes, as duas desligadas por padrão: `GOOGLE_ADS_TRACKING_ENABLED` liga a tag no navegador e a gravação do clique; `GOOGLE_ADS_UPLOAD_ENABLED` liga o envio do `Purchase` pelo servidor. Assim dá para ligar a tag primeiro e o envio quando a conta de serviço estiver pronta: as compras de quem clicou nesse meio-tempo ficam na fila e saem depois, se ainda estiverem dentro de 90 dias.
+
+| Conversão | Quando dispara | Por onde |
+|---|---|---|
+| `page_view` | Abriu qualquer página | Tag do Google Ads (`gtag.js`) |
+| Lead | Informou o e-mail e avançou (etapa 24) | Tag, se `GOOGLE_ADS_LEAD_LABEL` existir |
+| Início de checkout | Clicou em "Garantir Meu Plano Alimentar Agora" | Tag, com o valor de `PAYMENT_AMOUNT`, se `GOOGLE_ADS_CHECKOUT_LABEL` existir |
+| Compra (`Purchase`) | Chegou o webhook de pagamento do Asaas | **Só pelo servidor**, pela Data Manager API, com o valor da cobrança |
+
+**Por que a Data Manager API.** Desde 15/06/2026 o Google não aceita integrações novas de conversão offline pelo `UploadClickConversions` da Google Ads API; o caminho para quem começa agora é a Data Manager API (`events:ingest`). Ela não pede *developer token*, só uma credencial com o escopo `datamanager` e acesso à conta do Google Ads.
+
+**Como funciona o `Purchase`.** Quem chega de um anúncio traz o `gclid` na URL (ou `gbraid`/`wbraid` no iOS). O navegador guarda esse valor na sessão (e, sem ele, lê o cookie `_gcl_aw` que a tag grava) e o manda no envio do quiz, que o grava em `google_ads_attributions`. No primeiro evento de pagamento da cobrança, o webhook do Asaas coloca uma linha em `google_ads_conversions`, na mesma transação, e o envio é tentado logo depois da resposta ao Asaas. Se o Google estiver fora do ar, o job de 2 minutos repete com espera crescente, até 8 tentativas; depois disso a linha vira `failed` e o `ADMIN_ALERT_EMAIL` recebe o aviso. Cobrança sem clique do Google não gera nada. O processamento no Google é assíncrono: `sent` quer dizer "aceito", e o `request_id` da linha serve para consultar o resultado.
+
+**Dados pessoais.** Por padrão só o identificador do clique sai para o Google. Com `GOOGLE_ADS_ENHANCED_CONVERSIONS=true`, e-mail e telefone saem junto, com hash SHA-256 (conversões otimizadas), o que aumenta a taxa de correspondência. O nome e o CPF nunca saem. A tag no navegador não recebe dado pessoal. `trackingAllowed()` em `lib/client/google-ads.ts` é o ponto onde um banner de consentimento passaria a decidir se a tag rastreia. Cabe a você decidir se a política de privacidade já cita o Google.
+
+**Ativação:**
+
+1. **Codificação automática.** No Google Ads, em `Administrador > Configurações da conta > Codificação automática`, confirme que está ligada. Sem ela o anúncio não leva `gclid` e nada disso funciona.
+2. **Ações de conversão** (`Metas > Conversões > Resumo > + Nova ação de conversão`):
+   - **Compra:** escolha `Importar > Outras fontes de dados ou CRMs > Acompanhar conversões de cliques`. Categoria "Compra", valor "Usar valores diferentes para cada conversão", contagem **"Todas"** (a contagem "Uma" recusa `gbraid`/`wbraid`), janela de clique de 90 dias. Deixe como ação **principal**. O id vai em `GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID`: é o número de `ctId=` na URL ao abrir a ação.
+   - **Lead e Início de checkout (opcionais):** `Site > Adicionar uma ação de conversão manualmente`, categorias "Enviar formulário de lead" e "Iniciar finalização da compra". Marque as duas como **secundárias**, para a campanha otimizar pela compra. Na instalação, escolha "Instalar a tag você mesmo" e copie o `send_to: 'AW-123456789/AbCdEf'` do snippet do evento. O `AW-123456789` vai em `GOOGLE_ADS_TAG_ID`, e o texto depois da barra vai em `GOOGLE_ADS_LEAD_LABEL` ou `GOOGLE_ADS_CHECKOUT_LABEL`.
+3. **Conta de serviço** (Google Cloud): crie um projeto (ou use um existente), ative a **Data Manager API**, crie uma conta de serviço e gere uma chave JSON. Converta para base64 (`base64 -w0 chave.json` no Linux, `[Convert]::ToBase64String([IO.File]::ReadAllBytes("chave.json"))` no PowerShell) e guarde só no Easypanel. Se a organização do Google Cloud bloquear a criação de chaves, a política `iam.disableServiceAccountKeyCreation` precisa de uma exceção para esse projeto.
+4. **Acesso à conta:** no Google Ads, em `Administrador > Acesso e segurança`, adicione o e-mail da conta de serviço (`...@...iam.gserviceaccount.com`) com acesso **Padrão**. Se a conta for gerida por uma MCC e o acesso for dado lá, preencha `GOOGLE_ADS_LOGIN_CUSTOMER_ID` com o id da MCC.
+5. **Conversões otimizadas (opcional):** em `Metas > Configurações > Conversões otimizadas para leads`, aceite os termos de dados do cliente. Só depois disso ligue `GOOGLE_ADS_ENHANCED_CONVERSIONS=true`.
+6. **GTM** (`GTM-PPXNWRMB`): confira que **não existe tag de conversão do Google Ads** para lead, checkout ou compra; se existir, pause antes de publicar, ou as conversões contam em dobro. Confira também que nenhuma conversão importada do GA4 mede a mesma coisa. A tag de "Vinculador de conversões" pode ficar.
+7. **Easypanel:** defina `GOOGLE_ADS_TRACKING_ENABLED=true`, `GOOGLE_ADS_TAG_ID`, os rótulos, `GOOGLE_ADS_UPLOAD_ENABLED=true`, `GOOGLE_ADS_CUSTOMER_ID`, `GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID`, `GOOGLE_ADS_SERVICE_ACCOUNT_JSON` e, para o primeiro teste, `GOOGLE_ADS_VALIDATE_ONLY=true`. Reinicie: o boot aplica a migration `0008`, que cria as duas tabelas.
+8. **Navegador:** abra o quiz por um link com `?gclid=teste123` e passe até o botão final. Com a extensão Tag Assistant (ou a aba Rede do navegador), confira a tag `AW-...` e as conversões de Lead e de checkout. No banco, confira a linha em `google_ads_attributions` com `gclid = 'teste123'`.
+9. **Servidor:** pague uma cobrança no sandbox do Asaas. Com `GOOGLE_ADS_VALIDATE_ONLY=true`, a linha de `google_ads_conversions` termina `failed` com a mensagem "validateOnly: aceito na validação". Isso confirma credencial, acesso e formato. Uma mensagem de erro do Google ali aponta o que falta (403: API desligada no projeto ou conta de serviço sem acesso; 400: id da conta ou da ação errado).
+10. Remova `GOOGLE_ADS_VALIDATE_ONLY` e reinicie. Uma conversão com `gclid` inventado é aceita e depois descartada pelo Google; a confirmação real vem com a primeira compra vinda de um anúncio, que aparece no diagnóstico da ação de conversão em até um dia.
+
+**Acompanhar o `Purchase`:**
+
+```sql
+SELECT id, payment_id, status, attempts, request_id, next_attempt_at,
+       JSON_UNQUOTE(JSON_EXTRACT(last_error, '$.message')) AS erro
+FROM google_ads_conversions
+WHERE status <> 'sent' OR created_at > NOW() - INTERVAL 7 DAY
+ORDER BY created_at DESC;
+```
+
+Para ver o que o Google fez com uma linha `sent`, consulte o `request_id` com um usuário que tenha acesso à conta do Google Ads (o Google recomenda esperar 30 minutos):
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-access-token --scopes=https://www.googleapis.com/auth/datamanager)" \
+  "https://datamanager.googleapis.com/v1/requestStatus:retrieve?requestId=REQUEST_ID"
+```
+
+Para reabrir uma conversão `failed` (inclusive as do teste com `GOOGLE_ADS_VALIDATE_ONLY`), veja "Rodar o job na mão e reabrir falhas".
 
 ## Observabilidade (funil e erros)
 
@@ -466,8 +527,9 @@ A lista de etapas (`vw_funnel_steps`) e a de chaves de resposta (`vw_session_ans
 - Funil (`funnel_events` e `funnel_sessions`): **365 dias**.
 - `app_logs`: **90 dias**.
 - `meta_attributions` (IP, User-Agent e cookies da Meta de cada envio do quiz): **90 dias**.
+- `google_ads_attributions` (o `gclid`/`gbraid`/`wbraid` de cada envio do quiz): **90 dias**, a validade do clique no Google.
 
-A limpeza roda no fim de cada rodada do job (a cada 2 minutos), apagando até 1.000 linhas por tabela por rodada. Para mudar os prazos ou o tamanho do lote, edite `FUNNEL_RETENTION_DAYS`, `APP_LOG_RETENTION_DAYS`, `META_ATTRIBUTION_RETENTION_DAYS` e `PURGE_BATCH` em `lib/jobs/purge-observability.ts`.
+A limpeza roda no fim de cada rodada do job (a cada 2 minutos), apagando até 1.000 linhas por tabela por rodada. Para mudar os prazos ou o tamanho do lote, edite `FUNNEL_RETENTION_DAYS`, `APP_LOG_RETENTION_DAYS`, `META_ATTRIBUTION_RETENTION_DAYS`, `GOOGLE_ADS_ATTRIBUTION_RETENTION_DAYS` e `PURGE_BATCH` em `lib/jobs/purge-observability.ts`.
 
 ## 6. Operação
 
@@ -542,7 +604,7 @@ curl -X POST https://SEU-DOMINIO/api/jobs/run \
   -H "Authorization: Bearer SEU_JOBS_TOKEN"
 ```
 
-Reabrir uma falha. O corpo tem 4 formas:
+Reabrir uma falha. O corpo tem uma destas formas:
 
 ```bash
 # uma cobrança
@@ -569,7 +631,13 @@ curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Content-Type: application/json" \
   -d '{"metaConversionId":"ID_DA_CONVERSAO"}'
 
-# todas as falhas de uma vez (cobranças, gerações de plano, mensagens e conversões da Meta)
+# uma conversão do Google Ads (o id vem da consulta de google_ads_conversions)
+curl -X POST https://SEU-DOMINIO/api/jobs/retry \
+  -H "Authorization: Bearer SEU_JOBS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"googleAdsConversionId":"ID_DA_CONVERSAO"}'
+
+# todas as falhas de uma vez (cobranças, gerações de plano, mensagens e conversões da Meta e do Google Ads)
 curl -X POST https://SEU-DOMINIO/api/jobs/retry \
   -H "Authorization: Bearer SEU_JOBS_TOKEN" \
   -H "Content-Type: application/json" \

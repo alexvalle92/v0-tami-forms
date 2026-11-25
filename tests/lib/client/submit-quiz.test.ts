@@ -36,6 +36,17 @@ describe("submitQuizRequest: atribuição da Meta", () => {
 
     expect(sentBody(fetchImpl)).toEqual({ submissionId, answers })
     expect(sentBody(fetchImpl)).not.toHaveProperty("meta")
+    expect(sentBody(fetchImpl)).not.toHaveProperty("googleAds")
+  })
+
+  it("manda o clique do Google junto (e o meta, quando os dois existem)", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ sucesso: true }))
+    const meta = { fbp: "fb.1.1.2" }
+    const googleAds = { gclid: "Cj0KCQ-abc" }
+
+    await submitQuizRequest({ submissionId, answers, meta, googleAds, fetchImpl: fetchImpl as unknown as typeof fetch })
+
+    expect(sentBody(fetchImpl)).toEqual({ submissionId, answers, meta, googleAds })
   })
 })
 

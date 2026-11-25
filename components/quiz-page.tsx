@@ -15,6 +15,7 @@ import { ErrorModal } from "@/components/error-modal"
 import { stepValidation } from "@/lib/quiz/step-validation"
 import { stepTransitionEvents } from "@/lib/quiz/step-events"
 import { stepSlug } from "@/lib/quiz/steps"
+import { getGoogleAds } from "@/lib/client/google-ads"
 import { getMeta } from "@/lib/client/meta"
 import { getTracker } from "@/lib/client/track"
 import {
@@ -103,6 +104,7 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
 
   const tracker = useRef(getTracker()).current
   const meta = useRef(getMeta()).current
+  const googleAds = useRef(getGoogleAds()).current
   const stepRef = useRef<{ step: number; enteredAtMs: number } | null>(null)
   // as respostas são lidas por ref para o efeito das etapas depender só de currentStep
   const answersRef = useRef(answers)
@@ -230,14 +232,17 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
     // Lead: saiu da etapa do e-mail (índice 23) para a seguinte, o que só acontece com o e-mail validado.
     if (stepRef.current?.step === 23 && currentStep === 24) {
       meta.event("Lead", { user: { email: answersRef.current.email } })
+      googleAds.conversion("Lead")
     }
     stepRef.current = { step: currentStep, enteredAtMs: nowMs }
-  }, [currentStep, tracker, meta])
+  }, [currentStep, tracker, meta, googleAds])
 
   // Meta: ViewContent ao abrir o quiz (uma vez por sessão; o id determinístico evita repetir em recarga).
+  // Google Ads: guarda o gclid/gbraid/wbraid da URL, que só existe na página em que a pessoa chegou do anúncio.
   useEffect(() => {
     meta.event("ViewContent", {})
-  }, [meta])
+    googleAds.captureClick()
+  }, [meta, googleAds])
 
   // Saída da página: um page_hide por período oculto, enviado com sendBeacon.
   useEffect(() => {
@@ -292,6 +297,7 @@ export function QuizPage({ offer }: { offer: PriceOffer }) {
     meta.event("InitiateCheckout", {
       user: { email: answers.email, phone: answers.whatsapp, name: answers.nome_completo },
     })
+    googleAds.conversion("InitiateCheckout")
     const linkPagamento = sessionStorage.getItem("linkPagamento")
     tracker.track({ event: "checkout_click", step: 28, stepSlug: "checkout", hasPaymentLink: !!linkPagamento })
     tracker.flush({ beacon: true })

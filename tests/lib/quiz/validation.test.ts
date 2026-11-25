@@ -172,5 +172,16 @@ describe("parseSubmitRequest", () => {
     const result = parseSubmitRequest({ submissionId, answers: validAnswers })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.value).not.toHaveProperty("meta")
+    if (result.ok) expect(result.value).not.toHaveProperty("googleAds")
+  })
+
+  it("googleAds com identificador válido chega ao valor; inválido vira ausente sem derrubar o envio", () => {
+    const ok = parseSubmitRequest({ submissionId, answers: validAnswers, googleAds: { gclid: "Cj0-abc", wbraid: "<x>" } })
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.value.googleAds).toStrictEqual({ gclid: "Cj0-abc" })
+
+    const bad = parseSubmitRequest({ submissionId, answers: validAnswers, googleAds: { gclid: "com espaço" } })
+    expect(bad.ok).toBe(true)
+    if (bad.ok) expect(bad.value).not.toHaveProperty("googleAds")
   })
 })

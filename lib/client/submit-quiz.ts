@@ -2,6 +2,7 @@
 // (loading-screen) cuida do armazenamento do link de pagamento.
 
 import type { SubmitFailure } from "@/lib/analytics/events"
+import type { SubmitGoogleAdsInput } from "@/lib/google-ads/shared"
 import type { SubmitMetaInput } from "@/lib/meta/shared"
 
 export const GENERIC_SUBMIT_ERROR =
@@ -44,10 +45,15 @@ export async function submitQuizRequest(args: {
   answers: Record<string, unknown>
   /** Atribuição do anúncio (Meta); vai junto do corpo só quando existe. */
   meta?: SubmitMetaInput
+  /** Clique no anúncio do Google; vai junto do corpo só quando existe. */
+  googleAds?: SubmitGoogleAdsInput
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }): Promise<SubmitQuizResult> {
-  const { submissionId, answers, meta, fetchImpl = fetch, timeoutMs = 30000 } = args
+  const { submissionId, answers, meta, googleAds, fetchImpl = fetch, timeoutMs = 30000 } = args
+  const body: Record<string, unknown> = { submissionId, answers }
+  if (meta) body.meta = meta
+  if (googleAds) body.googleAds = googleAds
 
   // AbortController + setTimeout em vez de AbortSignal.timeout (ausente no Safari < 16).
   // O timer fica ativo até o corpo da resposta ser lido, para que um corpo travado também estoure.
@@ -61,7 +67,7 @@ export async function submitQuizRequest(args: {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(meta ? { submissionId, answers, meta } : { submissionId, answers }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     })
 

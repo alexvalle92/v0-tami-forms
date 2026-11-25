@@ -446,3 +446,53 @@ export const metaConversions = mysqlTable(
     index("meta_conversions_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
   ],
 )
+
+// ---------------------------------------------------------------------------
+// Google Ads (spec 2026-11-25-google-ads-conversoes, §7). Só este app grava.
+// ---------------------------------------------------------------------------
+
+// Identificador do clique no anúncio do Google, por envio do quiz: o que o Purchase do servidor usa para
+// casar com o clique. O Google só aceita conversão de clique com até 90 dias, então o purge apaga a linha aí.
+export const googleAdsAttributions = mysqlTable(
+  "google_ads_attributions",
+  {
+    quizResponseId: char("quiz_response_id", { length: 36 })
+      .primaryKey()
+      .references(() => quizResponses.id),
+    gclid: varchar("gclid", { length: 255 }),
+    gbraid: varchar("gbraid", { length: 255 }),
+    wbraid: varchar("wbraid", { length: 255 }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("google_ads_attributions_created_at_idx").on(t.createdAt)],
+)
+
+// Fila do Purchase para a Data Manager API: uma linha por cobrança paga com clique do Google. Não guarda
+// dado pessoal; o envio a monta de payments, patients e google_ads_attributions. Sem chave estrangeira
+// para quiz_responses, de propósito: o purge da atribuição não pode depender desta tabela.
+export const googleAdsConversions = mysqlTable(
+  "google_ads_conversions",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    paymentId: char("payment_id", { length: 36 })
+      .notNull()
+      .references(() => payments.id),
+    quizResponseId: char("quiz_response_id", { length: 36 }).notNull(),
+    transactionId: varchar("transaction_id", { length: 80 }).notNull(),
+    eventTime: dateTime("event_time").notNull(),
+    status: mysqlEnum("status", ["pending", "sent", "failed"]).notNull(),
+    attempts: int("attempts").notNull().default(0),
+    nextAttemptAt: dateTime("next_attempt_at").notNull(),
+    lockedUntil: dateTime("locked_until"),
+    lastError: json("last_error"),
+    // Id do pedido aceito pela Data Manager API, para consultar o processamento em requestStatus:retrieve.
+    requestId: varchar("request_id", { length: 100 }),
+    sentAt: dateTime("sent_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("google_ads_conversions_payment_id_unique").on(t.paymentId),
+    index("google_ads_conversions_status_next_attempt_at_idx").on(t.status, t.nextAttemptAt),
+  ],
+)

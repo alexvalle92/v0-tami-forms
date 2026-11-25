@@ -1,16 +1,24 @@
-import type { MetaConversionRepo, NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
+import type {
+  GoogleAdsConversionRepo,
+  MetaConversionRepo,
+  NotificationRepo,
+  PaymentRepo,
+  PlanGenerationRepo,
+} from "@/lib/db/repos/types"
 import type { Logger } from "@/lib/log"
 import type { DispatchNotification } from "@/lib/services/dispatch-notification"
 import type { GeneratePlan } from "@/lib/services/generate-plan"
 import { safeErrorMessage } from "@/lib/services/last-error"
+import type { SendGoogleAdsConversion } from "@/lib/services/send-google-ads-conversion"
 import type { SendMetaConversion } from "@/lib/services/send-meta-conversion"
 import type { SyncPayment } from "@/lib/services/sync-payment"
 
 /**
  * `payments`, `plans` e `notifications` contam os itens tentados (qualquer desfecho); `reminders`, os
  * avisos de vencimento enfileirados na rodada; `errors`, as exceções. `conversions` (Purchase da Meta
- * tentados) só existe quando a rodada recebe `meta` ligado; `discounts` (cobranças que entraram na etapa do
- * desconto, qualquer desfecho) só existe quando a rodada recebe `discounts`.
+ * tentados) só existe quando a rodada recebe `meta` ligado; `googleAdsConversions` (Purchase do Google Ads
+ * tentados), só com `googleAds` ligado; `discounts` (cobranças que entraram na etapa do desconto, qualquer
+ * desfecho) só existe quando a rodada recebe `discounts`.
  */
 export type RunSummary = {
   payments: number
@@ -19,7 +27,16 @@ export type RunSummary = {
   notifications: number
   errors: number
   conversions?: number
+  googleAdsConversions?: number
   discounts?: number
+}
+
+/** Fila do Purchase do Google Ads. Com `enabled` falso a rodada nem lista: as linhas esperam o religamento. */
+export type RunJobsGoogleAds = {
+  enabled: boolean
+  conversions: Pick<GoogleAdsConversionRepo, "listDue">
+  send: SendGoogleAdsConversion
+  limit: number
 }
 
 /** Fila do Purchase da Meta. Com `enabled` falso a rodada nem lista: as linhas esperam o religamento. */
@@ -54,6 +71,8 @@ export function createRunJobs(d: {
   purge?: () => Promise<number>
   /** Fila do Purchase da Meta; opcional, roda depois das notificações e antes da limpeza. */
   meta?: RunJobsMeta
+  /** Fila do Purchase do Google Ads; opcional, roda depois da Meta e antes da limpeza. */
+  googleAds?: RunJobsGoogleAds
   log: Logger
   now: () => Date
   paymentDeadlineMs: number
@@ -138,6 +157,26 @@ export function createRunJobs(d: {
         } catch (err) {
           summary.errors++
           d.log.error("job.conversion.error", { conversionId, message: safeErrorMessage(err) })
+        }
+      }
+    }
+
+    if (d.googleAds?.enabled) {
+      summary.googleAdsConversions = 0
+      let conversionIds: string[] = []
+      try {
+        conversionIds = await d.googleAds.conversions.listDue(d.now(), d.googleAds.limit)
+      } catch (err) {
+        summary.errors++
+        d.log.error("job.google_ads_conversions.list_failed", { message: safeErrorMessage(err) })
+      }
+      for (const conversionId of conversionIds) {
+        summary.googleAdsConversions++
+        try {
+          await d.googleAds.send(conversionId)
+        } catch (err) {
+          summary.errors++
+          d.log.error("job.google_ads_conversion.error", { conversionId, message: safeErrorMessage(err) })
         }
       }
     }

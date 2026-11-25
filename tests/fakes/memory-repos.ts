@@ -13,6 +13,9 @@ import type {
   MetaAttributionInput,
   MetaAttributionRepo,
   MetaConversionRepo,
+  GoogleAdsClickIds,
+  GoogleAdsAttributionRepo,
+  GoogleAdsConversionRepo,
   NewSubmission,
   NotificationKind,
   NotificationRepo,
@@ -167,6 +170,25 @@ export type MemoryState = {
   appLogs: readonly Readonly<AppLogRow>[]
   metaAttributions: ReadonlyMap<string, Readonly<MetaAttributionRow>>
   metaConversions: ReadonlyMap<string, Readonly<MetaConversionRow>>
+  googleAdsAttributions: ReadonlyMap<string, Readonly<GoogleAdsAttributionRow>>
+  googleAdsConversions: ReadonlyMap<string, Readonly<GoogleAdsConversionRow>>
+}
+
+export type GoogleAdsAttributionRow = GoogleAdsClickIds & { quizResponseId: string; createdAt: Date }
+
+export type GoogleAdsConversionRow = {
+  id: string
+  paymentId: string
+  quizResponseId: string
+  transactionId: string
+  eventTime: Date
+  status: "pending" | "sent" | "failed"
+  attempts: number
+  nextAttemptAt: Date
+  lockedUntil: Date | null
+  lastError: LastError | null
+  requestId: string | null
+  sentAt: Date | null
 }
 
 export type MetaAttributionRow = MetaAttributionInput & { quizResponseId: string; createdAt: Date }
@@ -206,6 +228,8 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
   const appLogRows: AppLogRow[] = []
   const metaAttributionRows = new Map<string, MetaAttributionRow>()
   const metaConversionRows = new Map<string, MetaConversionRow>()
+  const googleAdsAttributionRows = new Map<string, GoogleAdsAttributionRow>()
+  const googleAdsConversionRows = new Map<string, GoogleAdsConversionRow>()
 
   const patientByCpf = (cpf: string) => [...patients.values()].find((p) => p.cpf === cpf)
 
@@ -763,6 +787,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       let pendingGeneration: Processed["pendingGeneration"] = null
       let missingQuizResponse = false
       let pendingConversion: Processed["pendingConversion"] = null
+      let pendingGoogleAdsConversion: Processed["pendingGoogleAdsConversion"] = null
 
       if (e.group === "paid") {
         // 5. Pago.
@@ -822,6 +847,29 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
             metaConversionRows.set(conversion.id, conversion)
             pendingConversion = { id: conversion.id }
           }
+
+          // Purchase do Google Ads: mesma regra, com a atribuição do Google.
+          const googleAttributed = [...quizResponses.values()]
+            .filter((q) => q.paymentId === p.id && googleAdsAttributionRows.has(q.id))
+            .pop()
+          if (googleAttributed && ![...googleAdsConversionRows.values()].some((c) => c.paymentId === p.id)) {
+            const conversion: GoogleAdsConversionRow = {
+              id: randomUUID(),
+              paymentId: p.id,
+              quizResponseId: googleAttributed.id,
+              transactionId: `purchase:${p.id}`,
+              eventTime: new Date(now),
+              status: "pending",
+              attempts: 0,
+              nextAttemptAt: new Date(now),
+              lockedUntil: null,
+              lastError: null,
+              requestId: null,
+              sentAt: null,
+            }
+            googleAdsConversionRows.set(conversion.id, conversion)
+            pendingGoogleAdsConversion = { id: conversion.id }
+          }
         }
       } else {
         // 6. Reversão e 7. antes de pagar: só o status (sem status no evento, mantém o atual).
@@ -836,6 +884,7 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
         pendingGeneration,
         missingQuizResponse,
         pendingConversion,
+        pendingGoogleAdsConversion,
       }
     },
   }
@@ -1226,6 +1275,114 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     },
   }
 
+  const googleAdsAttributionsRepo: GoogleAdsAttributionRepo = {
+    async save(quizResponseId, ids, now) {
+      if (googleAdsAttributionRows.has(quizResponseId)) return
+      googleAdsAttributionRows.set(quizResponseId, { ...ids, quizResponseId, createdAt: new Date(now) })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const old = [...googleAdsAttributionRows.values()]
+        .filter((r) => r.createdAt.getTime() < cutoff.getTime())
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .slice(0, limit)
+      for (const r of old) googleAdsAttributionRows.delete(r.quizResponseId)
+      return old.length
+    },
+  }
+
+  const googleAdsConversionDue = (c: GoogleAdsConversionRow, now: Date) =>
+    c.status === "pending" &&
+    c.nextAttemptAt.getTime() <= now.getTime() &&
+    (c.lockedUntil === null || c.lockedUntil.getTime() < now.getTime())
+  const reopenGoogleAdsConversion = (c: GoogleAdsConversionRow, now: Date) => {
+    c.status = "pending"
+    c.attempts = 0
+    c.nextAttemptAt = now
+    c.lastError = null
+    c.lockedUntil = null
+  }
+
+  const googleAdsConversionsRepo: GoogleAdsConversionRepo = {
+    async listDue(now, limit) {
+      return [...googleAdsConversionRows.values()]
+        .filter((c) => googleAdsConversionDue(c, now))
+        .sort((a, b) => a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime() || a.id.localeCompare(b.id))
+        .slice(0, limit)
+        .map((c) => c.id)
+    },
+
+    async claim(id, now) {
+      const c = googleAdsConversionRows.get(id)
+      if (!c || !googleAdsConversionDue(c, now)) return false
+      c.lockedUntil = new Date(now.getTime() + 60_000)
+      return true
+    },
+
+    async loadPayload(id) {
+      const c = googleAdsConversionRows.get(id)
+      const payment = c && payments.get(c.paymentId)
+      const patient = payment && patients.get(payment.patientId)
+      const a = c && googleAdsAttributionRows.get(c.quizResponseId)
+      if (!c || !payment || !patient || !a) return null
+      return {
+        id: c.id,
+        paymentId: c.paymentId,
+        transactionId: c.transactionId,
+        eventTime: new Date(c.eventTime),
+        attempts: c.attempts,
+        amount: payment.amount,
+        patient: { email: patient.email, phone: patient.phone, name: patient.name },
+        click: { gclid: a.gclid, gbraid: a.gbraid, wbraid: a.wbraid },
+      }
+    },
+
+    async markSent(id, now, requestId) {
+      const c = googleAdsConversionRows.get(id)
+      if (!c) return
+      c.status = "sent"
+      c.sentAt = new Date(now)
+      c.requestId = requestId
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async markRetry(id, nextAttemptAt, lastError) {
+      const c = googleAdsConversionRows.get(id)
+      if (!c) return
+      c.nextAttemptAt = new Date(nextAttemptAt)
+      c.lastError = structuredClone(lastError)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async markFailed(id, lastError) {
+      const c = googleAdsConversionRows.get(id)
+      if (!c) return
+      c.status = "failed"
+      c.lastError = structuredClone(lastError)
+      c.attempts += 1
+      c.lockedUntil = null
+    },
+
+    async reopen(id) {
+      const c = googleAdsConversionRows.get(id)
+      if (!c || c.status !== "failed") return false
+      reopenGoogleAdsConversion(c, new Date())
+      return true
+    },
+
+    async reopenAllFailed() {
+      let n = 0
+      for (const c of googleAdsConversionRows.values()) {
+        if (c.status !== "failed") continue
+        reopenGoogleAdsConversion(c, new Date())
+        n++
+      }
+      return n
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -1237,6 +1394,8 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
     appLogs: appLogsRepo,
     metaAttributions: metaAttributionsRepo,
     metaConversions: metaConversionsRepo,
+    googleAdsAttributions: googleAdsAttributionsRepo,
+    googleAdsConversions: googleAdsConversionsRepo,
     state: {
       patients,
       payments,
@@ -1249,6 +1408,8 @@ export function createMemoryRepos(): Repos & { state: MemoryState; seed: MemoryS
       appLogs: appLogRows,
       metaAttributions: metaAttributionRows,
       metaConversions: metaConversionRows,
+      googleAdsAttributions: googleAdsAttributionRows,
+      googleAdsConversions: googleAdsConversionRows,
     },
     seed: {
       passwordReset({ patientId, channel, link }) {

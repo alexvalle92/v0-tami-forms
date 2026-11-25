@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import Script from 'next/script'
+import { GoogleAdsTagHead } from '@/components/google-ads-tag-head'
 import { MetaPixelHead } from '@/components/meta-pixel-head'
 import './globals.css'
 
@@ -42,6 +43,7 @@ export default function RootLayout({
       `}
     </Script>
     <MetaPixelHead />
+    <GoogleAdsTagHead />
   </head>
 
   <body>

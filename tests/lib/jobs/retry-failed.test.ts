@@ -5,7 +5,7 @@ import { createMemoryRepos } from "../../fakes/memory-repos"
 
 const err: LastError = { step: "x", message: "x", attempt: 1, at: "2026-10-07T15:00:00.000Z" }
 
-/** `withConversion` cria uma terceira paciente paga com atribuição da Meta: o Purchase entra na fila. */
+/** `withConversion` cria uma terceira paciente paga com atribuição da Meta e do Google: os dois Purchase entram na fila. */
 async function setup(withConversion = false) {
   const repos = createMemoryRepos()
   const created = await repos.submissions.create({
@@ -43,7 +43,7 @@ async function setup(withConversion = false) {
   )
   if (event.outcome !== "processed" || !event.pendingGeneration) throw new Error("geração não criada")
   const generationId = event.pendingGeneration.id
-  async function queueConversion(): Promise<string> {
+  async function queueConversion(): Promise<{ meta: string; google: string }> {
     const attributed = await repos.submissions.create({
       submissionId: "sub-3",
       patient: { name: "Carla Dias", cpf: "39053344705", email: "carla@example.com", phone: "11777770000" },
@@ -57,6 +57,7 @@ async function setup(withConversion = false) {
       { externalId: null, fbp: null, fbc: null, clientIp: "1.2.3.4", userAgent: "UA", eventSourceUrl: null },
       new Date(),
     )
+    await repos.googleAdsAttributions.save(attributed.quizResponseId, { gclid: "gclid-1", gbraid: null, wbraid: null }, new Date())
     const paid = await repos.webhooks.applyPaymentEvent(
       {
         eventId: "evt-3",
@@ -71,16 +72,20 @@ async function setup(withConversion = false) {
       },
       new Date(),
     )
-    if (paid.outcome !== "processed" || !paid.pendingConversion) throw new Error("conversão não criada")
-    return paid.pendingConversion.id
+    if (paid.outcome !== "processed" || !paid.pendingConversion || !paid.pendingGoogleAdsConversion) {
+      throw new Error("conversão não criada")
+    }
+    return { meta: paid.pendingConversion.id, google: paid.pendingGoogleAdsConversion.id }
   }
   let conversionId = ""
-  if (withConversion) conversionId = await queueConversion()
+  let googleAdsConversionId = ""
+  if (withConversion) ({ meta: conversionId, google: googleAdsConversionId } = await queueConversion())
   const retry = createRetryFailed({
     payments: repos.payments,
     notifications: repos.notifications,
     planGenerations: repos.planGenerations,
     metaConversions: repos.metaConversions,
+    googleAdsConversions: repos.googleAdsConversions,
   })
   const failPayment = () =>
     repos.payments.markSyncFailure(created.paymentId, { attempts: 5, nextSyncAt: null, failed: true, error: err })
@@ -89,6 +94,7 @@ async function setup(withConversion = false) {
   const failGeneration = () =>
     repos.planGenerations.markFailure(generationId, { attempts: 5, nextAttemptAt: null, failed: true, error: err })
   const failConversion = () => repos.metaConversions.markFailed(conversionId, err)
+  const failGoogleAdsConversion = () => repos.googleAdsConversions.markFailed(googleAdsConversionId, err)
   return {
     repos,
     retry,
@@ -100,6 +106,8 @@ async function setup(withConversion = false) {
     failGeneration,
     conversionId,
     failConversion,
+    googleAdsConversionId,
+    failGoogleAdsConversion,
   }
 }
 
@@ -168,15 +176,32 @@ describe("createRetryFailed", () => {
     expect(await s.retry({ metaConversionId: "nao-existe" })).toEqual({ reopened: 0 })
   })
 
-  it("{ allFailed: true } soma cobranças, notificações, gerações e conversões da Meta", async () => {
+  it("{ googleAdsConversionId } reabre só a conversão do Google Ads que falhou", async () => {
+    const s = await setup(true)
+    expect(await s.retry({ googleAdsConversionId: s.googleAdsConversionId })).toEqual({ reopened: 0 })
+    await s.failGoogleAdsConversion()
+    await s.failConversion()
+
+    expect(await s.retry({ googleAdsConversionId: s.googleAdsConversionId })).toEqual({ reopened: 1 })
+
+    const row = s.repos.state.googleAdsConversions.get(s.googleAdsConversionId)!
+    expect(row.status).toBe("pending")
+    expect(row.attempts).toBe(0)
+    expect(s.repos.state.metaConversions.get(s.conversionId)!.status).toBe("failed")
+    expect(await s.retry({ googleAdsConversionId: "nao-existe" })).toEqual({ reopened: 0 })
+  })
+
+  it("{ allFailed: true } soma cobranças, notificações, gerações e conversões da Meta e do Google", async () => {
     const s = await setup(true)
     await s.failPayment()
     await s.failNotification()
     await s.failGeneration()
     await s.failConversion()
+    await s.failGoogleAdsConversion()
 
-    expect(await s.retry({ allFailed: true })).toEqual({ reopened: 4 })
+    expect(await s.retry({ allFailed: true })).toEqual({ reopened: 5 })
     expect(s.repos.state.metaConversions.get(s.conversionId)!.status).toBe("pending")
+    expect(s.repos.state.googleAdsConversions.get(s.googleAdsConversionId)!.status).toBe("pending")
 
     expect(s.repos.state.payments.get(s.paymentId)!.status).toBe("PENDING_ASAAS")
     expect(s.repos.state.notifications.get(s.notificationId)!.status).toBe("pending")

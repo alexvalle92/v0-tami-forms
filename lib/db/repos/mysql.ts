@@ -9,6 +9,8 @@ import {
   asaasWebhookEvents,
   funnelEvents,
   funnelSessions,
+  googleAdsAttributions,
+  googleAdsConversions,
   mealPlans,
   metaAttributions,
   metaConversions,
@@ -25,6 +27,8 @@ import type {
   Channel,
   FunnelEventRow,
   FunnelSessionView,
+  GoogleAdsAttributionRepo,
+  GoogleAdsConversionRepo,
   MealPlanRepo,
   MealPlanView,
   MetaAttributionRepo,
@@ -58,6 +62,8 @@ const SUBMISSION_UNIQUE_KEY = "quiz_responses_submission_id_unique"
 const TX_MAX_ATTEMPTS = 3
 /** Quanto tempo `metaConversions.claim` reserva a linha para quem vai enviá-la. */
 const META_CONVERSION_LOCK_MS = 60_000
+/** Quanto tempo `googleAdsConversions.claim` reserva a linha para quem vai enviá-la. */
+const GOOGLE_ADS_CONVERSION_LOCK_MS = 60_000
 
 type MysqlErrorLike = { errno: number; sqlMessage?: string; message?: string }
 
@@ -888,6 +894,7 @@ export function createMysqlRepos(db: Db): Repos {
       let pendingGeneration: { id: string; quizResponseId: string } | null = null
       let missingQuizResponse = false
       let pendingConversion: { id: string } | null = null
+      let pendingGoogleAdsConversion: { id: string } | null = null
       if (e.group === "paid") {
         // Leitura sem lock: a geração só é criada com a cobrança travada, e o lock acima já
         // foi obtido, então esta leitura vê a de um evento anterior. Um lock aqui (gap lock
@@ -965,6 +972,31 @@ export function createMysqlRepos(db: Db): Repos {
             })
             if (affected(created) === 1) pendingConversion = { id: conversionId }
           }
+
+          // Purchase do Google Ads: mesma regra, com a atribuição do Google (a linha só existe com um clique).
+          const [googleAttributed] = await tx
+            .select({ id: quizResponses.id })
+            .from(quizResponses)
+            .innerJoin(googleAdsAttributions, eq(googleAdsAttributions.quizResponseId, quizResponses.id))
+            .where(eq(quizResponses.paymentId, p.id))
+            .orderBy(desc(quizResponses.createdAt), desc(quizResponses.id))
+            .limit(1)
+          if (googleAttributed) {
+            const conversionId = randomUUID()
+            const created = await tx.insert(googleAdsConversions).ignore().values({
+              id: conversionId,
+              paymentId: p.id,
+              quizResponseId: googleAttributed.id,
+              transactionId: `purchase:${p.id}`,
+              eventTime: now,
+              status: "pending",
+              attempts: 0,
+              nextAttemptAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            if (affected(created) === 1) pendingGoogleAdsConversion = { id: conversionId }
+          }
         }
       }
 
@@ -981,6 +1013,7 @@ export function createMysqlRepos(db: Db): Repos {
         pendingGeneration,
         missingQuizResponse,
         pendingConversion,
+        pendingGoogleAdsConversion,
       }
     })
   }
@@ -1544,6 +1577,126 @@ export function createMysqlRepos(db: Db): Repos {
     },
   }
 
+  const googleAdsAttributionsRepo: GoogleAdsAttributionRepo = {
+    async save(quizResponseId, ids, now) {
+      await db.insert(googleAdsAttributions).ignore().values({ quizResponseId, ...ids, createdAt: now })
+    },
+
+    async purgeOlderThan(cutoff, limit) {
+      const result = await db.execute(
+        sql`DELETE FROM ${googleAdsAttributions} WHERE ${googleAdsAttributions.createdAt} < ${sql.param(cutoff, googleAdsAttributions.createdAt)} ORDER BY ${googleAdsAttributions.createdAt} LIMIT ${limit}`,
+      )
+      return affected(result)
+    },
+  }
+
+  const googleAdsConversionDue = (now: Date) =>
+    and(
+      eq(googleAdsConversions.status, "pending"),
+      lte(googleAdsConversions.nextAttemptAt, now),
+      or(isNull(googleAdsConversions.lockedUntil), lt(googleAdsConversions.lockedUntil, now)),
+    )
+  const addGoogleAdsAttempt = sql`${googleAdsConversions.attempts} + 1`
+
+  const googleAdsConversionsRepo: GoogleAdsConversionRepo = {
+    async listDue(now, limit) {
+      const rows = await db
+        .select({ id: googleAdsConversions.id })
+        .from(googleAdsConversions)
+        .where(googleAdsConversionDue(now))
+        .orderBy(asc(googleAdsConversions.nextAttemptAt), asc(googleAdsConversions.id))
+        .limit(limit)
+      return rows.map((r) => r.id)
+    },
+
+    async claim(id, now) {
+      const result = await db
+        .update(googleAdsConversions)
+        .set({ lockedUntil: new Date(now.getTime() + GOOGLE_ADS_CONVERSION_LOCK_MS), updatedAt: now })
+        .where(and(eq(googleAdsConversions.id, id), googleAdsConversionDue(now)))
+      return affected(result) === 1
+    },
+
+    async loadPayload(id) {
+      const [row] = await db
+        .select({
+          id: googleAdsConversions.id,
+          paymentId: googleAdsConversions.paymentId,
+          transactionId: googleAdsConversions.transactionId,
+          eventTime: googleAdsConversions.eventTime,
+          attempts: googleAdsConversions.attempts,
+          amount: payments.amount,
+          name: patients.name,
+          email: patients.email,
+          phone: patients.phone,
+          gclid: googleAdsAttributions.gclid,
+          gbraid: googleAdsAttributions.gbraid,
+          wbraid: googleAdsAttributions.wbraid,
+        })
+        .from(googleAdsConversions)
+        .innerJoin(payments, eq(payments.id, googleAdsConversions.paymentId))
+        .innerJoin(patients, eq(patients.id, payments.patientId))
+        .innerJoin(googleAdsAttributions, eq(googleAdsAttributions.quizResponseId, googleAdsConversions.quizResponseId))
+        .where(eq(googleAdsConversions.id, id))
+        .limit(1)
+      if (!row) return null
+      return {
+        id: row.id,
+        paymentId: row.paymentId,
+        transactionId: row.transactionId,
+        eventTime: row.eventTime,
+        attempts: row.attempts,
+        amount: row.amount,
+        patient: { email: row.email, phone: row.phone, name: row.name },
+        click: { gclid: row.gclid, gbraid: row.gbraid, wbraid: row.wbraid },
+      }
+    },
+
+    async markSent(id, now, requestId) {
+      await db
+        .update(googleAdsConversions)
+        .set({
+          status: "sent",
+          sentAt: now,
+          requestId: requestId?.slice(0, 100) ?? null,
+          attempts: addGoogleAdsAttempt,
+          lockedUntil: null,
+          updatedAt: now,
+        })
+        .where(eq(googleAdsConversions.id, id))
+    },
+
+    async markRetry(id, nextAttemptAt, lastError) {
+      await db
+        .update(googleAdsConversions)
+        .set({ nextAttemptAt, lastError, attempts: addGoogleAdsAttempt, lockedUntil: null, updatedAt: new Date() })
+        .where(eq(googleAdsConversions.id, id))
+    },
+
+    async markFailed(id, lastError) {
+      await db
+        .update(googleAdsConversions)
+        .set({ status: "failed", lastError, attempts: addGoogleAdsAttempt, lockedUntil: null, updatedAt: new Date() })
+        .where(eq(googleAdsConversions.id, id))
+    },
+
+    async reopen(id) {
+      const result = await db
+        .update(googleAdsConversions)
+        .set(reopenMetaConversionSet(new Date()))
+        .where(and(eq(googleAdsConversions.id, id), eq(googleAdsConversions.status, "failed")))
+      return affected(result) === 1
+    },
+
+    async reopenAllFailed() {
+      const result = await db
+        .update(googleAdsConversions)
+        .set(reopenMetaConversionSet(new Date()))
+        .where(eq(googleAdsConversions.status, "failed"))
+      return affected(result)
+    },
+  }
+
   return {
     submissions,
     payments: paymentsRepo,
@@ -1555,5 +1708,7 @@ export function createMysqlRepos(db: Db): Repos {
     appLogs: appLogsRepo,
     metaAttributions: metaAttributionsRepo,
     metaConversions: metaConversionsRepo,
+    googleAdsAttributions: googleAdsAttributionsRepo,
+    googleAdsConversions: googleAdsConversionsRepo,
   }
 }

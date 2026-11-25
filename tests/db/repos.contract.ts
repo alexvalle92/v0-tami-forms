@@ -2103,6 +2103,197 @@ export function defineRepoContract(name: string, setup: () => Promise<Repos>): v
       })
     })
 
+    describe("46b. Purchase do Google Ads: GoogleAdsAttributionRepo e GoogleAdsConversionRepo", () => {
+      const click = (gclid: string | null, over: { gbraid?: string; wbraid?: string } = {}) => ({
+        gclid,
+        gbraid: over.gbraid ?? null,
+        wbraid: over.wbraid ?? null,
+      })
+
+      async function clickedPayment(repos: Repos, gclid = "gclid-1") {
+        const p = await syncedPayment(repos)
+        await repos.googleAdsAttributions.save(p.ref.quizResponseId, click(gclid), new Date())
+        return p
+      }
+
+      const pay = async (repos: Repos, p: { ref: SubmissionRef; asaasId: string | null }, over = {}, when = new Date()) =>
+        expectProcessed(await repos.webhooks.applyPaymentEvent(ev("paid", { ...on(p), ...over }), when))
+
+      it("o primeiro evento pago de cobrança com clique cria o Purchase com os dados do envio", async () => {
+        const repos = await setup()
+        const p = await clickedPayment(repos)
+        const when = new Date()
+
+        const r = await pay(repos, p, {}, when)
+
+        expect(r.pendingGoogleAdsConversion).not.toBeNull()
+        const payload = await repos.googleAdsConversions.loadPayload(r.pendingGoogleAdsConversion!.id)
+        expect(payload).toMatchObject({
+          id: r.pendingGoogleAdsConversion!.id,
+          paymentId: p.ref.paymentId,
+          transactionId: `purchase:${p.ref.paymentId}`,
+          amount: "39.90",
+          attempts: 0,
+          patient: { name: p.sub.patient.name, email: p.sub.patient.email, phone: p.sub.patient.phone },
+          click: { gclid: "gclid-1", gbraid: null, wbraid: null },
+        })
+        expect(payload!.eventTime.getTime()).toBe(when.getTime())
+      })
+
+      it("é independente da Meta: só Google gera só a do Google; os dois geram as duas", async () => {
+        const repos = await setup()
+        const onlyGoogle = await pay(repos, await clickedPayment(repos))
+        expect(onlyGoogle.pendingConversion).toBeNull()
+        expect(onlyGoogle.pendingGoogleAdsConversion).not.toBeNull()
+
+        const both = await clickedPayment(repos)
+        await repos.metaAttributions.save(
+          both.ref.quizResponseId,
+          { externalId: null, fbp: null, fbc: null, clientIp: "1.2.3.4", userAgent: "UA", eventSourceUrl: null },
+          new Date(),
+        )
+        const r = await pay(repos, both)
+        expect(r.pendingConversion).not.toBeNull()
+        expect(r.pendingGoogleAdsConversion).not.toBeNull()
+      })
+
+      it("PAYMENT_CONFIRMED e depois PAYMENT_RECEIVED geram uma conversão só", async () => {
+        const repos = await setup()
+        const p = await clickedPayment(repos)
+
+        const first = await pay(repos, p, { event: "PAYMENT_CONFIRMED", status: "CONFIRMED" })
+        const second = await pay(repos, p, { event: "PAYMENT_RECEIVED", status: "RECEIVED" })
+
+        expect(first.pendingGoogleAdsConversion).not.toBeNull()
+        expect(second.pendingGoogleAdsConversion).toBeNull()
+      })
+
+      it("cobrança sem clique, reversão e evento antes do pagamento não geram conversão", async () => {
+        const repos = await setup()
+        expect((await pay(repos, await syncedPayment(repos))).pendingGoogleAdsConversion).toBeNull()
+
+        const p = await clickedPayment(repos)
+        const reversal = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("reversal", on(p)), new Date()))
+        const overdue = expectProcessed(await repos.webhooks.applyPaymentEvent(ev("pre_payment", on(p)), new Date()))
+        expect(reversal.pendingGoogleAdsConversion).toBeNull()
+        expect(overdue.pendingGoogleAdsConversion).toBeNull()
+      })
+
+      it("a primeira gravação do clique vale; gbraid e wbraid voltam no payload", async () => {
+        const repos = await setup()
+        const p = await syncedPayment(repos)
+        await repos.googleAdsAttributions.save(p.ref.quizResponseId, click(null, { gbraid: "gb-1", wbraid: "wb-1" }), new Date())
+        await repos.googleAdsAttributions.save(p.ref.quizResponseId, click("outro"), new Date())
+
+        const r = await pay(repos, p)
+
+        expect((await repos.googleAdsConversions.loadPayload(r.pendingGoogleAdsConversion!.id))!.click).toEqual({
+          gclid: null,
+          gbraid: "gb-1",
+          wbraid: "wb-1",
+        })
+      })
+
+      it("cobrança reaproveitada: usa o clique do envio mais recente que tem um", async () => {
+        const repos = await setup()
+        const cpf = randomCpf()
+        const first = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        await sleep(5)
+        const second = expectRef(await repos.submissions.create(newSub({ patient: { cpf } })))
+        expect(second.paymentId).toBe(first.paymentId)
+        const data = synced("PENDING", "2026-10-14")
+        await repos.payments.markSynced(first.paymentId, data)
+        await repos.googleAdsAttributions.save(first.quizResponseId, click("antigo"), new Date())
+        await repos.googleAdsAttributions.save(second.quizResponseId, click("recente"), new Date())
+
+        const r = await pay(repos, { ref: first, asaasId: data.asaasId })
+
+        expect((await repos.googleAdsConversions.loadPayload(r.pendingGoogleAdsConversion!.id))!.click.gclid).toBe("recente")
+      })
+
+      it("loadPayload de um id inexistente, ou com a atribuição já apagada, devolve null", async () => {
+        const repos = await setup()
+        expect(await repos.googleAdsConversions.loadPayload(UNKNOWN_ID)).toBeNull()
+
+        const p = await clickedPayment(repos)
+        const id = (await pay(repos, p)).pendingGoogleAdsConversion!.id
+        expect(await repos.googleAdsAttributions.purgeOlderThan(inMinutes(1), BIG)).toBeGreaterThanOrEqual(1)
+        expect(await repos.googleAdsConversions.loadPayload(id)).toBeNull()
+      })
+
+      it("claim reserva a linha por 60 s e não deixa dois processos pegarem a mesma", async () => {
+        const repos = await setup()
+        const id = (await pay(repos, await clickedPayment(repos))).pendingGoogleAdsConversion!.id
+        const now = new Date()
+
+        expect(await repos.googleAdsConversions.claim(id, now)).toBe(true)
+        expect(await repos.googleAdsConversions.claim(id, now)).toBe(false)
+        expect(await repos.googleAdsConversions.claim(id, new Date(now.getTime() + 61_000))).toBe(true)
+      })
+
+      it("listDue respeita next_attempt_at, a reserva e o status; markSent guarda o requestId", async () => {
+        const repos = await setup()
+        const { googleAdsConversions } = repos
+        const when = new Date()
+        const id = (await pay(repos, await clickedPayment(repos), {}, when)).pendingGoogleAdsConversion!.id
+        const now = new Date()
+
+        expect(await googleAdsConversions.listDue(now, BIG)).toContain(id)
+        expect(await googleAdsConversions.listDue(new Date(when.getTime() - 1000), BIG)).not.toContain(id)
+
+        expect(await googleAdsConversions.claim(id, now)).toBe(true)
+        expect(await googleAdsConversions.listDue(now, BIG)).not.toContain(id)
+
+        const later = inMinutes(10)
+        await googleAdsConversions.markRetry(id, later, syncError("google_ads_ingest"))
+        expect((await googleAdsConversions.loadPayload(id))!.attempts).toBe(1)
+        expect(await googleAdsConversions.listDue(now, BIG)).not.toContain(id)
+        expect(await googleAdsConversions.listDue(new Date(later.getTime() + 1000), BIG)).toContain(id)
+
+        await googleAdsConversions.markSent(id, new Date(), "req-123")
+        expect(await googleAdsConversions.listDue(inMinutes(60 * 24), BIG)).not.toContain(id)
+        expect((await googleAdsConversions.loadPayload(id))!.attempts).toBe(2)
+      })
+
+      it("markFailed tira da fila, reopen devolve com as tentativas zeradas e reopenAllFailed reabre todas", async () => {
+        const repos = await setup()
+        const { googleAdsConversions } = repos
+        const failed = (await pay(repos, await clickedPayment(repos))).pendingGoogleAdsConversion!.id
+        const sent = (await pay(repos, await clickedPayment(repos))).pendingGoogleAdsConversion!.id
+        const other = (await pay(repos, await clickedPayment(repos))).pendingGoogleAdsConversion!.id
+
+        await googleAdsConversions.markFailed(failed, syncError("google_ads_ingest"))
+        await googleAdsConversions.markSent(sent, new Date(), null)
+
+        expect(await googleAdsConversions.listDue(inMinutes(1), BIG)).not.toContain(failed)
+        expect(await googleAdsConversions.reopen(sent)).toBe(false)
+        expect(await googleAdsConversions.reopen(UNKNOWN_ID)).toBe(false)
+        expect(await googleAdsConversions.reopen(failed)).toBe(true)
+        expect(await googleAdsConversions.listDue(inMinutes(1), BIG)).toContain(failed)
+        expect((await googleAdsConversions.loadPayload(failed))!.attempts).toBe(0)
+
+        await googleAdsConversions.markFailed(other, syncError("google_ads_ingest"))
+        expect(await googleAdsConversions.reopenAllFailed()).toBeGreaterThanOrEqual(1)
+        expect(await googleAdsConversions.listDue(inMinutes(1), BIG)).toContain(other)
+      })
+
+      it("purgeOlderThan apaga em lotes só as atribuições antigas", async () => {
+        const repos = await setup()
+        const old = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000)
+        for (let i = 0; i < 3; i++) {
+          const ref = expectRef(await repos.submissions.create(newSub()))
+          await repos.googleAdsAttributions.save(ref.quizResponseId, click(`g-${i}`), old)
+        }
+        const fresh = expectRef(await repos.submissions.create(newSub()))
+        await repos.googleAdsAttributions.save(fresh.quizResponseId, click("fresh"), new Date())
+
+        const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+        expect(await repos.googleAdsAttributions.purgeOlderThan(cutoff, 2)).toBe(2)
+        expect(await repos.googleAdsAttributions.purgeOlderThan(cutoff, 1000)).toBe(1)
+        expect(await repos.googleAdsAttributions.purgeOlderThan(cutoff, 1000)).toBe(0)
+      })
+    })
+
     describe("47. desconto na cobrança", () => {
       // Janela em volta do relógio real: as cobranças criadas agora caem dentro dela.
       const win = { fromUtc: inMinutes(-10), toUtc: inMinutes(10), discountAmount: "29.90", limit: BIG }

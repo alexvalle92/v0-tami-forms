@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type {
   Channel,
+  GoogleAdsAttributionRepo,
   MetaAttributionRepo,
   NotificationRepo,
   PaymentRepo,
@@ -39,7 +40,12 @@ type Overrides = {
 
 function setup(
   wrap: (repos: ReturnType<typeof createMemoryRepos>) => Overrides = () => ({}),
-  opts: { metaEnabled?: boolean; metaAttributions?: MetaAttributionRepo } = {},
+  opts: {
+    metaEnabled?: boolean
+    metaAttributions?: MetaAttributionRepo
+    googleAdsEnabled?: boolean
+    googleAdsAttributions?: GoogleAdsAttributionRepo
+  } = {},
 ) {
   const repos = createMemoryRepos()
   const asaas = createFakeAsaas()
@@ -62,9 +68,16 @@ function setup(
     notifications: override.notifications ?? repos.notifications,
     syncPayment,
     metaAttributions: opts.metaAttributions ?? repos.metaAttributions,
+    googleAdsAttributions: opts.googleAdsAttributions ?? repos.googleAdsAttributions,
     log,
     now: () => NOW,
-    config: { amount: "39.90", channels: CHANNELS, requestBudgetMs: BUDGET_MS, metaEnabled: opts.metaEnabled ?? false },
+    config: {
+      amount: "39.90",
+      channels: CHANNELS,
+      requestBudgetMs: BUDGET_MS,
+      metaEnabled: opts.metaEnabled ?? false,
+      googleAdsEnabled: opts.googleAdsEnabled ?? false,
+    },
   })
   return { repos, asaas, log, alertAdmin, submit }
 }
@@ -413,5 +426,74 @@ describe("createSubmitQuiz: atribuição da Meta", () => {
     const text = loggedText(s.log)
     expect(text).not.toContain(EMAIL)
     expect(text).not.toContain("1.2.3.4")
+  })
+})
+
+describe("createSubmitQuiz: clique do Google Ads", () => {
+  const withClick = (submissionId: string, googleAds: ParsedSubmission["googleAds"]): ParsedSubmission => ({
+    ...submission(submissionId),
+    googleAds,
+  })
+
+  it("com o rastreamento ligado, grava o gclid do envio (ausentes viram nulo)", async () => {
+    const s = setup(undefined, { googleAdsEnabled: true })
+
+    const result = await s.submit(withClick("sub-1", { gclid: "Cj0KCQ-abc_123" }))
+
+    expect(result.kind).toBe("link")
+    const quizResponseId = result.kind === "link" ? result.quizResponseId : ""
+    expect(s.repos.state.googleAdsAttributions.get(quizResponseId)).toEqual({
+      quizResponseId,
+      gclid: "Cj0KCQ-abc_123",
+      gbraid: null,
+      wbraid: null,
+      createdAt: NOW,
+    })
+  })
+
+  it("sem clique, com objeto vazio ou com o rastreamento desligado, não grava nada", async () => {
+    const on = setup(undefined, { googleAdsEnabled: true })
+    await on.submit(submission("sub-1"))
+    await on.submit(withClick("sub-2", {}))
+    const off = setup(undefined, { googleAdsEnabled: false })
+    await off.submit(withClick("sub-1", { gbraid: "0AAAAA-x" }))
+
+    expect(on.repos.state.googleAdsAttributions.size).toBe(0)
+    expect(off.repos.state.googleAdsAttributions.size).toBe(0)
+  })
+
+  it("Meta e Google ligados gravam as duas atribuições do mesmo envio", async () => {
+    const s = setup(undefined, { metaEnabled: true, googleAdsEnabled: true })
+    const input: ParsedSubmission = {
+      ...submission("sub-1"),
+      meta: { fbp: "fb.1.1700000000000.123" },
+      googleAds: { wbraid: "wbraid-1" },
+    }
+
+    await s.submit(input, { clientIp: "1.2.3.4" })
+
+    expect(s.repos.state.metaAttributions.size).toBe(1)
+    expect([...s.repos.state.googleAdsAttributions.values()][0]).toMatchObject({ wbraid: "wbraid-1", gclid: null })
+  })
+
+  it("se gravar o clique falhar, o envio segue igual e só um aviso sem dado pessoal é logado", async () => {
+    const failing: GoogleAdsAttributionRepo = {
+      save: async () => {
+        throw new Error(`insert falhou para ${EMAIL}`)
+      },
+      purgeOlderThan: async () => 0,
+    }
+    const s = setup(undefined, { googleAdsEnabled: true, googleAdsAttributions: failing })
+
+    const result = await s.submit(withClick("sub-1", { gclid: "abc" }))
+
+    expect(result.kind).toBe("link")
+    const quizResponseId = result.kind === "link" ? result.quizResponseId : ""
+    expect(s.log.warn).toHaveBeenCalledWith("submit.google_ads_attribution_failed", {
+      submissionId: "sub-1",
+      quizResponseId,
+      message: expect.any(String),
+    })
+    expect(loggedText(s.log)).not.toContain(EMAIL)
   })
 })

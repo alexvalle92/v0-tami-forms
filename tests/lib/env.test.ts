@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { parseEnv } from "@/lib/env"
+import { serviceAccountJson } from "../fakes/service-account"
 
 const valid: Record<string, string | undefined> = {
   DATABASE_URL: "mysql://u:p@localhost:3306/db",
@@ -122,6 +123,71 @@ describe("parseEnv", () => {
     })
     expect(env.META_TRACKING_ENABLED).toBe(false)
     expect(env.META_API_VERSION).toBe("v24.0")
+  })
+
+  it("deixa o Google Ads desligado por padrão, sem exigir tag nem credenciais", () => {
+    const env = parseEnv(valid)
+    expect(env.GOOGLE_ADS_TRACKING_ENABLED).toBe(false)
+    expect(env.GOOGLE_ADS_UPLOAD_ENABLED).toBe(false)
+    expect(env.GOOGLE_ADS_ENHANCED_CONVERSIONS).toBe(false)
+    expect(env.GOOGLE_ADS_VALIDATE_ONLY).toBe(false)
+  })
+
+  it("com a tag ligada, exige GOOGLE_ADS_TAG_ID no formato AW- e rótulos válidos", () => {
+    const on = { ...valid, GOOGLE_ADS_TRACKING_ENABLED: "true" }
+    expect(() => parseEnv(on)).toThrow(/GOOGLE_ADS_TAG_ID/)
+    expect(() => parseEnv({ ...on, GOOGLE_ADS_TAG_ID: "G-ABC" })).toThrow(/GOOGLE_ADS_TAG_ID/)
+    expect(() => parseEnv({ ...on, GOOGLE_ADS_TAG_ID: "AW-1", GOOGLE_ADS_LEAD_LABEL: "a/b" })).toThrow(
+      /GOOGLE_ADS_LEAD_LABEL/,
+    )
+    const env = parseEnv({ ...on, GOOGLE_ADS_TAG_ID: "AW-123", GOOGLE_ADS_CHECKOUT_LABEL: "AbC_1-x" })
+    expect(env.GOOGLE_ADS_TRACKING_ENABLED).toBe(true)
+    // A tag sozinha não exige as credenciais do envio do Purchase.
+    expect(env.GOOGLE_ADS_UPLOAD_ENABLED).toBe(false)
+  })
+
+  it("com o envio ligado, exige conta, ação de conversão e a chave da conta de serviço", () => {
+    const on = { ...valid, GOOGLE_ADS_UPLOAD_ENABLED: "true" }
+    expect(() => parseEnv(on)).toThrow(
+      /GOOGLE_ADS_CUSTOMER_ID.*GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID.*GOOGLE_ADS_SERVICE_ACCOUNT_JSON/,
+    )
+
+    const full = {
+      ...on,
+      GOOGLE_ADS_CUSTOMER_ID: "123-456-7890",
+      GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID: "987654321",
+      GOOGLE_ADS_SERVICE_ACCOUNT_JSON: Buffer.from(serviceAccountJson()).toString("base64"),
+    }
+    expect(parseEnv(full).GOOGLE_ADS_UPLOAD_ENABLED).toBe(true)
+    expect(() => parseEnv({ ...full, GOOGLE_ADS_CUSTOMER_ID: "12345" })).toThrow(/GOOGLE_ADS_CUSTOMER_ID/)
+    expect(() => parseEnv({ ...full, GOOGLE_ADS_LOGIN_CUSTOMER_ID: "abc" })).toThrow(/GOOGLE_ADS_LOGIN_CUSTOMER_ID/)
+    expect(() => parseEnv({ ...full, GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID: "ação" })).toThrow(
+      /GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID/,
+    )
+    expect(() => parseEnv({ ...full, GOOGLE_ADS_SERVICE_ACCOUNT_JSON: "{}" })).toThrow(/GOOGLE_ADS_SERVICE_ACCOUNT_JSON/)
+  })
+
+  it("a mensagem de erro nunca mostra o conteúdo da chave da conta de serviço", () => {
+    const secret = serviceAccountJson({ client_email: "" })
+    try {
+      parseEnv({ ...valid, GOOGLE_ADS_UPLOAD_ENABLED: "true", GOOGLE_ADS_SERVICE_ACCOUNT_JSON: secret })
+      throw new Error("deveria falhar")
+    } catch (err) {
+      expect(String(err)).not.toContain("PRIVATE KEY")
+    }
+  })
+
+  it("com o Google Ads desligado, variáveis GOOGLE_ADS_* em branco ou fora do formato não impedem o boot", () => {
+    const env = parseEnv({
+      ...valid,
+      GOOGLE_ADS_TRACKING_ENABLED: "",
+      GOOGLE_ADS_TAG_ID: "tag-do-google",
+      GOOGLE_ADS_UPLOAD_ENABLED: "false",
+      GOOGLE_ADS_CUSTOMER_ID: "x",
+      GOOGLE_ADS_SERVICE_ACCOUNT_JSON: " ",
+    })
+    expect(env.GOOGLE_ADS_TRACKING_ENABLED).toBe(false)
+    expect(env.GOOGLE_ADS_UPLOAD_ENABLED).toBe(false)
   })
 
   it("META_TRACKING_ENABLED em branco vale como desligado", () => {

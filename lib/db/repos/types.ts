@@ -233,6 +233,8 @@ export type PaymentEventResult =
        * envio dela tem atribuição. Nos demais casos é sempre null.
        */
       pendingConversion: { id: string } | null
+      /** Purchase do Google Ads, pela mesma regra do da Meta, com a atribuição do Google. */
+      pendingGoogleAdsConversion: { id: string } | null
     }
 
 export interface WebhookRepo {
@@ -356,6 +358,51 @@ export interface MetaConversionRepo {
   reopenAllFailed(): Promise<number>
 }
 
+/** Identificadores do clique no anúncio do Google que o envio do quiz guarda (spec Google Ads §7). */
+export type GoogleAdsClickIds = {
+  gclid: string | null
+  gbraid: string | null
+  wbraid: string | null
+}
+
+export interface GoogleAdsAttributionRepo {
+  /** INSERT IGNORE: a primeira gravação do envio vale (reenvio com o mesmo submissionId não troca). */
+  save(quizResponseId: string, ids: GoogleAdsClickIds, now: Date): Promise<void>
+  /** Apaga até `limit` linhas com `created_at < cutoff`; devolve quantas. */
+  purgeOlderThan(cutoff: Date, limit: number): Promise<number>
+}
+
+/** Tudo que o envio do Purchase ao Google precisa; montado na hora de enviar, sem duplicar dado pessoal na fila. */
+export type GoogleAdsConversionPayload = {
+  id: string
+  paymentId: string
+  transactionId: string
+  eventTime: Date
+  /** Tentativas já feitas, sem contar a que vai começar. */
+  attempts: number
+  amount: string
+  patient: { email: string; phone: string; name: string }
+  click: GoogleAdsClickIds
+}
+
+export interface GoogleAdsConversionRepo {
+  /** `pending` com `next_attempt_at <= now` e não reservadas, por `next_attempt_at` crescente. */
+  listDue(now: Date, limit: number): Promise<string[]>
+  /** Reserva a linha por 60 s se ela está `pending`, vencida e livre; `false` se outro processo a tem. */
+  claim(id: string, now: Date): Promise<boolean>
+  /** `null` se a conversão, a cobrança, o paciente ou a atribuição não existem mais. */
+  loadPayload(id: string): Promise<GoogleAdsConversionPayload | null>
+  /** Marca como enviada (aceita pelo Google), guarda o `requestId`; soma uma tentativa e solta a reserva. */
+  markSent(id: string, now: Date, requestId: string | null): Promise<void>
+  /** Segue `pending` em `nextAttemptAt`; soma uma tentativa e solta a reserva. */
+  markRetry(id: string, nextAttemptAt: Date, lastError: LastError): Promise<void>
+  /** Marca como `failed`; soma uma tentativa e solta a reserva. */
+  markFailed(id: string, lastError: LastError): Promise<void>
+  /** Só age em `failed`: volta a `pending` agora, com as tentativas zeradas. */
+  reopen(id: string): Promise<boolean>
+  reopenAllFailed(): Promise<number>
+}
+
 export type Repos = {
   submissions: SubmissionRepo
   payments: PaymentRepo
@@ -367,6 +414,8 @@ export type Repos = {
   appLogs: AppLogRepo
   metaAttributions: MetaAttributionRepo
   metaConversions: MetaConversionRepo
+  googleAdsAttributions: GoogleAdsAttributionRepo
+  googleAdsConversions: GoogleAdsConversionRepo
 }
 
 /** Conteúdo de `meal_plans.plan_data`, no formato que o PlanA lê (spec §4, §11). */

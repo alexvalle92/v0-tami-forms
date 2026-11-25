@@ -81,7 +81,13 @@ describe("createHandleAsaasEvent", () => {
 
     const r = await handle(e)
 
-    expect(r).toEqual({ outcome: "duplicate", pendingGeneration: null, notice: null, pendingConversion: null })
+    expect(r).toEqual({
+      outcome: "duplicate",
+      pendingGeneration: null,
+      notice: null,
+      pendingConversion: null,
+      pendingGoogleAdsConversion: null,
+    })
     expect(log.lines).toEqual([
       {
         level: "info",
@@ -96,7 +102,13 @@ describe("createHandleAsaasEvent", () => {
 
     const r = await handle(event({ externalReference: "00000000-0000-4000-8000-000000000000" }))
 
-    expect(r).toEqual({ outcome: "ignored", pendingGeneration: null, notice: null, pendingConversion: null })
+    expect(r).toEqual({
+      outcome: "ignored",
+      pendingGeneration: null,
+      notice: null,
+      pendingConversion: null,
+      pendingGoogleAdsConversion: null,
+    })
     expect(log.lines).toHaveLength(1)
     expect(log.lines[0]).toMatchObject({
       level: "info",
@@ -151,7 +163,13 @@ describe("createHandleAsaasEvent", () => {
       event({ event: "PAYMENT_OVERDUE", group: "pre_payment", status: "OVERDUE", externalReference: ref.paymentId }),
     )
 
-    expect(r).toEqual({ outcome: "processed", pendingGeneration: null, notice: null, pendingConversion: null })
+    expect(r).toEqual({
+      outcome: "processed",
+      pendingGeneration: null,
+      notice: null,
+      pendingConversion: null,
+      pendingGoogleAdsConversion: null,
+    })
   })
 
   it("pago sem envio do quiz: aviso payment_without_quiz e nenhuma geração", async () => {
@@ -162,6 +180,7 @@ describe("createHandleAsaasEvent", () => {
       pendingGeneration: null,
       missingQuizResponse: true,
       pendingConversion: null,
+      pendingGoogleAdsConversion: null,
     }
     const webhooks: WebhookRepo = { applyPaymentEvent: vi.fn(async () => processed) }
     const handle = createHandleAsaasEvent({ webhooks, log: fakeLog(), now: () => NOW })
@@ -195,6 +214,23 @@ describe("createHandleAsaasEvent", () => {
 
     const again = await handle(event({ eventId: "evt_2", event: "PAYMENT_CONFIRMED", externalReference: ref.paymentId }))
     expect(again.pendingConversion).toBeNull()
+    // Sem clique do Google gravado, não há Purchase para o Google.
+    expect(r.pendingGoogleAdsConversion).toBeNull()
+  })
+
+  it("primeiro pagamento de cobrança com clique do Google devolve a conversão do Google Ads a enviar", async () => {
+    const { repos, ref, handle } = await setup()
+    await repos.googleAdsAttributions.save(ref.quizResponseId, { gclid: "Cj0KCQ-abc", gbraid: null, wbraid: null }, NOW)
+
+    const r = await handle(event({ externalReference: ref.paymentId }))
+
+    expect(r.pendingGoogleAdsConversion).toEqual({ id: expect.any(String) })
+    expect(r.pendingConversion).toBeNull()
+    const row = repos.state.googleAdsConversions.get(r.pendingGoogleAdsConversion!.id)!
+    expect(row).toMatchObject({ paymentId: ref.paymentId, transactionId: `purchase:${ref.paymentId}`, status: "pending" })
+
+    const again = await handle(event({ eventId: "evt_2", event: "PAYMENT_CONFIRMED", externalReference: ref.paymentId }))
+    expect(again.pendingGoogleAdsConversion).toBeNull()
   })
 
   it("erro do repositório é propagado", async () => {

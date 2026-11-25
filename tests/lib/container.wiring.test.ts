@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { getContainer } from "@/lib/container"
+import { serviceAccountJson } from "../fakes/service-account"
 
 // Monta o container de verdade com um env completo e inválido para a rede: o pool do mysql2 só conecta na
 // primeira consulta e o cliente da Anthropic só nasce na primeira geração, então nada aqui sai da máquina.
@@ -77,6 +78,28 @@ describe("getContainer (ligação das dependências do pós-pagamento)", () => {
     const on = getFreshContainer()
     expect(on.sendMetaConversion).toBeTypeOf("function")
     expect(on.metaCapi?.send).toBeTypeOf("function")
+  })
+
+  it("expõe o envio do Purchase ao Google Ads desligado (padrão) e ligado, sem tocar a rede", async () => {
+    const off = getContainer()
+    expect(off.sendGoogleAdsConversion).toBeTypeOf("function")
+    expect(off.googleAdsClient).toBeNull()
+
+    vi.resetModules()
+    delete globals.__tamiFormsContainer
+    Object.assign(process.env, {
+      GOOGLE_ADS_TRACKING_ENABLED: "true",
+      GOOGLE_ADS_TAG_ID: "AW-123456789",
+      GOOGLE_ADS_UPLOAD_ENABLED: "true",
+      GOOGLE_ADS_CUSTOMER_ID: "123-456-7890",
+      GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID: "987654321",
+      GOOGLE_ADS_SERVICE_ACCOUNT_JSON: serviceAccountJson(),
+    })
+    const { getContainer: getFreshContainer } = await import("@/lib/container")
+    const on = getFreshContainer()
+    expect(on.env.GOOGLE_ADS_UPLOAD_ENABLED).toBe(true)
+    expect(on.googleAdsClient?.ingest).toBeTypeOf("function")
+    expect(on.repos.googleAdsConversions.listDue).toBeTypeOf("function")
   })
 
   it("monta a rodada com o desconto na cobrança desligado (padrão) e ligado", async () => {

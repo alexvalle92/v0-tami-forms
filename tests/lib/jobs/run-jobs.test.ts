@@ -3,7 +3,7 @@ import { hashPassword, verifyPassword } from "@/lib/access/password-hash"
 import { deriveTempPassword } from "@/lib/access/temp-password"
 import type { Channel, NotificationRepo, PaymentRepo, PlanGenerationRepo } from "@/lib/db/repos/types"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
-import { createRunJobs, type RunJobsMeta } from "@/lib/jobs/run-jobs"
+import { createRunJobs, type RunJobsGoogleAds, type RunJobsMeta } from "@/lib/jobs/run-jobs"
 import type { Logger } from "@/lib/log"
 import { parsePlanAnswers } from "@/lib/meal-plan/answers"
 import type { GeneratorResult } from "@/lib/meal-plan/generator"
@@ -92,6 +92,8 @@ type Overrides = {
   purge?: () => Promise<number>
   /** Fila do Purchase da Meta; por padrão a rodada não recebe `meta`. */
   meta?: RunJobsMeta
+  /** Fila do Purchase do Google Ads; por padrão a rodada não recebe `googleAds`. */
+  googleAds?: RunJobsGoogleAds
 }
 
 async function setup(patientCount = 1, o: Overrides = {}) {
@@ -163,6 +165,7 @@ async function setup(patientCount = 1, o: Overrides = {}) {
     ...(o.discounts ? { discounts: o.discounts } : {}),
     ...(o.purge ? { purge: o.purge } : {}),
     ...(o.meta ? { meta: o.meta } : {}),
+    ...(o.googleAds ? { googleAds: o.googleAds } : {}),
   })
   /** Marca a cobrança como paga pelo webhook (cria a geração `pending`); devolve o id da geração. */
   async function payAndQueueGeneration(paymentId: string, n: number): Promise<string> {
@@ -692,6 +695,88 @@ describe("createRunJobs", () => {
       expect(summary).toMatchObject({ errors: 1, conversions: 2 })
       expect(sent).toEqual(["mc-2"])
       expect(s.log.error).toHaveBeenCalledWith("job.conversion.error", { conversionId: "mc-1", message: "boom" })
+    })
+  })
+
+  describe("fila do Purchase do Google Ads", () => {
+    const googleWith = (over: Partial<RunJobsGoogleAds> = {}): RunJobsGoogleAds => ({
+      enabled: true,
+      conversions: { listDue: vi.fn(async (_now: Date, _limit: number) => ["gc-1", "gc-2"]) },
+      send: vi.fn(async (_id: string) => {}),
+      limit: 20,
+      ...over,
+    })
+
+    it("envia as vencidas depois da Meta e antes da limpeza, e conta em googleAdsConversions", async () => {
+      const order: string[] = []
+      const meta: RunJobsMeta = {
+        enabled: true,
+        conversions: { listDue: vi.fn(async () => ["mc-1"]) },
+        send: vi.fn(async (id: string) => {
+          order.push(`meta:${id}`)
+        }),
+        limit: 20,
+      }
+      const googleAds = googleWith({
+        send: vi.fn(async (id: string) => {
+          order.push(`google:${id}`)
+        }),
+      })
+      const s = await setup(0, {
+        meta,
+        googleAds,
+        purge: async () => {
+          order.push("purge")
+          return 0
+        },
+      })
+
+      const summary = await s.runJobs()
+
+      expect(order).toEqual(["meta:mc-1", "google:gc-1", "google:gc-2", "purge"])
+      expect(summary).toMatchObject({ errors: 0, conversions: 1, googleAdsConversions: 2 })
+      expect(googleAds.conversions.listDue).toHaveBeenCalledWith(expect.any(Date), 20)
+    })
+
+    it("com o envio desligado não lista nem envia, e o resumo não tem googleAdsConversions", async () => {
+      const googleAds = googleWith({ enabled: false })
+      const s = await setup(0, { googleAds })
+
+      const summary = await s.runJobs()
+
+      expect(googleAds.conversions.listDue).not.toHaveBeenCalled()
+      expect(googleAds.send).not.toHaveBeenCalled()
+      expect(summary).not.toHaveProperty("googleAdsConversions")
+    })
+
+    it("falha ao listar ou num envio conta erro, loga e a rodada segue", async () => {
+      const listing = await setup(0, {
+        googleAds: googleWith({
+          conversions: {
+            listDue: vi.fn(async (): Promise<string[]> => {
+              throw new Error("db down")
+            }),
+          },
+        }),
+      })
+      expect(await listing.runJobs()).toMatchObject({ errors: 1, googleAdsConversions: 0 })
+      expect(listing.log.error).toHaveBeenCalledWith("job.google_ads_conversions.list_failed", { message: "db down" })
+
+      const sent: string[] = []
+      const sending = await setup(0, {
+        googleAds: googleWith({
+          send: vi.fn(async (id: string) => {
+            if (id === "gc-1") throw new Error("boom")
+            sent.push(id)
+          }),
+        }),
+      })
+      expect(await sending.runJobs()).toMatchObject({ errors: 1, googleAdsConversions: 2 })
+      expect(sent).toEqual(["gc-2"])
+      expect(sending.log.error).toHaveBeenCalledWith("job.google_ads_conversion.error", {
+        conversionId: "gc-1",
+        message: "boom",
+      })
     })
   })
 

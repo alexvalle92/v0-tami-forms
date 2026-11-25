@@ -5,7 +5,9 @@ import { deriveTempPassword } from "@/lib/access/temp-password"
 import { getDb } from "@/lib/db/client"
 import { createMysqlRepos } from "@/lib/db/repos/mysql"
 import type { Channel, PaymentEventInput, Repos } from "@/lib/db/repos/types"
-import { getEnv, type Env } from "@/lib/env"
+import { getEnv, googleAdsAccountDigits, type Env } from "@/lib/env"
+import { createServiceAccountTokenProvider, parseServiceAccountKey } from "@/lib/google-ads/auth"
+import { createDataManagerClient, type DataManagerClient } from "@/lib/google-ads/data-manager"
 import { createRateLimiter, type RateLimiter } from "@/lib/http/rate-limit"
 import { createMetaCapiClient, type MetaCapiClient } from "@/lib/meta/capi"
 import { createEnqueueExpiryReminders } from "@/lib/jobs/expiry-reminders"
@@ -25,6 +27,10 @@ import { createDispatchForQuizResponse } from "@/lib/services/dispatch-for-quiz-
 import { createDispatchNotification, type DispatchNotification } from "@/lib/services/dispatch-notification"
 import { createGeneratePlan, createRunPlanGeneration } from "@/lib/services/generate-plan"
 import { createHandleAsaasEvent, type HandledEvent } from "@/lib/services/handle-asaas-event"
+import {
+  createSendGoogleAdsConversion,
+  type SendGoogleAdsConversion,
+} from "@/lib/services/send-google-ads-conversion"
 import { createSendMetaConversion, type SendMetaConversion } from "@/lib/services/send-meta-conversion"
 import { createSubmitQuiz, type SubmitQuiz } from "@/lib/services/submit-quiz"
 import { createSyncPayment, type SyncPayment } from "@/lib/services/sync-payment"
@@ -33,6 +39,7 @@ const SUBMIT_REQUEST_BUDGET_MS = 20_000
 const JOB_PAYMENT_DEADLINE_MS = 30_000
 const JOB_LIMITS = { payments: 20, plans: 3, notifications: 50 }
 const META_CONVERSIONS_PER_ROUND = 20
+const GOOGLE_ADS_CONVERSIONS_PER_ROUND = 20
 const DISCOUNTS_PER_ROUND = 50
 const SUBMIT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }
 const EVENTS_RATE_LIMIT = { limit: 120, windowMs: 60_000 }
@@ -60,6 +67,10 @@ export type Container = {
   sendMetaConversion: SendMetaConversion
   /** Cliente da API de Conversões; `null` com o rastreamento da Meta desligado. */
   metaCapi: MetaCapiClient | null
+  /** Envia ao Google Ads o Purchase de uma cobrança paga (fila `google_ads_conversions`); nunca lança e não faz nada com o envio desligado. */
+  sendGoogleAdsConversion: SendGoogleAdsConversion
+  /** Cliente da Data Manager API; `null` com `GOOGLE_ADS_UPLOAD_ENABLED` desligado. */
+  googleAdsClient: DataManagerClient | null
   /** Rodada exclusiva do job: o agendador e `POST /api/jobs/run` usam este mesmo runner. */
   runner: () => Promise<"ran" | "skipped">
   retryFailed: (t: RetryTarget) => Promise<{ reopened: number }>
@@ -139,6 +150,7 @@ function buildContainer(): Container {
     notifications,
     syncPayment,
     metaAttributions: repos.metaAttributions,
+    googleAdsAttributions: repos.googleAdsAttributions,
     log,
     now,
     config: {
@@ -146,6 +158,7 @@ function buildContainer(): Container {
       channels,
       requestBudgetMs: SUBMIT_REQUEST_BUDGET_MS,
       metaEnabled: env.META_TRACKING_ENABLED,
+      googleAdsEnabled: env.GOOGLE_ADS_TRACKING_ENABLED,
     },
   })
   const dispatchForQuizResponse = createDispatchForQuizResponse({ notifications, dispatchNotification, log })
@@ -175,6 +188,29 @@ function buildContainer(): Container {
     conversions: repos.metaConversions,
     capi: metaCapi,
     enabled: env.META_TRACKING_ENABLED,
+    alertAdmin,
+    log,
+    now,
+  })
+  // Sem a chave ligada (e o env garante conta, ação e chave quando ligada) não há cliente: o Google nunca é chamado.
+  const googleAdsKey = env.GOOGLE_ADS_UPLOAD_ENABLED ? parseServiceAccountKey(env.GOOGLE_ADS_SERVICE_ACCOUNT_JSON) : null
+  const googleAdsCustomerId = googleAdsAccountDigits(env.GOOGLE_ADS_CUSTOMER_ID)
+  const googleAdsClient =
+    googleAdsKey && googleAdsCustomerId && env.GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID
+      ? createDataManagerClient({
+          customerId: googleAdsCustomerId,
+          loginCustomerId: googleAdsAccountDigits(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID),
+          conversionActionId: env.GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID,
+          validateOnly: env.GOOGLE_ADS_VALIDATE_ONLY,
+          auth: createServiceAccountTokenProvider({ key: googleAdsKey }),
+        })
+      : null
+  const sendGoogleAdsConversion = createSendGoogleAdsConversion({
+    conversions: repos.googleAdsConversions,
+    client: googleAdsClient,
+    enabled: env.GOOGLE_ADS_UPLOAD_ENABLED,
+    enhancedConversions: env.GOOGLE_ADS_ENHANCED_CONVERSIONS,
+    validateOnly: env.GOOGLE_ADS_VALIDATE_ONLY,
     alertAdmin,
     log,
     now,
@@ -218,6 +254,7 @@ function buildContainer(): Container {
       analytics: repos.analytics,
       appLogs: repos.appLogs,
       metaAttributions: repos.metaAttributions,
+      googleAdsAttributions: repos.googleAdsAttributions,
       now,
     }),
     meta: {
@@ -225,6 +262,12 @@ function buildContainer(): Container {
       conversions: repos.metaConversions,
       send: sendMetaConversion,
       limit: META_CONVERSIONS_PER_ROUND,
+    },
+    googleAds: {
+      enabled: env.GOOGLE_ADS_UPLOAD_ENABLED,
+      conversions: repos.googleAdsConversions,
+      send: sendGoogleAdsConversion,
+      limit: GOOGLE_ADS_CONVERSIONS_PER_ROUND,
     },
     log,
     now,
@@ -250,8 +293,16 @@ function buildContainer(): Container {
     noticeAdmin,
     sendMetaConversion,
     metaCapi,
+    sendGoogleAdsConversion,
+    googleAdsClient,
     runner,
-    retryFailed: createRetryFailed({ payments, notifications, planGenerations, metaConversions: repos.metaConversions }),
+    retryFailed: createRetryFailed({
+      payments,
+      notifications,
+      planGenerations,
+      metaConversions: repos.metaConversions,
+      googleAdsConversions: repos.googleAdsConversions,
+    }),
     rateLimiter: createRateLimiter(SUBMIT_RATE_LIMIT),
     eventsRateLimiter: createRateLimiter(EVENTS_RATE_LIMIT),
     metaEventsRateLimiter: createRateLimiter(META_EVENTS_RATE_LIMIT),

@@ -1,5 +1,6 @@
 import type {
   Channel,
+  GoogleAdsAttributionRepo,
   MetaAttributionRepo,
   NotificationRepo,
   PaymentRepo,
@@ -30,8 +31,8 @@ const MAX_USER_AGENT = 500
  * Uma submissão do quiz: grava tudo no MySQL e tenta obter o link de pagamento dentro do pedido.
  * Idempotente por `submissionId`. Só uma falha ao achar/criar o envio vira `db_error`;
  * depois que os dados estão salvos, qualquer erro vira `pending` (o job conclui).
- * Com o rastreamento da Meta ligado e `meta` no envio, grava a atribuição do anúncio; essa gravação
- * nunca muda o resultado.
+ * Com o rastreamento da Meta ligado e `meta` no envio, grava a atribuição do anúncio; com o do Google Ads ligado
+ * e `googleAds` no envio, grava o clique. Essas gravações nunca mudam o resultado.
  */
 export function createSubmitQuiz(d: {
   submissions: SubmissionRepo
@@ -39,9 +40,16 @@ export function createSubmitQuiz(d: {
   notifications: NotificationRepo
   syncPayment: SyncPayment
   metaAttributions: Pick<MetaAttributionRepo, "save">
+  googleAdsAttributions: Pick<GoogleAdsAttributionRepo, "save">
   log: Logger
   now: () => Date
-  config: { amount: string; channels: Channel[]; requestBudgetMs: number; metaEnabled: boolean }
+  config: {
+    amount: string
+    channels: Channel[]
+    requestBudgetMs: number
+    metaEnabled: boolean
+    googleAdsEnabled: boolean
+  }
 }): SubmitQuiz {
   async function findOrCreateRef(input: ParsedSubmission): Promise<SubmissionRef | null> {
     const existing = await d.submissions.findBySubmissionId(input.submissionId)
@@ -84,6 +92,24 @@ export function createSubmitQuiz(d: {
     }
   }
 
+  async function saveGoogleAdsAttribution(input: ParsedSubmission, quizResponseId: string) {
+    const click = input.googleAds
+    if (!d.config.googleAdsEnabled || !click || !(click.gclid || click.gbraid || click.wbraid)) return
+    try {
+      await d.googleAdsAttributions.save(
+        quizResponseId,
+        { gclid: click.gclid ?? null, gbraid: click.gbraid ?? null, wbraid: click.wbraid ?? null },
+        d.now(),
+      )
+    } catch (err) {
+      d.log.warn("submit.google_ads_attribution_failed", {
+        submissionId: input.submissionId,
+        quizResponseId,
+        message: safeErrorMessage(err),
+      })
+    }
+  }
+
   return async function submitQuiz(input, ctx) {
     const startedAt = d.now().getTime()
     const elapsed = () => d.now().getTime() - startedAt
@@ -112,6 +138,7 @@ export function createSubmitQuiz(d: {
 
     const { quizResponseId, paymentId } = ref
     await saveMetaAttribution(input, quizResponseId, ctx)
+    await saveGoogleAdsAttribution(input, quizResponseId)
     const base ={ submissionId: input.submissionId, quizResponseId, paymentId }
     const pending = (reason: string): SubmitResult => {
       d.log.info("submit.done", { ...base, outcome: "pending", reason, durationMs: elapsed() })

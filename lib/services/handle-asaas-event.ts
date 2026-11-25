@@ -10,7 +10,11 @@ export type HandledEvent = {
   notice: AdminNotice | null
   /** Purchase da Meta a enviar depois da resposta. Só no primeiro evento pago de uma cobrança com atribuição. */
   pendingConversion: { id: string } | null
+  /** Purchase do Google Ads a enviar depois da resposta. Mesma regra, com a atribuição do Google. */
+  pendingGoogleAdsConversion: { id: string } | null
 }
+
+const NOTHING_PENDING = { pendingGeneration: null, notice: null, pendingConversion: null, pendingGoogleAdsConversion: null }
 
 /**
  * Trata um evento de cobrança já lido (spec §5, passo 3): delega ao repositório a transação
@@ -30,12 +34,12 @@ export function createHandleAsaasEvent(d: {
     switch (result.outcome) {
       case "duplicate":
         d.log.info("webhook.asaas.duplicate", fields)
-        return { outcome: "duplicate", pendingGeneration: null, notice: null, pendingConversion: null }
+        return { outcome: "duplicate", ...NOTHING_PENDING }
 
       case "ignored": {
         const level = result.reason === "asaas_id_mismatch" ? "warn" : "info"
         d.log[level]("webhook.asaas.ignored", { ...fields, reason: result.reason })
-        return { outcome: "ignored", pendingGeneration: null, notice: null, pendingConversion: null }
+        return { outcome: "ignored", ...NOTHING_PENDING }
       }
 
       case "processed": {
@@ -58,6 +62,7 @@ export function createHandleAsaasEvent(d: {
           pendingGeneration: result.pendingGeneration,
           notice,
           pendingConversion: result.pendingConversion,
+          pendingGoogleAdsConversion: result.pendingGoogleAdsConversion,
         }
       }
     }

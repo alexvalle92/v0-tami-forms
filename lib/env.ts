@@ -1,4 +1,6 @@
 import { z } from "zod"
+import { parseServiceAccountKey } from "@/lib/google-ads/auth"
+import { GOOGLE_ADS_LABEL_RE, GOOGLE_ADS_TAG_ID_RE } from "@/lib/google-ads/shared"
 
 const required = z.string().min(1)
 
@@ -21,6 +23,9 @@ const offByDefaultFlag = z.preprocess(
 )
 
 const metaText = z.preprocess(blankAsMissing, z.string().optional())
+
+/** Id de conta do Google Ads como aparece no painel (123-456-7890) ou só com dígitos; guarda só os dígitos. */
+export const googleAdsAccountDigits = (value: string | undefined) => value?.replace(/[\s-]/g, "")
 
 const envSchema = z.object({
   DATABASE_URL: required,
@@ -57,6 +62,19 @@ const envSchema = z.object({
   META_CAPI_TOKEN: metaText,
   META_API_VERSION: z.preprocess(blankAsMissing, z.string().default("v24.0")),
   META_TEST_EVENT_CODE: metaText,
+  // Google Ads: a tag no navegador (e a gravação do clique) e o envio do Purchase têm chaves separadas, para
+  // ligar a tag antes de a conta de serviço estar pronta. Os cliques gravados esperam o envio ser ligado.
+  GOOGLE_ADS_TRACKING_ENABLED: offByDefaultFlag,
+  GOOGLE_ADS_TAG_ID: metaText,
+  GOOGLE_ADS_LEAD_LABEL: metaText,
+  GOOGLE_ADS_CHECKOUT_LABEL: metaText,
+  GOOGLE_ADS_UPLOAD_ENABLED: offByDefaultFlag,
+  GOOGLE_ADS_CUSTOMER_ID: metaText,
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID: metaText,
+  GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID: metaText,
+  GOOGLE_ADS_SERVICE_ACCOUNT_JSON: metaText,
+  GOOGLE_ADS_ENHANCED_CONVERSIONS: offByDefaultFlag,
+  GOOGLE_ADS_VALIDATE_ONLY: offByDefaultFlag,
   PAYMENT_DISCOUNT_ENABLED: offByDefaultFlag,
   PAYMENT_DISCOUNT_AMOUNT: z.preprocess(blankAsMissing, z.string().default("29.90")),
   PAYMENT_DISCOUNT_DUE_DAYS: z.preprocess(blankAsMissing, z.string().default("5")),
@@ -69,6 +87,27 @@ const envSchema = z.object({
     }
     if (!/^\d+$/.test(env.PAYMENT_DISCOUNT_DUE_DAYS) || Number(env.PAYMENT_DISCOUNT_DUE_DAYS) <= 0) {
       issue("PAYMENT_DISCOUNT_DUE_DAYS", "inteiro positivo")
+    }
+  }
+  if (env.GOOGLE_ADS_TRACKING_ENABLED) {
+    if (!env.GOOGLE_ADS_TAG_ID) issue("GOOGLE_ADS_TAG_ID", "obrigatória com o rastreamento do Google Ads ligado")
+    else if (!GOOGLE_ADS_TAG_ID_RE.test(env.GOOGLE_ADS_TAG_ID)) issue("GOOGLE_ADS_TAG_ID", "formato AW-123456789")
+    for (const name of ["GOOGLE_ADS_LEAD_LABEL", "GOOGLE_ADS_CHECKOUT_LABEL"] as const) {
+      const label = env[name]
+      if (label && !GOOGLE_ADS_LABEL_RE.test(label)) issue(name, "só letras, dígitos, _ e - (o texto depois da barra no send_to)")
+    }
+  }
+  if (env.GOOGLE_ADS_UPLOAD_ENABLED) {
+    const customer = googleAdsAccountDigits(env.GOOGLE_ADS_CUSTOMER_ID)
+    if (!customer) issue("GOOGLE_ADS_CUSTOMER_ID", "obrigatória com o envio ao Google Ads ligado")
+    else if (!/^\d{10}$/.test(customer)) issue("GOOGLE_ADS_CUSTOMER_ID", "10 dígitos (ex.: 123-456-7890)")
+    const login = googleAdsAccountDigits(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID)
+    if (login && !/^\d{10}$/.test(login)) issue("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "10 dígitos (ex.: 123-456-7890)")
+    const action = env.GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID
+    if (!action) issue("GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID", "obrigatória com o envio ao Google Ads ligado")
+    else if (!/^\d+$/.test(action)) issue("GOOGLE_ADS_PURCHASE_CONVERSION_ACTION_ID", "só dígitos")
+    if (!parseServiceAccountKey(env.GOOGLE_ADS_SERVICE_ACCOUNT_JSON)) {
+      issue("GOOGLE_ADS_SERVICE_ACCOUNT_JSON", "JSON da chave da conta de serviço (cru ou em base64) com client_email e private_key")
     }
   }
   if (!env.META_TRACKING_ENABLED) return

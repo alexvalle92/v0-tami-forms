@@ -13,6 +13,7 @@ export async function POST(req: Request): Promise<Response> {
     runPlanGeneration: c.runPlanGeneration,
     noticeAdmin: c.noticeAdmin,
     sendMetaConversion: c.sendMetaConversion,
+    sendGoogleAdsConversion: c.sendGoogleAdsConversion,
     defer: (fn) => after(fn),
     log: c.log,
   })(req)
